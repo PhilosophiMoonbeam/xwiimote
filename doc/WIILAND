@@ -36,6 +36,8 @@ wiilandd:
     the distributable sample;
   - provides --self-test for deterministic profile, button-map, config, and
     pointer-motion validation without hardware;
+  - ships a CI smoke harness that compiles wiilandd against committed
+    libxwiimote stubs and runs --self-test plus sample-config parsing;
   - handles hotplug and extension changes without Xorg configuration.
 
 Required runtime permissions:

@@ -1,0 +1,21 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  wiilandd-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install smoke dependencies
+        run: sudo apt-get update && sudo apt-get install -y build-essential groff
+      - name: Compile wiilandd smoke binary
+        run: gcc -std=gnu99 -Wall -Wextra -Werror -Ilib tools/wiilandd.c tests/xwii_stubs.c -o wiilandd-smoke
+      - name: Run deterministic self-test
+        run: ./wiilandd-smoke --self-test
+      - name: Validate sample config
+        run: ./wiilandd-smoke --config res/wiilandd.conf --self-test
+      - name: Validate manpage rendering
+        run: groff -man -Tascii doc/wiilandd.1 >/dev/null

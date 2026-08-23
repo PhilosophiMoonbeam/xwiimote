@@ -39,6 +39,8 @@ EXTRA_DIST = \
 	res/70-wiiland-uinput.rules \
 	res/wiilandd.service \
 	res/wiilandd.conf \
+	tests/xwii_stubs.c \
+	.github/workflows/ci.yml \
 	doc/WIILAND \
 	libxwiimote.sym
 
