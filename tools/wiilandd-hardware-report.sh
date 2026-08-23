@@ -4,6 +4,8 @@ set -eu
 
 wiilandd=${WIILANDD:-wiilandd}
 device=${1:-}
+list_file=${TMPDIR:-/tmp}/wiilandd-hardware-report-list.$$
+trap 'rm -f "$list_file"' EXIT INT HUP TERM
 
 section() {
 	printf '\n== %s ==\n' "$1"
@@ -42,6 +44,51 @@ run_wiilandd_probe() {
 	fi
 }
 
+read_sysfs_attr() {
+	path=$1
+	name=$2
+
+	if [ -r "$path/$name" ]; then
+		tr -d '\n' <"$path/$name"
+	else
+		printf 'unavailable'
+	fi
+}
+
+capture_device_list() {
+	printf '$ %s --list\n' "$wiilandd"
+	if ! "$wiilandd" --list >"$list_file"; then
+		printf 'failed: %s --list\n' "$wiilandd"
+		return 1
+	fi
+
+	cat "$list_file"
+	return 0
+}
+
+report_device_attrs() {
+	file=$1
+
+	while read -r index syspath; do
+		case "$index" in
+		''|*[!0-9]*)
+			continue
+			;;
+		esac
+		if [ -z "${syspath:-}" ]; then
+			continue
+		fi
+
+		printf 'device.%s.syspath=%s\n' "$index" "$syspath"
+		printf 'device.%s.devtype=' "$index"
+		read_sysfs_attr "$syspath" devtype
+		printf '\n'
+		printf 'device.%s.extension=' "$index"
+		read_sysfs_attr "$syspath" extension
+		printf '\n'
+	done <"$file"
+}
+
 
 section host
 run_optional uname -srmo
@@ -63,7 +110,9 @@ run_wiilandd_probe --check-config
 run_wiilandd_probe --dump-config
 
 section devices
-run_wiilandd_probe --list
+if capture_device_list; then
+	report_device_attrs "$list_file"
+fi
 
 if [ -z "$device" ]; then
 	cat <<EOF
