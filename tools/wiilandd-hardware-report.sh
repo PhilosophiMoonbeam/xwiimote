@@ -8,9 +8,9 @@ Usage:
   $0
   $0 <number-or-/sys/path> [extra wiilandd args]
 
-Collect finite WiiLand host, permission, config, device, axis-map, and manual
-validation diagnostics. With a device argument, continue into live dry-run trace
-capture and pass remaining arguments to wiilandd.
+Collect finite WiiLand host, permission, config, doctor, axis-map, device, and
+manual validation diagnostics. With a device argument, continue into live
+dry-run trace capture and pass remaining arguments to wiilandd.
 EOF
 }
 

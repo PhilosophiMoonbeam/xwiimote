@@ -89,6 +89,7 @@ chmod +x "$fake_wiilandd"
 "$root/tools/wiilandd-hardware-report.sh" --help >"$build_dir/hardware-report-help"
 grep -F 'Usage:' "$build_dir/hardware-report-help" >/dev/null
 grep -F '<number-or-/sys/path>' "$build_dir/hardware-report-help" >/dev/null
+grep -F 'doctor, axis-map' "$build_dir/hardware-report-help" >/dev/null
 (cd "$build_dir" && XDG_CURRENT_DESKTOP=TestDesktop SWAYSOCK=/tmp/sway.sock \
 	FAKE_DEVICE_SYSPATH=$stub_sys WIILANDD=$fake_wiilandd \
 	"$root/tools/wiilandd-hardware-report.sh" \
