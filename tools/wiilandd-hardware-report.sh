@@ -13,7 +13,8 @@ module_dir=${HID_WIIMOTE_MODULE_DIR:-/sys/module/hid_wiimote}
 os_release=${OS_RELEASE_PATH:-/etc/os-release}
 list_file=${TMPDIR:-/tmp}/wiilandd-hardware-report-list.$$
 bt_file=${TMPDIR:-/tmp}/wiilandd-hardware-report-bt.$$
-trap 'rm -f "$list_file" "$bt_file"' EXIT INT HUP TERM
+git_status_file=${TMPDIR:-/tmp}/wiilandd-hardware-report-git.$$
+trap 'rm -f "$list_file" "$bt_file" "$git_status_file"' EXIT INT HUP TERM
 
 section() {
 	printf '\n== %s ==\n' "$1"
@@ -64,13 +65,25 @@ read_sysfs_attr() {
 }
 
 report_git_commit() {
-	if command -v git >/dev/null 2>&1; then
-		printf 'git.commit='
-		if ! git -C "$repo_dir" rev-parse --short HEAD 2>/dev/null; then
-			printf 'unavailable\n'
-		fi
-	else
+	if ! command -v git >/dev/null 2>&1; then
 		printf 'git.commit=unavailable\n'
+		printf 'git.dirty=unavailable\n'
+		return 0
+	fi
+
+	printf 'git.commit='
+	if ! git -C "$repo_dir" rev-parse --short HEAD 2>/dev/null; then
+		printf 'unavailable\n'
+	fi
+
+	printf 'git.dirty='
+	if ! git -C "$repo_dir" status --porcelain --untracked-files=all \
+		>"$git_status_file" 2>/dev/null; then
+		printf 'unavailable\n'
+	elif [ -s "$git_status_file" ]; then
+		printf 'yes\n'
+	else
+		printf 'no\n'
 	fi
 }
 

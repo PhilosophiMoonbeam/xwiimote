@@ -178,6 +178,9 @@ static bool dry_run;
 static bool trace_events;
 static enum trace_filter trace_filter = TRACE_FILTER_ALL;
 static unsigned long long trace_sequence;
+static bool capture_abs_events;
+static bool captured_abs_seen[ABS_CNT];
+static int32_t captured_abs_value[ABS_CNT];
 static unsigned int profiles = PROFILE_GAMEPAD;
 static enum backend backend = BACKEND_UINPUT;
 static int pointer_speed = 16;
@@ -301,6 +304,12 @@ static int emit_abs(int fd, int code, int32_t value)
 {
 	if (code < 0)
 		return 0;
+
+	if (capture_abs_events && code < ABS_CNT) {
+		captured_abs_seen[code] = true;
+		captured_abs_value[code] = value;
+		return 0;
+	}
 
 	return emit_event(fd, EV_ABS, (uint16_t)code, value);
 }
@@ -732,6 +741,9 @@ static int forward_move_event(struct bridge_device *dev,
 		break;
 	case XWII_EVENT_NUNCHUK_MOVE:
 		ret = forward_abs_pair(dev, ABS_X, ABS_Y, &event->v.abs[0]);
+		if (!ret)
+			ret = forward_xyz_event(dev, &event->v.abs[1],
+						accel_abs_code);
 		break;
 	case XWII_EVENT_CLASSIC_CONTROLLER_MOVE:
 		ret = forward_abs_pair(dev, ABS_X, ABS_Y, &event->v.abs[0]);
@@ -1973,6 +1985,63 @@ static int expect_int(const char *name, int got, int want)
 	return -EINVAL;
 }
 
+static int expect_abs_capture(const char *name, int code, int32_t want)
+{
+	if (code < 0 || code >= ABS_CNT) {
+		fprintf(stderr, "wiilandd self-test: %s: invalid code %d\n",
+			name, code);
+		return -EINVAL;
+	}
+	if (!captured_abs_seen[code]) {
+		fprintf(stderr, "wiilandd self-test: %s: abs code %d not emitted\n",
+			name, code);
+		return -EINVAL;
+	}
+	return expect_int(name, captured_abs_value[code], want);
+}
+
+static int self_test_nunchuk_forwarding(void)
+{
+	struct bridge_device dev;
+	struct xwii_event event;
+	bool old_dry_run = dry_run;
+	int ret;
+
+	memset(&dev, 0, sizeof(dev));
+	dev.uinput_fd = -1;
+	memset(&event, 0, sizeof(event));
+	event.type = XWII_EVENT_NUNCHUK_MOVE;
+	event.v.abs[0].x = 11;
+	event.v.abs[0].y = 12;
+	event.v.abs[1].x = 21;
+	event.v.abs[1].y = 22;
+	event.v.abs[1].z = 23;
+
+	memset(captured_abs_seen, 0, sizeof(captured_abs_seen));
+	memset(captured_abs_value, 0, sizeof(captured_abs_value));
+	capture_abs_events = true;
+	dry_run = true;
+	ret = forward_move_event(&dev, &event);
+	capture_abs_events = false;
+	dry_run = old_dry_run;
+	if (ret)
+		return ret;
+
+	ret = expect_abs_capture("nunchuk-stick-x", ABS_X, 11);
+	if (ret)
+		return ret;
+	ret = expect_abs_capture("nunchuk-stick-y", ABS_Y, 12);
+	if (ret)
+		return ret;
+	ret = expect_abs_capture("nunchuk-accel-x", ABS_THROTTLE, 21);
+	if (ret)
+		return ret;
+	ret = expect_abs_capture("nunchuk-accel-y", ABS_RUDDER, 22);
+	if (ret)
+		return ret;
+	return expect_abs_capture("nunchuk-accel-z", ABS_WHEEL, 23);
+}
+
 static int self_test_gamepad_map(void)
 {
 	static const struct {
@@ -2605,6 +2674,9 @@ static int run_self_test(void)
 	if (ret)
 		return ret;
 	ret = self_test_sensor_map();
+	if (ret)
+		return ret;
+	ret = self_test_nunchuk_forwarding();
 	if (ret)
 		return ret;
 	ret = self_test_ir_pointer();
