@@ -31,7 +31,7 @@ wiilandd:
     IR events move the pointer, A/B click, +/- send Enter/Escape, Home sends
     the compositor overview key, and 1/2 send Page Down/Page Up;
   - supports key=value configuration for default profile, per-device profile
-    overrides, and desktop pointer speed through
+    overrides, desktop button actions, and desktop pointer speed through
     ~/.config/wiiland/wiilandd.conf or --config; res/wiilandd.conf is the
     distributable sample;
   - provides --self-test for deterministic profile, button-map, config, and
@@ -46,8 +46,9 @@ Required runtime permissions:
 == Roadmap ==
 
 1. Desktop profile
-   Shipped as --profile desktop and --profile both with D-pad and IR pointer
-   motion. Next refinement is configurable button mapping.
+   Shipped as --profile desktop and --profile both with D-pad motion, IR
+   pointer motion, and configurable desktop button actions. Next refinement is
+   optional smoothing/deadzones for IR pointer motion.
 
 2. Per-device policy
    Shipped as device.<syspath-substring>.profile rules for choosing gamepad,

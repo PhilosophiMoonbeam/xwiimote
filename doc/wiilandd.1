@@ -90,6 +90,18 @@ Default virtual input profile.
 .B pointer-speed=1-127
 Desktop profile pointer step.
 .TP
+.B desktop.a|b|plus|minus|home|one|two=ACTION
+Override desktop button output. Actions are
+.BR left-click ,
+.BR right-click ,
+.BR enter ,
+.BR escape ,
+.BR overview ,
+.BR page-up ,
+.BR page-down ,
+and
+.BR disabled .
+.TP
 .B device.<syspath-substring>.profile=gamepad|desktop|both
 Override the profile for devices whose sysfs path contains the substring.
 Rules are evaluated in file order; later matching rules win.

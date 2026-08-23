@@ -97,6 +97,13 @@ struct device_rule {
 	unsigned int profiles;
 };
 
+struct desktop_binding {
+	const char *name;
+	unsigned int xwii;
+	int default_code;
+	int code;
+};
+
 struct bridge_device {
 	struct xwii_iface *iface;
 	char *syspath;
@@ -118,6 +125,16 @@ static unsigned int profiles = PROFILE_GAMEPAD;
 static int pointer_speed = 16;
 static struct device_rule device_rules[MAX_DEVICE_RULES];
 static unsigned int device_rule_count;
+static struct desktop_binding desktop_bindings[] = {
+	{ "a", XWII_KEY_A, BTN_LEFT, BTN_LEFT },
+	{ "b", XWII_KEY_B, BTN_RIGHT, BTN_RIGHT },
+	{ "plus", XWII_KEY_PLUS, KEY_ENTER, KEY_ENTER },
+	{ "minus", XWII_KEY_MINUS, KEY_ESC, KEY_ESC },
+	{ "home", XWII_KEY_HOME, KEY_LEFTMETA, KEY_LEFTMETA },
+	{ "one", XWII_KEY_ONE, KEY_PAGEDOWN, KEY_PAGEDOWN },
+	{ "two", XWII_KEY_TWO, KEY_PAGEUP, KEY_PAGEUP },
+};
+
 static unsigned int profiles_for_syspath(const char *syspath);
 
 static void on_signal(int signo)
@@ -556,26 +573,24 @@ static int update_pointer_key(struct bridge_device *dev, unsigned int bit,
 	return 0;
 }
 
+static void reset_desktop_bindings(void)
+{
+	size_t i;
+
+	for (i = 0; i < ARRAY_SIZE(desktop_bindings); ++i)
+		desktop_bindings[i].code = desktop_bindings[i].default_code;
+}
+
 static int desktop_key_code(unsigned int code)
 {
-	switch (code) {
-	case XWII_KEY_A:
-		return BTN_LEFT;
-	case XWII_KEY_B:
-		return BTN_RIGHT;
-	case XWII_KEY_PLUS:
-		return KEY_ENTER;
-	case XWII_KEY_MINUS:
-		return KEY_ESC;
-	case XWII_KEY_HOME:
-		return KEY_LEFTMETA;
-	case XWII_KEY_ONE:
-		return KEY_PAGEDOWN;
-	case XWII_KEY_TWO:
-		return KEY_PAGEUP;
-	default:
-		return -1;
+	size_t i;
+
+	for (i = 0; i < ARRAY_SIZE(desktop_bindings); ++i) {
+		if (desktop_bindings[i].xwii == code)
+			return desktop_bindings[i].code;
 	}
+
+	return -1;
 }
 
 static int forward_desktop_key_event(struct bridge_device *dev,
@@ -1120,6 +1135,63 @@ static int parse_pointer_speed(const char *arg)
 	return parse_int_range(arg, 1, 127, &pointer_speed);
 }
 
+static int parse_desktop_action(const char *arg, int *out)
+{
+	if (!strcmp(arg, "disabled")) {
+		*out = -1;
+		return 0;
+	}
+	if (!strcmp(arg, "left-click")) {
+		*out = BTN_LEFT;
+		return 0;
+	}
+	if (!strcmp(arg, "right-click")) {
+		*out = BTN_RIGHT;
+		return 0;
+	}
+	if (!strcmp(arg, "enter")) {
+		*out = KEY_ENTER;
+		return 0;
+	}
+	if (!strcmp(arg, "escape")) {
+		*out = KEY_ESC;
+		return 0;
+	}
+	if (!strcmp(arg, "overview")) {
+		*out = KEY_LEFTMETA;
+		return 0;
+	}
+	if (!strcmp(arg, "page-up")) {
+		*out = KEY_PAGEUP;
+		return 0;
+	}
+	if (!strcmp(arg, "page-down")) {
+		*out = KEY_PAGEDOWN;
+		return 0;
+	}
+
+	return -EINVAL;
+}
+
+static int set_desktop_binding(const char *button, const char *action)
+{
+	size_t i;
+	int code, ret;
+
+	ret = parse_desktop_action(action, &code);
+	if (ret)
+		return ret;
+
+	for (i = 0; i < ARRAY_SIZE(desktop_bindings); ++i) {
+		if (!strcmp(desktop_bindings[i].name, button)) {
+			desktop_bindings[i].code = code;
+			return 0;
+		}
+	}
+
+	return -EINVAL;
+}
+
 static bool has_suffix(const char *str, const char *suffix)
 {
 	size_t str_len = strlen(str);
@@ -1221,6 +1293,8 @@ static int apply_config_line(const char *path, unsigned int lineno, char *line)
 		ret = parse_profile(value);
 	else if (!strcmp(key, "pointer-speed"))
 		ret = parse_pointer_speed(value);
+	else if (!strncmp(key, "desktop.", 8))
+		ret = set_desktop_binding(key + 8, value);
 	else if (!strncmp(key, "device.", 7) && has_suffix(key, ".profile")) {
 		suffix = key + strlen(key) - strlen(".profile");
 		*suffix = 0;
@@ -1528,6 +1602,29 @@ static int self_test_config(void)
 	if (ret)
 		return ret;
 
+	snprintf(line, sizeof(line), " desktop.a = enter\n");
+	ret = apply_config_line("self-test", 3, line);
+	if (ret)
+		return ret;
+	ret = expect_int("desktop-binding-a",
+			 desktop_key_code(XWII_KEY_A), KEY_ENTER);
+	if (ret)
+		return ret;
+
+	snprintf(line, sizeof(line), " desktop.b = disabled\n");
+	ret = apply_config_line("self-test", 4, line);
+	if (ret)
+		return ret;
+	ret = expect_int("desktop-binding-disabled",
+			 desktop_key_code(XWII_KEY_B), -1);
+	if (ret)
+		return ret;
+	reset_desktop_bindings();
+	ret = expect_int("desktop-binding-reset",
+			 desktop_key_code(XWII_KEY_A), BTN_LEFT);
+	if (ret)
+		return ret;
+
 	snprintf(line, sizeof(line), " pointer-speed = 31\n");
 	ret = apply_config_line("self-test", 2, line);
 	if (ret)
@@ -1571,6 +1668,7 @@ static int self_test_config(void)
 	profiles = PROFILE_GAMEPAD;
 	pointer_speed = 16;
 	clear_device_rules();
+	reset_desktop_bindings();
 	return 0;
 }
 
@@ -1581,6 +1679,7 @@ static int run_self_test(void)
 	profiles = PROFILE_GAMEPAD;
 	pointer_speed = 16;
 	clear_device_rules();
+	reset_desktop_bindings();
 
 	ret = self_test_gamepad_map();
 	if (ret)
