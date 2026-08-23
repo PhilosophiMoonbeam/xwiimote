@@ -206,6 +206,10 @@ with
 .B --check-config
 preflight before starting
 .BR wiilandd .
+After installation, enable it with
+.BR "systemctl --user enable wiilandd.service" ;
+start it immediately with
+.BR "systemctl --user start wiilandd.service" .
 .SH GAMEPAD MAPPING
 The gamepad profile exposes core and extension buttons as evdev button codes and
 extension sensors on stable evdev absolute axes so SDL, Wine/Proton, and native

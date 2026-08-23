@@ -110,6 +110,11 @@ starting so broken configuration fails fast. The installed unit is generated wit
 the configured `bindir`, so `/usr` and `/usr/local` prefix builds use the
 matching `wiilandd` binary path.
 
+To run the packaged user service in graphical sessions:
+	$ systemctl --user daemon-reload
+	$ systemctl --user enable wiilandd.service
+	$ systemctl --user start wiilandd.service
+
 `make install` installs the uinput udev rule, systemd user service, and sample
 configuration under the selected prefix.
 
