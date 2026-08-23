@@ -2857,6 +2857,7 @@ int main(int argc, char **argv)
 	bool self_test = false;
 	bool check_config = false;
 	bool dump_config = false;
+	bool doctor = false;
 	bool diagnostic = false;
 	int i, ret;
 
@@ -2884,8 +2885,7 @@ int main(int argc, char **argv)
 			   !strcmp(argv[i], "-h") || !strcmp(argv[i], "--help") ||
 			   !strcmp(argv[i], "-l") || !strcmp(argv[i], "--list") ||
 			   !strcmp(argv[i], "--axis-map") ||
-			   !strcmp(argv[i], "--validation-checklist") ||
-			   !strcmp(argv[i], "--doctor")) {
+			   !strcmp(argv[i], "--validation-checklist")) {
 			diagnostic = true;
 		} else if (!strcmp(argv[i], "-v") || !strcmp(argv[i], "--verbose")) {
 			verbose = true;
@@ -2917,8 +2917,7 @@ int main(int argc, char **argv)
 			print_validation_checklist();
 			return 0;
 		} else if (!strcmp(argv[i], "--doctor")) {
-			print_doctor();
-			return 0;
+			doctor = true;
 		} else if (!strncmp(argv[i], "--profile=", 10)) {
 			if (parse_profile(argv[i] + 10)) {
 				usage(stderr);
@@ -3018,6 +3017,10 @@ int main(int argc, char **argv)
 	}
 	if (check_config)
 		return 0;
+	if (doctor) {
+		print_doctor();
+		return 0;
+	}
 	if (self_test)
 		return abs(run_self_test());
 

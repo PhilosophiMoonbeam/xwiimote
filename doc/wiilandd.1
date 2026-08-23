@@ -98,7 +98,9 @@ hardware-report aid and does not enumerate devices.
 .BR --doctor
 Print runtime readiness diagnostics for the current session and
 .BR /dev/uinput ,
-then exit. This does not enumerate Wii devices.
+then exit. This loads configuration like a normal daemon start; combine with
+.BR --no-config
+to inspect only built-in defaults. This does not enumerate Wii devices.
 .TP
 .BR --self-test
 Run deterministic profile, config, button-map, IR, and pointer-motion tests, then exit.

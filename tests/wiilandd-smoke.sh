@@ -25,10 +25,15 @@ grep -F 'guitar.stick.x=ABS_X' "$build_dir/axis-map" >/dev/null
 "$bin" --validation-checklist >"$build_dir/validation-checklist"
 grep -F 'motion-plus-external.hotplug=required' "$build_dir/validation-checklist" >/dev/null
 grep -F 'wayland.wine-proton=required' "$build_dir/validation-checklist" >/dev/null
-"$bin" --doctor >"$build_dir/doctor"
+cat >"$build_dir/doctor.conf" <<'EOF'
+backend=uinput
+profile=desktop
+EOF
+"$bin" --config "$build_dir/doctor.conf" --doctor >"$build_dir/doctor"
 grep -F 'session.wayland=' "$build_dir/doctor" >/dev/null
 grep -F 'dev.uinput.writable=' "$build_dir/doctor" >/dev/null
 grep -F 'backend=uinput' "$build_dir/doctor" >/dev/null
+grep -F 'profile=desktop' "$build_dir/doctor" >/dev/null
 "$bin" --no-config --trace-events=motion-plus --dump-config >/dev/null
 if "$bin" --no-config --trace-events=bad --dump-config >/dev/null 2>&1; then
 	printf '%s\n' 'wiilandd accepted invalid trace event filter' >&2
