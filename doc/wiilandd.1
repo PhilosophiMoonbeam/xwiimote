@@ -41,12 +41,23 @@ profile creates a virtual mouse/keyboard device: D-pad moves the pointer,
 A/B click, +/- send Enter/Escape, Home sends the compositor overview key,
 and 1/2 send Page Down/Page Up.
 .TP
+.BR --pointer-speed " " 1-127
+Set the desktop profile pointer step in pixels per repeat tick. The default is
+16.
+.TP
+.BR -c , " --config " path
+Load a key=value configuration file. Command-line options override loaded
+configuration.
+.TP
+.BR --no-config
+Skip the default configuration file.
+.TP
 .BR -n , " --dry-run"
 Enumerate and open devices without creating /dev/uinput devices or emitting
 virtual input. Useful for smoke tests and service diagnostics.
 .TP
 .BR --self-test
-Run deterministic profile, button-map, and pointer-motion tests, then exit.
+Run deterministic profile, config, button-map, and pointer-motion tests, then exit.
 This mode does not enumerate devices or open
 .BR /dev/uinput .
 .TP
@@ -59,6 +70,24 @@ Distributions usually provide input-device access through logind/udev. Access
 to
 .B /dev/uinput
 may require a udev rule, a system service, or an input/uinput group policy.
+.SH CONFIGURATION
+Unless
+.B --no-config
+is set,
+.B wiilandd
+loads
+.B $XDG_CONFIG_HOME/wiiland/wiilandd.conf
+or
+.B $HOME/.config/wiiland/wiilandd.conf
+when present. Use
+.B --config
+to load an explicit file. Supported keys are:
+.TP
+.B profile=gamepad|desktop|both
+Default virtual input profile.
+.TP
+.B pointer-speed=1-127
+Desktop profile pointer step.
 .SH BACKEND
 The default backend is Linux uinput because it is compositor-independent and is
 already consumed by Wayland compositors and game stacks. The gamepad profile is

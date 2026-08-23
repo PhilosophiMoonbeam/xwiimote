@@ -30,7 +30,9 @@ wiilandd:
   - maps Wii Remote core input in the desktop profile: D-pad moves the pointer,
     A/B click, +/- send Enter/Escape, Home sends the compositor overview key,
     and 1/2 send Page Down/Page Up;
-  - provides --self-test for deterministic profile, button-map, and
+  - supports key=value configuration for default profile and desktop pointer
+    speed through ~/.config/wiiland/wiilandd.conf or --config;
+  - provides --self-test for deterministic profile, button-map, config, and
     pointer-motion validation without hardware;
   - handles hotplug and extension changes without Xorg configuration.
 
@@ -46,9 +48,9 @@ Required runtime permissions:
    pointer support and configurable button mapping.
 
 2. Per-device policy
-   Add a small configuration file for profiles and axis normalization. Avoid a
-   daemon-specific language; use key=value or TOML only if a parser is already
-   needed for another feature.
+   Global key=value configuration is shipped. Next refinement is per-device
+   matching by sysfs path or Bluetooth address once hardware reports define the
+   desired policy surface.
 
 3. Optional libei backend
    Add --backend=libei when libei and compositor support are common enough.

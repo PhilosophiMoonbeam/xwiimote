@@ -105,6 +105,7 @@ static volatile sig_atomic_t should_stop;
 static bool verbose;
 static bool dry_run;
 static unsigned int profiles = PROFILE_GAMEPAD;
+static int pointer_speed = 16;
 
 static void on_signal(int signo)
 {
@@ -521,13 +522,13 @@ static void refresh_pointer_velocity(struct bridge_device *dev)
 	dev->pointer_dy = 0;
 
 	if (dev->pointer_keys & POINTER_LEFT)
-		dev->pointer_dx -= 16;
+		dev->pointer_dx -= pointer_speed;
 	if (dev->pointer_keys & POINTER_RIGHT)
-		dev->pointer_dx += 16;
+		dev->pointer_dx += pointer_speed;
 	if (dev->pointer_keys & POINTER_UP)
-		dev->pointer_dy -= 16;
+		dev->pointer_dy -= pointer_speed;
 	if (dev->pointer_keys & POINTER_DOWN)
-		dev->pointer_dy += 16;
+		dev->pointer_dy += pointer_speed;
 }
 
 static int update_pointer_key(struct bridge_device *dev, unsigned int bit,
@@ -1012,6 +1013,134 @@ static int parse_profile(const char *arg)
 	return -EINVAL;
 }
 
+static int parse_int_range(const char *arg, int min, int max, int *out)
+{
+	char *end;
+	long val;
+
+	errno = 0;
+	val = strtol(arg, &end, 10);
+	if (errno || !arg[0] || *end || val < min || val > max)
+		return -EINVAL;
+
+	*out = (int)val;
+	return 0;
+}
+
+static int parse_pointer_speed(const char *arg)
+{
+	return parse_int_range(arg, 1, 127, &pointer_speed);
+}
+
+static char *trim(char *str)
+{
+	char *end;
+
+	str += strspn(str, " \t\r\n");
+	str[strcspn(str, "\r\n")] = 0;
+
+	end = str + strlen(str);
+	while (end > str && (end[-1] == ' ' || end[-1] == '\t'))
+		*--end = 0;
+
+	return str;
+}
+
+static int apply_config_line(const char *path, unsigned int lineno, char *line)
+{
+	char *key, *value;
+	int ret;
+
+	line[strcspn(line, "#")] = 0;
+	key = trim(line);
+	if (!key[0])
+		return 0;
+
+	value = strchr(key, '=');
+	if (!value) {
+		fprintf(stderr, "wiilandd: %s:%u: expected key=value\n",
+			path, lineno);
+		return -EINVAL;
+	}
+
+	*value++ = 0;
+	key = trim(key);
+	value = trim(value);
+
+	if (!strcmp(key, "profile"))
+		ret = parse_profile(value);
+	else if (!strcmp(key, "pointer-speed"))
+		ret = parse_pointer_speed(value);
+	else {
+		fprintf(stderr, "wiilandd: %s:%u: unknown key '%s'\n",
+			path, lineno, key);
+		return -EINVAL;
+	}
+
+	if (ret)
+		fprintf(stderr, "wiilandd: %s:%u: invalid value for '%s'\n",
+			path, lineno, key);
+
+	return ret;
+}
+
+static int load_config_file(const char *path, bool required)
+{
+	char line[512];
+	unsigned int lineno = 0;
+	FILE *file;
+	int ret;
+
+	file = fopen(path, "re");
+	if (!file) {
+		if (!required && errno == ENOENT)
+			return 0;
+		return -errno;
+	}
+
+	while (fgets(line, sizeof(line), file)) {
+		++lineno;
+		ret = apply_config_line(path, lineno, line);
+		if (ret) {
+			fclose(file);
+			return ret;
+		}
+	}
+
+	if (ferror(file)) {
+		ret = errno ? -errno : -EIO;
+		fclose(file);
+		return ret;
+	}
+
+	fclose(file);
+	return 0;
+}
+
+static const char *default_config_path(void)
+{
+	static char path[4096];
+	const char *base;
+	int ret;
+
+	base = getenv("XDG_CONFIG_HOME");
+	if (base && base[0]) {
+		ret = snprintf(path, sizeof(path), "%s/wiiland/wiilandd.conf",
+			       base);
+	} else {
+		base = getenv("HOME");
+		if (!base || !base[0])
+			return NULL;
+		ret = snprintf(path, sizeof(path),
+			       "%s/.config/wiiland/wiilandd.conf", base);
+	}
+
+	if (ret < 0 || (size_t)ret >= sizeof(path))
+		return NULL;
+
+	return path;
+}
+
 static int expect_int(const char *name, int got, int want)
 {
 	if (got == want)
@@ -1157,9 +1286,62 @@ static int self_test_profiles(void)
 	return expect_int("profile-invalid", parse_profile("bad"), -EINVAL);
 }
 
+static int self_test_config(void)
+{
+	char line[128];
+	int ret;
+
+	ret = parse_pointer_speed("1");
+	if (ret)
+		return ret;
+	ret = expect_int("pointer-speed-min", pointer_speed, 1);
+	if (ret)
+		return ret;
+
+	ret = parse_pointer_speed("127");
+	if (ret)
+		return ret;
+	ret = expect_int("pointer-speed-max", pointer_speed, 127);
+	if (ret)
+		return ret;
+
+	ret = expect_int("pointer-speed-invalid",
+			 parse_pointer_speed("128"), -EINVAL);
+	if (ret)
+		return ret;
+
+	snprintf(line, sizeof(line), " profile = desktop # comment\n");
+	ret = apply_config_line("self-test", 1, line);
+	if (ret)
+		return ret;
+	ret = expect_int("config-profile", profiles, PROFILE_DESKTOP);
+	if (ret)
+		return ret;
+
+	snprintf(line, sizeof(line), " pointer-speed = 31\n");
+	ret = apply_config_line("self-test", 2, line);
+	if (ret)
+		return ret;
+	ret = expect_int("config-pointer-speed", pointer_speed, 31);
+	if (ret)
+		return ret;
+
+	snprintf(line, sizeof(line), " # empty comment\n");
+	ret = apply_config_line("self-test", 3, line);
+	if (ret)
+		return ret;
+
+	profiles = PROFILE_GAMEPAD;
+	pointer_speed = 16;
+	return 0;
+}
+
 static int run_self_test(void)
 {
 	int ret;
+
+	profiles = PROFILE_GAMEPAD;
+	pointer_speed = 16;
 
 	ret = self_test_gamepad_map();
 	if (ret)
@@ -1168,6 +1350,9 @@ static int run_self_test(void)
 	if (ret)
 		return ret;
 	ret = self_test_profiles();
+	if (ret)
+		return ret;
+	ret = self_test_config();
 	if (ret)
 		return ret;
 
@@ -1187,6 +1372,9 @@ static void usage(FILE *out)
 		"\t-l, --list       List connected Wii Remote devices and exit\n"
 		"\t-d, --device     Bridge one device instead of monitoring all devices\n"
 		"\t-p, --profile    gamepad, desktop, or both (default: gamepad)\n"
+		"\t    --pointer-speed <1-127>  Desktop pointer step (default: 16)\n"
+		"\t-c, --config     Load key=value config file\n"
+		"\t    --no-config  Do not load the default config file\n"
 		"\t-n, --dry-run    Do not create /dev/uinput devices or emit input\n"
 		"\t    --self-test  Run deterministic self tests and exit\n"
 		"\t-v, --verbose    Print device lifecycle details\n"
@@ -1197,9 +1385,41 @@ static void usage(FILE *out)
 
 int main(int argc, char **argv)
 {
+	const char *config_path = NULL;
 	const char *device = NULL;
+	bool explicit_config = false;
+	bool no_config = false;
 	bool self_test = false;
 	int i, ret;
+
+	for (i = 1; i < argc; ++i) {
+		if (!strncmp(argv[i], "--config=", 9)) {
+			config_path = argv[i] + 9;
+			explicit_config = true;
+		} else if (!strcmp(argv[i], "-c") ||
+			   !strcmp(argv[i], "--config")) {
+			if (++i >= argc) {
+				usage(stderr);
+				return EINVAL;
+			}
+			config_path = argv[i];
+			explicit_config = true;
+		} else if (!strcmp(argv[i], "--no-config")) {
+			no_config = true;
+		} else if (!strcmp(argv[i], "--self-test")) {
+			self_test = true;
+		}
+	}
+
+	if (!no_config && (!self_test || explicit_config)) {
+		if (!config_path)
+			config_path = default_config_path();
+		if (config_path) {
+			ret = load_config_file(config_path, explicit_config);
+			if (ret)
+				return abs(ret);
+		}
+	}
 
 	for (i = 1; i < argc; ++i) {
 		if (!strcmp(argv[i], "-h") || !strcmp(argv[i], "--help")) {
@@ -1217,6 +1437,20 @@ int main(int argc, char **argv)
 				usage(stderr);
 				return EINVAL;
 			}
+		} else if (!strncmp(argv[i], "--pointer-speed=", 16)) {
+			if (parse_pointer_speed(argv[i] + 16)) {
+				usage(stderr);
+				return EINVAL;
+			}
+		} else if (!strcmp(argv[i], "--pointer-speed")) {
+			if (++i >= argc || parse_pointer_speed(argv[i])) {
+				usage(stderr);
+				return EINVAL;
+			}
+		} else if (!strncmp(argv[i], "--config=", 9)) {
+		} else if (!strcmp(argv[i], "-c") || !strcmp(argv[i], "--config")) {
+			++i;
+		} else if (!strcmp(argv[i], "--no-config")) {
 		} else if (!strcmp(argv[i], "-n") || !strcmp(argv[i], "--dry-run")) {
 			dry_run = true;
 		} else if (!strcmp(argv[i], "--self-test")) {
@@ -1234,9 +1468,9 @@ int main(int argc, char **argv)
 			return EINVAL;
 		}
 	}
+
 	if (self_test)
 		return abs(run_self_test());
-
 
 	signal(SIGINT, on_signal);
 	signal(SIGTERM, on_signal);

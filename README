@@ -80,6 +80,10 @@ For desktop pointer/keyboard control, run:
 For one process that exposes both gamepad and desktop controls, run:
 	$ wiilandd --profile both
 
+To tune desktop pointer speed persistently:
+	$ mkdir -p ~/.config/wiiland
+	$ printf 'profile=desktop\npointer-speed=24\n' > ~/.config/wiiland/wiilandd.conf
+
 For hardware-free diagnostics in packaging or CI, run:
 	$ wiilandd --self-test
 
