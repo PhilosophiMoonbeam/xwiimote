@@ -4,6 +4,7 @@ set -eu
 
 wiilandd=${WIILANDD:-wiilandd}
 device=${1:-}
+module_dir=${HID_WIIMOTE_MODULE_DIR:-/sys/module/hid_wiimote}
 list_file=${TMPDIR:-/tmp}/wiilandd-hardware-report-list.$$
 bt_file=${TMPDIR:-/tmp}/wiilandd-hardware-report-bt.$$
 trap 'rm -f "$list_file" "$bt_file"' EXIT INT HUP TERM
@@ -135,6 +136,29 @@ capture_bluetooth_controllers() {
 		fi
 	done <"$bt_file"
 }
+report_module_parameters() {
+	if [ ! -d "$module_dir/parameters" ]; then
+		printf 'hid-wiimote.parameters=unavailable\n'
+		return 0
+	fi
+
+	printf 'hid-wiimote.module_dir=%s\n' "$module_dir"
+	for attr in "$module_dir"/parameters/*; do
+		if [ ! -e "$attr" ]; then
+			continue
+		fi
+
+		name=${attr##*/}
+		printf 'hid-wiimote.parameter.%s=' "$name"
+		if [ -r "$attr" ]; then
+			tr -d '\n' <"$attr"
+		else
+			printf 'unreadable'
+		fi
+		printf '\n'
+	done
+}
+
 
 
 
@@ -183,6 +207,7 @@ run_optional uname -srmo
 run_optional bluetoothctl --version
 capture_bluetooth_controllers
 run_optional modinfo hid-wiimote
+report_module_parameters
 run_pkg_version libxwiimote
 if command -v loginctl >/dev/null 2>&1 && [ -n "${XDG_SESSION_ID:-}" ]; then
 	loginctl show-session "$XDG_SESSION_ID" -p Type -p Desktop -p Name || true
