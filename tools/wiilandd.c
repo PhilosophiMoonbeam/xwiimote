@@ -2801,6 +2801,8 @@ static void print_axis_map(void)
 	puts("guitar.fret-board=ABS_FRET_BOARD");
 	puts("guitar.strum.up=BTN_STRUM_BAR_UP");
 	puts("guitar.strum.down=BTN_STRUM_BAR_DOWN");
+	puts("guitar.plus=BTN_START");
+	puts("guitar.home=BTN_MODE");
 	puts("guitar.fret.far-up=BTN_FRET_FAR_UP");
 	puts("guitar.fret.up=BTN_FRET_UP");
 	puts("guitar.fret.mid=BTN_FRET_MID");
@@ -2815,6 +2817,8 @@ static void print_axis_map(void)
 	puts("drums.tom.far-right=ABS_WHAMMY_BAR");
 	puts("drums.bass=ABS_FRET_BOARD");
 	puts("drums.hi-hat=ABS_MISC");
+	puts("drums.plus=BTN_START");
+	puts("drums.minus=BTN_SELECT");
 	puts("balance.top-right=ABS_PRESSURE");
 	puts("balance.bottom-right=ABS_DISTANCE");
 	puts("balance.top-left=ABS_TILT_X");

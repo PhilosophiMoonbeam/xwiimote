@@ -40,6 +40,8 @@ grep -F 'pro.zl=BTN_TL2' "$build_dir/axis-map" >/dev/null
 grep -F 'guitar.stick.x=ABS_X' "$build_dir/axis-map" >/dev/null
 grep -F 'classic.zl=BTN_TL2' "$build_dir/axis-map" >/dev/null
 grep -F 'guitar.fret.mid=BTN_FRET_MID' "$build_dir/axis-map" >/dev/null
+grep -F 'guitar.home=BTN_MODE' "$build_dir/axis-map" >/dev/null
+grep -F 'drums.minus=BTN_SELECT' "$build_dir/axis-map" >/dev/null
 "$bin" --validation-checklist >"$build_dir/validation-checklist"
 grep -F 'motion-plus-external.hotplug=required' "$build_dir/validation-checklist" >/dev/null
 grep -F 'wayland.wine-proton=required' "$build_dir/validation-checklist" >/dev/null
