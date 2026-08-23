@@ -275,9 +275,20 @@ report_manual_validation_placeholders() {
 	printf 'manual.notes=TODO: record pass/fail details, game/app names, and deviations\n'
 }
 
+report_timestamp() {
+	printf 'report.timestamp.utc='
+	if command -v date >/dev/null 2>&1; then
+		date -u +%Y-%m-%dT%H:%M:%SZ
+	else
+		printf 'unavailable\n'
+	fi
+}
+
+
 
 
 section host
+report_timestamp
 run_optional uname -srmo
 report_os_release
 run_optional bluetoothctl --version
