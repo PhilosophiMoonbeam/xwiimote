@@ -430,6 +430,7 @@ static int enable_abs_bits(int fd, struct uinput_user_dev *udev)
 		ABS_PRESSURE, ABS_DISTANCE, ABS_TILT_X, ABS_TILT_Y,
 		ABS_THROTTLE, ABS_RUDDER, ABS_WHEEL,
 		ABS_GAS, ABS_BRAKE, ABS_HAT0X,
+		ABS_HAT1X, ABS_HAT1Y, ABS_HAT2X,
 	};
 	size_t i;
 	int ret;
@@ -626,6 +627,20 @@ static int accel_abs_code(unsigned int index)
 	return codes[index];
 }
 
+static int nunchuk_accel_abs_code(unsigned int index)
+{
+	static const int codes[SENSOR_AXIS_COUNT] = {
+		ABS_HAT1X,
+		ABS_HAT1Y,
+		ABS_HAT2X,
+	};
+
+	if (index >= ARRAY_SIZE(codes))
+		return -1;
+
+	return codes[index];
+}
+
 static int motion_plus_abs_code(unsigned int index)
 {
 	static const int codes[SENSOR_AXIS_COUNT] = {
@@ -743,7 +758,7 @@ static int forward_move_event(struct bridge_device *dev,
 		ret = forward_abs_pair(dev, ABS_X, ABS_Y, &event->v.abs[0]);
 		if (!ret)
 			ret = forward_xyz_event(dev, &event->v.abs[1],
-						accel_abs_code);
+						nunchuk_accel_abs_code);
 		break;
 	case XWII_EVENT_CLASSIC_CONTROLLER_MOVE:
 		ret = forward_abs_pair(dev, ABS_X, ABS_Y, &event->v.abs[0]);
@@ -2033,13 +2048,13 @@ static int self_test_nunchuk_forwarding(void)
 	ret = expect_abs_capture("nunchuk-stick-y", ABS_Y, 12);
 	if (ret)
 		return ret;
-	ret = expect_abs_capture("nunchuk-accel-x", ABS_THROTTLE, 21);
+	ret = expect_abs_capture("nunchuk-accel-x", ABS_HAT1X, 21);
 	if (ret)
 		return ret;
-	ret = expect_abs_capture("nunchuk-accel-y", ABS_RUDDER, 22);
+	ret = expect_abs_capture("nunchuk-accel-y", ABS_HAT1Y, 22);
 	if (ret)
 		return ret;
-	return expect_abs_capture("nunchuk-accel-z", ABS_WHEEL, 23);
+	return expect_abs_capture("nunchuk-accel-z", ABS_HAT2X, 23);
 }
 
 static int self_test_gamepad_map(void)
