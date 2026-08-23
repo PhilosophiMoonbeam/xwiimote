@@ -183,6 +183,50 @@ systemd user service with
 .B --check-config
 preflight before starting
 .BR wiilandd .
+.SH GAMEPAD AXES
+The gamepad profile exposes extension sensors on stable evdev absolute axes so
+SDL, Wine/Proton, and native input testers can validate each source separately.
+.TP
+.B Wii Remote accelerometer
+X/Y/Z use
+.BR ABS_THROTTLE ,
+.BR ABS_RUDDER ,
+and
+.BR ABS_WHEEL .
+.TP
+.B Nunchuk
+Stick X/Y use
+.BR ABS_X / ABS_Y ;
+accelerometer X/Y/Z use
+.BR ABS_HAT1X ,
+.BR ABS_HAT1Y ,
+and
+.BR ABS_HAT2X .
+.TP
+.B MotionPlus
+X/Y/Z use
+.BR ABS_GAS ,
+.BR ABS_BRAKE ,
+and
+.BR ABS_HAT0X .
+.TP
+.B Classic and Wii U Pro controllers
+Left stick uses
+.BR ABS_X / ABS_Y ;
+right stick uses
+.BR ABS_RX / ABS_RY ;
+analog triggers use
+.BR ABS_Z / ABS_RZ .
+.TP
+.B Guitar, Drums, Balance Board
+Guitar whammy and fret board use
+.BR ABS_WHAMMY_BAR
+and
+.BR ABS_FRET_BOARD .
+Drums and Balance Board use the documented axes from the validation trace;
+run
+.B --dry-run --trace-events=axes
+while exercising the hardware.
 .SH BACKEND
 The default backend is Linux uinput because it is compositor-independent and is
 already consumed by Wayland compositors and game stacks. The gamepad profile is
