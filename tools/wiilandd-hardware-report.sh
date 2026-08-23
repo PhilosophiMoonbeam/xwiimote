@@ -263,8 +263,14 @@ else
 	printf 'session: unavailable\n'
 fi
 printf 'XDG_CURRENT_DESKTOP=%s\n' "${XDG_CURRENT_DESKTOP:-}"
-printf 'WAYLAND_DISPLAY=%s\n' "${WAYLAND_DISPLAY:-}"
+printf 'XDG_SESSION_DESKTOP=%s\n' "${XDG_SESSION_DESKTOP:-}"
 printf 'XDG_SESSION_TYPE=%s\n' "${XDG_SESSION_TYPE:-}"
+printf 'DESKTOP_SESSION=%s\n' "${DESKTOP_SESSION:-}"
+printf 'GDMSESSION=%s\n' "${GDMSESSION:-}"
+printf 'KDE_SESSION_VERSION=%s\n' "${KDE_SESSION_VERSION:-}"
+printf 'WAYLAND_DISPLAY=%s\n' "${WAYLAND_DISPLAY:-}"
+printf 'SWAYSOCK=%s\n' "${SWAYSOCK:-}"
+printf 'HYPRLAND_INSTANCE_SIGNATURE=%s\n' "${HYPRLAND_INSTANCE_SIGNATURE:-}"
 
 section permissions
 run_optional id

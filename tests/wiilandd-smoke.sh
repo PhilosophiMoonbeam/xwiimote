@@ -46,7 +46,8 @@ printf '\n'
 exit 0
 EOF
 chmod +x "$fake_wiilandd"
-(cd "$build_dir" && WIILANDD=$fake_wiilandd "$root/tools/wiilandd-hardware-report.sh" \
+(cd "$build_dir" && XDG_CURRENT_DESKTOP=TestDesktop SWAYSOCK=/tmp/sway.sock \
+	WIILANDD=$fake_wiilandd "$root/tools/wiilandd-hardware-report.sh" \
 	7 --trace-events=motion-plus) >"$build_dir/hardware-report"
 if git_commit=$(git -C "$root" rev-parse --short HEAD 2>/dev/null); then
 	expected_commit=git.commit=$git_commit
@@ -55,6 +56,8 @@ else
 fi
 grep -F "$expected_commit" "$build_dir/hardware-report" >/dev/null
 grep -F 'git.dirty=' "$build_dir/hardware-report" >/dev/null
+grep -F 'XDG_CURRENT_DESKTOP=TestDesktop' "$build_dir/hardware-report" >/dev/null
+grep -F 'SWAYSOCK=/tmp/sway.sock' "$build_dir/hardware-report" >/dev/null
 mkdir -p "$build_dir/nonrepo"
 (cd "$build_dir" && WIILAND_REPO_DIR=$build_dir/nonrepo \
 	WIILANDD=$fake_wiilandd "$root/tools/wiilandd-hardware-report.sh" \
