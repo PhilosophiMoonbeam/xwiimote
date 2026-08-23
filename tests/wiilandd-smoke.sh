@@ -9,8 +9,11 @@ trap 'rm -rf "$build_dir"' EXIT INT HUP TERM
 mkdir -p "$build_dir"
 bin=$build_dir/wiilandd-smoke
 
-"$cc" -std=gnu99 -Wall -Wextra -Werror -I"$root/lib" \
-	"$root/tools/wiilandd.c" "$root/tests/xwii_stubs.c" -o "$bin"
+"$cc" -std=gnu99 -Wall -Wextra -Werror -DPACKAGE_VERSION=\"smoke\" \
+	-I"$root/lib" "$root/tools/wiilandd.c" "$root/tests/xwii_stubs.c" \
+	-o "$bin"
+
+test "$("$bin" --version)" = "wiilandd smoke"
 
 "$bin" --self-test
 "$bin" --config "$root/res/wiilandd.conf" --check-config

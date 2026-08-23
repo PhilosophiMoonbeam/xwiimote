@@ -84,11 +84,13 @@ Required runtime permissions:
    - Drums: pad hits, cymbal/tom pressure axes, bass and hi-hat pedals;
    - Balance Board: all four weight sensors.
 
-   Each report must record kernel version, libxwiimote version, wiilandd commit,
-   compositor, distribution, Bluetooth adapter, and whether SDL, Wine/Proton,
-   and native Wayland desktop profile behavior matched expectations.
+   Each report must record kernel version, libxwiimote version, wiilandd
+   --version output, git commit, compositor, distribution, Bluetooth adapter,
+   and whether SDL, Wine/Proton, and native Wayland desktop profile behavior
+   matched expectations.
 
    Recommended capture sequence:
+     wiilandd --version
      wiilandd --check-config
      wiilandd --dump-config
      wiilandd --list

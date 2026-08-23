@@ -23,6 +23,9 @@
 #include <unistd.h>
 
 #include "xwiimote.h"
+#ifndef PACKAGE_VERSION
+#define PACKAGE_VERSION "unknown"
+#endif
 
 #ifndef BTN_SOUTH
 #define BTN_SOUTH 0x130
@@ -2318,6 +2321,7 @@ static void usage(FILE *out)
 		"\n"
 		"Options:\n"
 		"\t-h, --help       Show this help\n"
+		"\t    --version    Show version\n"
 		"\t-l, --list       List connected Wii Remote devices and exit\n"
 		"\t-d, --device     Bridge one device instead of monitoring all devices\n"
 		"\t-p, --profile    gamepad, desktop, or both (default: gamepad)\n"
@@ -2368,7 +2372,8 @@ int main(int argc, char **argv)
 			check_config = true;
 		} else if (!strcmp(argv[i], "--dump-config")) {
 			dump_config = true;
-		} else if (!strcmp(argv[i], "-h") || !strcmp(argv[i], "--help") ||
+		} else if (!strcmp(argv[i], "--version") ||
+			   !strcmp(argv[i], "-h") || !strcmp(argv[i], "--help") ||
 			   !strcmp(argv[i], "-l") || !strcmp(argv[i], "--list")) {
 			diagnostic = true;
 		}
@@ -2386,6 +2391,9 @@ int main(int argc, char **argv)
 	for (i = 1; i < argc; ++i) {
 		if (!strcmp(argv[i], "-h") || !strcmp(argv[i], "--help")) {
 			usage(stdout);
+			return 0;
+		} else if (!strcmp(argv[i], "--version")) {
+			printf("wiilandd %s\n", PACKAGE_VERSION);
 			return 0;
 		} else if (!strcmp(argv[i], "-l") || !strcmp(argv[i], "--list")) {
 			return abs(list_devices());
