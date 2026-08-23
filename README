@@ -127,6 +127,9 @@ Run `tests/wiilandd-smoke.sh` to compile the hardware-free `wiilandd` smoke
 binary, exercise deterministic self-tests, validate the sample config, and
 render the daemon manpage when `groff` is installed.
 
+Run `tools/wiilandd-hardware-report.sh` on a Wayland session with real hardware
+attached to collect the required validation metadata and dry-run event traces.
+
 Copying
 =======
 
