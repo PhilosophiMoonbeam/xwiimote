@@ -289,6 +289,7 @@ run_wiilandd_probe --version
 report_git_commit
 run_wiilandd_probe --check-config
 run_wiilandd_probe --dump-config
+run_wiilandd_probe --axis-map
 
 section devices
 if capture_device_list; then

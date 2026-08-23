@@ -42,6 +42,12 @@ test "$(sed -n '6p' "$build_dir/list")" = "	extension=unavailable"
 fake_wiilandd=$build_dir/fake-wiilandd
 cat >"$fake_wiilandd" <<'EOF'
 #!/bin/sh
+case "$1" in
+--axis-map)
+	printf '%s\n' 'nunchuk.accel.x=ABS_HAT1X'
+	exit 0
+	;;
+esac
 printf 'fake-wiilandd'
 for arg do
 	printf ' [%s]' "$arg"
@@ -65,6 +71,8 @@ grep -F 'SWAYSOCK=/tmp/sway.sock' "$build_dir/hardware-report" >/dev/null
 grep -F 'manual.sdl=TODO:' "$build_dir/hardware-report" >/dev/null
 grep -F 'manual.wine-proton=TODO:' "$build_dir/hardware-report" >/dev/null
 grep -F 'manual.native-wayland-desktop=TODO:' "$build_dir/hardware-report" >/dev/null
+grep -F '$ '"$fake_wiilandd"' --axis-map' "$build_dir/hardware-report" >/dev/null
+grep -F 'nunchuk.accel.x=ABS_HAT1X' "$build_dir/hardware-report" >/dev/null
 mkdir -p "$build_dir/nonrepo"
 (cd "$build_dir" && WIILAND_REPO_DIR=$build_dir/nonrepo \
 	WIILANDD=$fake_wiilandd "$root/tools/wiilandd-hardware-report.sh" \
