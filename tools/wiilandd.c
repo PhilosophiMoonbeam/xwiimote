@@ -99,6 +99,9 @@ struct bridge_device {
 	unsigned int pointer_keys;
 	int pointer_dx;
 	int pointer_dy;
+	bool ir_active;
+	int32_t ir_x;
+	int32_t ir_y;
 };
 
 static volatile sig_atomic_t should_stop;
@@ -610,6 +613,71 @@ static int tick_pointer(struct bridge_device *dev)
 	return emit_syn(dev->desktop_fd);
 }
 
+static int scaled_ir_delta(int32_t from, int32_t to)
+{
+	return (to - from) / 8;
+}
+
+static const struct xwii_event_abs *first_valid_ir_source(
+					const struct xwii_event *event)
+{
+	size_t i;
+
+	for (i = 0; i < 4; ++i) {
+		if (xwii_event_ir_is_valid(&event->v.abs[i]))
+			return &event->v.abs[i];
+	}
+
+	return NULL;
+}
+
+static void update_ir_pointer_state(struct bridge_device *dev,
+				    const struct xwii_event_abs *src,
+				    int *dx, int *dy)
+{
+	*dx = 0;
+	*dy = 0;
+
+	if (!src) {
+		dev->ir_active = false;
+		return;
+	}
+
+	if (dev->ir_active) {
+		*dx = scaled_ir_delta(dev->ir_x, src->x);
+		*dy = scaled_ir_delta(dev->ir_y, src->y);
+	}
+
+	dev->ir_active = true;
+	dev->ir_x = src->x;
+	dev->ir_y = src->y;
+}
+
+static int forward_desktop_ir_event(struct bridge_device *dev,
+				    const struct xwii_event *event)
+{
+	const struct xwii_event_abs *src;
+	int dx, dy, ret;
+
+	if (event->type != XWII_EVENT_IR)
+		return 0;
+
+	src = first_valid_ir_source(event);
+	update_ir_pointer_state(dev, src, &dx, &dy);
+	if (!dx && !dy)
+		return 0;
+
+	ret = emit_rel(dev->desktop_fd, REL_X, dx);
+	if (ret)
+		return ret;
+
+	ret = emit_rel(dev->desktop_fd, REL_Y, dy);
+	if (ret)
+		return ret;
+
+	return emit_syn(dev->desktop_fd);
+}
+
 static int reopen_available_ifaces(struct bridge_device *dev)
 {
 	unsigned int todo;
@@ -656,6 +724,10 @@ static int handle_xwii_event(struct bridge_device *dev,
 	case XWII_EVENT_GUITAR_MOVE:
 		if (profiles & PROFILE_GAMEPAD)
 			return forward_move_event(dev, event);
+		return 0;
+	case XWII_EVENT_IR:
+		if (profiles & PROFILE_DESKTOP)
+			return forward_desktop_ir_event(dev, event);
 		return 0;
 	default:
 		return 0;
@@ -1257,6 +1329,60 @@ static int self_test_desktop_map(void)
 	return expect_int("pointer-cleared", has_pointer_motion(&dev), 0);
 }
 
+static int self_test_ir_pointer(void)
+{
+	struct xwii_event event;
+	struct bridge_device dev;
+	const struct xwii_event_abs *src;
+	int dx, dy, ret;
+
+	memset(&event, 0, sizeof(event));
+	memset(&dev, 0, sizeof(dev));
+	event.type = XWII_EVENT_IR;
+	event.v.abs[0].x = 1023;
+	event.v.abs[0].y = 1023;
+	event.v.abs[1].x = 200;
+	event.v.abs[1].y = 300;
+
+	src = first_valid_ir_source(&event);
+	ret = expect_int("ir-source-x", src ? src->x : -1, 200);
+	if (ret)
+		return ret;
+	ret = expect_int("ir-source-y", src ? src->y : -1, 300);
+	if (ret)
+		return ret;
+
+	update_ir_pointer_state(&dev, src, &dx, &dy);
+	ret = expect_int("ir-first-dx", dx, 0);
+	if (ret)
+		return ret;
+	ret = expect_int("ir-first-dy", dy, 0);
+	if (ret)
+		return ret;
+
+	event.v.abs[1].x = 280;
+	event.v.abs[1].y = 260;
+	src = first_valid_ir_source(&event);
+	update_ir_pointer_state(&dev, src, &dx, &dy);
+	ret = expect_int("ir-delta-x", dx, 10);
+	if (ret)
+		return ret;
+	ret = expect_int("ir-delta-y", dy, -5);
+	if (ret)
+		return ret;
+
+	update_ir_pointer_state(&dev, NULL, &dx, &dy);
+	ret = expect_int("ir-reset-active", dev.ir_active, 0);
+	if (ret)
+		return ret;
+
+	update_ir_pointer_state(&dev, src, &dx, &dy);
+	ret = expect_int("ir-after-reset-dx", dx, 0);
+	if (ret)
+		return ret;
+	return expect_int("ir-after-reset-dy", dy, 0);
+}
+
 static int self_test_profiles(void)
 {
 	int ret;
@@ -1347,6 +1473,9 @@ static int run_self_test(void)
 	if (ret)
 		return ret;
 	ret = self_test_desktop_map();
+	if (ret)
+		return ret;
+	ret = self_test_ir_pointer();
 	if (ret)
 		return ret;
 	ret = self_test_profiles();

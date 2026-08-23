@@ -37,9 +37,9 @@ Select the virtual input profile. The default
 .B gamepad
 profile creates a virtual controller for games. The
 .B desktop
-profile creates a virtual mouse/keyboard device: D-pad moves the pointer,
-A/B click, +/- send Enter/Escape, Home sends the compositor overview key,
-and 1/2 send Page Down/Page Up.
+profile creates a virtual mouse/keyboard device: D-pad repeat and valid IR
+events move the pointer, A/B click, +/- send Enter/Escape, Home sends the
+compositor overview key, and 1/2 send Page Down/Page Up.
 .TP
 .BR --pointer-speed " " 1-127
 Set the desktop profile pointer step in pixels per repeat tick. The default is
@@ -57,7 +57,7 @@ Enumerate and open devices without creating /dev/uinput devices or emitting
 virtual input. Useful for smoke tests and service diagnostics.
 .TP
 .BR --self-test
-Run deterministic profile, config, button-map, and pointer-motion tests, then exit.
+Run deterministic profile, config, button-map, IR, and pointer-motion tests, then exit.
 This mode does not enumerate devices or open
 .BR /dev/uinput .
 .TP

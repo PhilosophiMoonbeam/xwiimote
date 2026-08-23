@@ -27,9 +27,9 @@ wiilandd:
     Drums button events to the gamepad profile;
   - forwards Nunchuk, Classic Controller, Pro Controller, and Guitar axes to
     the gamepad profile;
-  - maps Wii Remote core input in the desktop profile: D-pad moves the pointer,
-    A/B click, +/- send Enter/Escape, Home sends the compositor overview key,
-    and 1/2 send Page Down/Page Up;
+  - maps Wii Remote core input in the desktop profile: D-pad repeat and valid
+    IR events move the pointer, A/B click, +/- send Enter/Escape, Home sends
+    the compositor overview key, and 1/2 send Page Down/Page Up;
   - supports key=value configuration for default profile and desktop pointer
     speed through ~/.config/wiiland/wiilandd.conf or --config;
   - provides --self-test for deterministic profile, button-map, config, and
