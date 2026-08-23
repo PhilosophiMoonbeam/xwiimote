@@ -160,6 +160,7 @@ enum trace_filter {
 	TRACE_FILTER_ALL,
 	TRACE_FILTER_KEYS,
 	TRACE_FILTER_AXES,
+	TRACE_FILTER_IR,
 	TRACE_FILTER_MOTION_PLUS,
 };
 
@@ -1088,6 +1089,8 @@ static bool trace_event_matches(const struct xwii_event *event)
 		return is_key_event(event->type);
 	case TRACE_FILTER_AXES:
 		return is_abs_event(event->type);
+	case TRACE_FILTER_IR:
+		return event->type == XWII_EVENT_IR;
 	case TRACE_FILTER_MOTION_PLUS:
 		return event->type == XWII_EVENT_MOTION_PLUS;
 	default:
@@ -1657,6 +1660,10 @@ static int parse_trace_events(const char *arg)
 	}
 	if (!strcmp(arg, "axes")) {
 		trace_filter = TRACE_FILTER_AXES;
+		return 0;
+	}
+	if (!strcmp(arg, "ir")) {
+		trace_filter = TRACE_FILTER_IR;
 		return 0;
 	}
 	if (!strcmp(arg, "motion-plus")) {
@@ -2665,6 +2672,23 @@ static int self_test_event_trace(void)
 			 0);
 	if (ret)
 		return ret;
+	ret = parse_trace_events("ir");
+	if (ret)
+		return ret;
+	ret = expect_int("trace-filter-ir",
+			 trace_event_matches(&(struct xwii_event){
+				 .type = XWII_EVENT_IR,
+			 }),
+			 1);
+	if (ret)
+		return ret;
+	ret = expect_int("trace-filter-ir-key",
+			 trace_event_matches(&(struct xwii_event){
+				 .type = XWII_EVENT_KEY,
+			 }),
+			 0);
+	if (ret)
+		return ret;
 	ret = expect_int("trace-filter-invalid",
 			 parse_trace_events("bad"), -EINVAL);
 	if (ret)
@@ -2966,7 +2990,7 @@ static void usage(FILE *out)
 		"\t-n, --dry-run    Do not create /dev/uinput devices or emit input\n"
 		"\t    --check-config  Validate configuration and exit\n"
 		"\t    --self-test  Run deterministic self tests and exit\n"
-		"\t    --trace-events[=all|keys|axes|motion-plus]\n"
+		"\t    --trace-events[=all|keys|axes|ir|motion-plus]\n"
 		"\t                  Print decoded libxwiimote events\n"
 		"\t    --axis-map   Print virtual gamepad axis mapping and exit\n"
 		"\t    --validation-checklist\n"

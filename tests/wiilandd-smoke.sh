@@ -59,6 +59,7 @@ grep -F 'wayland.socket.exists=yes' "$build_dir/doctor" >/dev/null
 grep -F 'dev.uinput.writable=' "$build_dir/doctor" >/dev/null
 grep -F 'backend=uinput' "$build_dir/doctor" >/dev/null
 grep -F 'profile=desktop' "$build_dir/doctor" >/dev/null
+"$bin" --no-config --trace-events=ir --dump-config >/dev/null
 "$bin" --no-config --trace-events=motion-plus --dump-config >/dev/null
 if "$bin" --no-config --trace-events=bad --dump-config >/dev/null 2>&1; then
 	printf '%s\n' 'wiilandd accepted invalid trace event filter' >&2

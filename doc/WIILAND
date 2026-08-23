@@ -106,6 +106,7 @@ Required runtime permissions:
      tools/wiilandd-hardware-report.sh
      tools/wiilandd-hardware-report.sh N
      tools/wiilandd-hardware-report.sh N --trace-events=motion-plus
+     tools/wiilandd-hardware-report.sh N --trace-events=ir
 
    The first command records finite report schema version, host, UTC capture
    timestamp, distribution, compositor/session environment, Bluetooth
@@ -116,8 +117,9 @@ Required runtime permissions:
    and native Wayland desktop behavior.
    The second command captures sequenced, filtered --dry-run --trace-events
    --verbose output for one device. Extra arguments are passed to wiilandd; use
-   --trace-events=motion-plus when validating MotionPlus only, or use the
-   number from --list or a sysfs path.
+   --trace-events=motion-plus when validating MotionPlus only,
+   --trace-events=ir when tuning IR pointer input, or use the number from
+   --list or a sysfs path.
 
    After dry-run traces show expected events, repeat without --dry-run and
    validate the virtual gamepad in an SDL input tester, one Wine/Proton game,
