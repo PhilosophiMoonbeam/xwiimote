@@ -29,8 +29,13 @@ cat >"$build_dir/doctor.conf" <<'EOF'
 backend=uinput
 profile=desktop
 EOF
-"$bin" --config "$build_dir/doctor.conf" --doctor >"$build_dir/doctor"
-grep -F 'session.wayland=' "$build_dir/doctor" >/dev/null
+touch "$build_dir/wayland-1"
+WAYLAND_DISPLAY=wayland-1 XDG_RUNTIME_DIR=$build_dir \
+	"$bin" --config "$build_dir/doctor.conf" --doctor >"$build_dir/doctor"
+grep -F 'session.wayland=yes' "$build_dir/doctor" >/dev/null
+grep -F "wayland.socket.path=$build_dir/wayland-1" "$build_dir/doctor" >/dev/null
+grep -F 'wayland.socket.type=other' "$build_dir/doctor" >/dev/null
+grep -F 'wayland.socket.exists=yes' "$build_dir/doctor" >/dev/null
 grep -F 'dev.uinput.writable=' "$build_dir/doctor" >/dev/null
 grep -F 'backend=uinput' "$build_dir/doctor" >/dev/null
 grep -F 'profile=desktop' "$build_dir/doctor" >/dev/null

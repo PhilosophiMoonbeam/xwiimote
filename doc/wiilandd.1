@@ -96,9 +96,13 @@ Print the required real-hardware validation matrix, then exit. This is a
 hardware-report aid and does not enumerate devices.
 .TP
 .BR --doctor
-Print runtime readiness diagnostics for the current session and
+Print runtime readiness diagnostics for the current session,
+.BR WAYLAND_DISPLAY ,
+.BR XDG_RUNTIME_DIR ,
+the resolved Wayland socket path,
 .BR /dev/uinput ,
-then exit. This loads configuration like a normal daemon start; combine with
+backend, and profile, then exit. This loads configuration like a normal daemon
+start; combine with
 .BR --no-config
 to inspect only built-in defaults. This does not enumerate Wii devices.
 .TP

@@ -11,6 +11,7 @@
 #include <fcntl.h>
 #include <linux/input.h>
 #include <linux/uinput.h>
+#include <limits.h>
 #include <time.h>
 #include <poll.h>
 #include <signal.h>
@@ -21,11 +22,15 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/ioctl.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 #include "xwiimote.h"
 #ifndef PACKAGE_VERSION
 #define PACKAGE_VERSION "unknown"
+#endif
+#ifndef PATH_MAX
+#define PATH_MAX 4096
 #endif
 
 #ifndef BTN_SOUTH
@@ -2788,23 +2793,87 @@ static void print_validation_checklist(void)
 	puts("wayland.desktop-profile=required");
 }
 
+static const char *path_exists(const char *path)
+{
+	if (!path)
+		return "unknown";
+	return access(path, F_OK) == 0 ? "yes" : "no";
+}
+
+static const char *path_readable(const char *path)
+{
+	if (!path)
+		return "unknown";
+	return access(path, R_OK) == 0 ? "yes" : "no";
+}
+
+static const char *path_writable(const char *path)
+{
+	if (!path)
+		return "unknown";
+	return access(path, W_OK) == 0 ? "yes" : "no";
+}
+
+static const char *wayland_socket_type(const char *path)
+{
+	struct stat st;
+
+	if (!path)
+		return "unknown";
+	if (lstat(path, &st) < 0)
+		return errno == ENOENT ? "missing" : "unknown";
+	if (S_ISSOCK(st.st_mode))
+		return "socket";
+	return "other";
+}
+
+static const char *resolve_wayland_socket(const char *display,
+					  const char *runtime_dir,
+					  char *path,
+					  size_t path_size)
+{
+	int ret;
+
+	if (!display || !display[0])
+		return NULL;
+	if (display[0] == '/')
+		return display;
+	if (!runtime_dir || !runtime_dir[0])
+		return NULL;
+	ret = snprintf(path, path_size, "%s/%s", runtime_dir, display);
+	if (ret < 0 || (size_t)ret >= path_size)
+		return NULL;
+	return path;
+}
+
 static void print_doctor(void)
 {
 	const char *wayland = getenv("WAYLAND_DISPLAY");
+	const char *runtime_dir = getenv("XDG_RUNTIME_DIR");
 	const char *session_type = getenv("XDG_SESSION_TYPE");
 	const char *desktop = getenv("XDG_CURRENT_DESKTOP");
+	char wayland_socket[PATH_MAX];
+	const char *socket_path;
+
+	socket_path = resolve_wayland_socket(wayland, runtime_dir, wayland_socket,
+					     sizeof(wayland_socket));
 
 	printf("session.wayland=%s\n", wayland && wayland[0] ? "yes" : "no");
 	printf("session.type=%s\n",
 	       session_type && session_type[0] ? session_type : "unknown");
 	printf("session.desktop=%s\n",
 	       desktop && desktop[0] ? desktop : "unknown");
-	printf("dev.uinput.exists=%s\n",
-	       access("/dev/uinput", F_OK) == 0 ? "yes" : "no");
-	printf("dev.uinput.readable=%s\n",
-	       access("/dev/uinput", R_OK) == 0 ? "yes" : "no");
-	printf("dev.uinput.writable=%s\n",
-	       access("/dev/uinput", W_OK) == 0 ? "yes" : "no");
+	printf("wayland.display=%s\n", wayland && wayland[0] ? wayland : "unknown");
+	printf("xdg.runtime.dir=%s\n",
+	       runtime_dir && runtime_dir[0] ? runtime_dir : "unknown");
+	printf("wayland.socket.path=%s\n", socket_path ? socket_path : "unknown");
+	printf("wayland.socket.type=%s\n", wayland_socket_type(socket_path));
+	printf("wayland.socket.exists=%s\n", path_exists(socket_path));
+	printf("wayland.socket.readable=%s\n", path_readable(socket_path));
+	printf("wayland.socket.writable=%s\n", path_writable(socket_path));
+	printf("dev.uinput.exists=%s\n", path_exists("/dev/uinput"));
+	printf("dev.uinput.readable=%s\n", path_readable("/dev/uinput"));
+	printf("dev.uinput.writable=%s\n", path_writable("/dev/uinput"));
 	printf("backend=%s\n", backend_name(backend));
 	printf("profile=%s\n", profile_name(profiles));
 }
