@@ -73,6 +73,28 @@ Required runtime permissions:
    sessions only.
 
 5. Test hardware matrix
-   Verify with original Wii Remote, Wii Remote Plus, Nunchuk, Classic
-   Controller, Wii U Pro Controller, Guitar, Drums, and Balance Board. Hardware
-   reports should record kernel version, compositor, and SDL/Wine behavior.
+   Completion requires direct reports for:
+   - original Wii Remote: core buttons, accelerometer, IR desktop pointer;
+   - Wii Remote Plus: core buttons, accelerometer, MotionPlus axes;
+   - Nunchuk: stick, C/Z buttons, accelerometer passthrough;
+   - Classic Controller: sticks, triggers, face buttons;
+   - Wii U Pro Controller: sticks, triggers, face buttons;
+   - Guitar: fret buttons, strum bar, whammy, stick;
+   - Drums: pad hits, cymbal/tom pressure axes, bass and hi-hat pedals;
+   - Balance Board: all four weight sensors.
+
+   Each report must record kernel version, libxwiimote version, wiilandd commit,
+   compositor, distribution, Bluetooth adapter, and whether SDL, Wine/Proton,
+   and native Wayland desktop profile behavior matched expectations.
+
+   Recommended capture sequence:
+     wiilandd --check-config
+     wiilandd --dump-config
+     wiilandd --list
+     wiilandd --dry-run --trace-events --verbose --device N --profile both
+
+   After dry-run traces show expected events, repeat without --dry-run and
+   validate the virtual gamepad in an SDL input tester, one Wine/Proton game,
+   and the desktop pointer/buttons under a native Wayland compositor. Do not
+   mark the Wayland migration complete until this matrix has real hardware
+   evidence.
