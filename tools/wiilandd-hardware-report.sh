@@ -8,6 +8,7 @@ if [ "$#" -gt 0 ]; then
 	device=$1
 	shift
 fi
+repo_dir=${WIILAND_REPO_DIR:-$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)}
 module_dir=${HID_WIIMOTE_MODULE_DIR:-/sys/module/hid_wiimote}
 os_release=${OS_RELEASE_PATH:-/etc/os-release}
 list_file=${TMPDIR:-/tmp}/wiilandd-hardware-report-list.$$
@@ -65,7 +66,7 @@ read_sysfs_attr() {
 report_git_commit() {
 	if command -v git >/dev/null 2>&1; then
 		printf 'git.commit='
-		if ! git rev-parse --short HEAD 2>/dev/null; then
+		if ! git -C "$repo_dir" rev-parse --short HEAD 2>/dev/null; then
 			printf 'unavailable\n'
 		fi
 	else

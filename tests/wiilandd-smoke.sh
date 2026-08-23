@@ -46,8 +46,10 @@ printf '\n'
 exit 0
 EOF
 chmod +x "$fake_wiilandd"
-WIILANDD=$fake_wiilandd "$root/tools/wiilandd-hardware-report.sh" \
-	7 --trace-events=motion-plus >"$build_dir/hardware-report"
+(cd "$build_dir" && WIILANDD=$fake_wiilandd "$root/tools/wiilandd-hardware-report.sh" \
+	7 --trace-events=motion-plus) >"$build_dir/hardware-report"
+grep -F "git.commit=$(git -C "$root" rev-parse --short HEAD)" \
+	"$build_dir/hardware-report" >/dev/null
 grep -F 'fake-wiilandd [--dry-run] [--trace-events] [--verbose] [--device] [7] [--profile] [both] [--trace-events=motion-plus]' \
 	"$build_dir/hardware-report" >/dev/null
 
