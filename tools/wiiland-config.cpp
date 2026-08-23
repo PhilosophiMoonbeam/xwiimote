@@ -72,8 +72,23 @@ QStringList buttonActions()
     };
 }
 
+QStringList desktopBindingNames()
+{
+    return {
+        QStringLiteral("a"),
+        QStringLiteral("b"),
+        QStringLiteral("plus"),
+        QStringLiteral("minus"),
+        QStringLiteral("home"),
+        QStringLiteral("one"),
+        QStringLiteral("two"),
+    };
+}
+
 void setComboText(QComboBox *combo, const QString &value)
 {
+    if (!combo)
+        return;
     const int index = combo->findText(value);
     if (index >= 0)
         combo->setCurrentIndex(index);
@@ -192,9 +207,7 @@ private:
 
         auto *bindingsBox = new QGroupBox(QStringLiteral("Desktop button bindings"), tab);
         auto *bindingsForm = new QFormLayout(bindingsBox);
-        for (const QString &name : {QStringLiteral("a"), QStringLiteral("b"), QStringLiteral("plus"),
-                                   QStringLiteral("minus"), QStringLiteral("home"), QStringLiteral("one"),
-                                   QStringLiteral("two")}) {
+        for (const QString &name : desktopBindingNames()) {
             auto *combo = new QComboBox(bindingsBox);
             combo->addItems(buttonActions());
             desktopActions.insert(name, combo);
@@ -306,22 +319,27 @@ private:
 
     void runCommand(const QStringList &arguments)
     {
-        QProcess process(this);
-        process.setProcessChannelMode(QProcess::MergedChannels);
+        auto *process = new QProcess(this);
+        process->setProcessChannelMode(QProcess::MergedChannels);
         const QString program = wiilanddPath->text().trimmed().isEmpty()
             ? QStringLiteral("wiilandd")
             : wiilanddPath->text().trimmed();
         appendOutput(QStringLiteral("$ ") + quoteCommand(program, arguments));
-        process.start(program, arguments);
-        if (!process.waitForStarted(5000)) {
-            appendOutput(QStringLiteral("failed to start: ") + process.errorString());
-            return;
-        }
-        process.waitForFinished(15000);
-        appendOutput(QString::fromLocal8Bit(process.readAllStandardOutput()));
-        if (process.exitStatus() != QProcess::NormalExit || process.exitCode() != 0)
-            appendOutput(QStringLiteral("exit status: %1").arg(process.exitCode()));
-        statusBar()->showMessage(QStringLiteral("Command finished"), 4000);
+        connect(process, &QProcess::readyReadStandardOutput, this, [this, process]() {
+            appendOutput(QString::fromLocal8Bit(process->readAllStandardOutput()));
+        });
+        connect(process, &QProcess::errorOccurred, this, [this, process](QProcess::ProcessError) {
+            appendOutput(QStringLiteral("process error: ") + process->errorString());
+        });
+        connect(process, qOverload<int, QProcess::ExitStatus>(&QProcess::finished), this, [this, process](int code, QProcess::ExitStatus status) {
+            appendOutput(QString::fromLocal8Bit(process->readAllStandardOutput()));
+            if (status != QProcess::NormalExit || code != 0)
+                appendOutput(QStringLiteral("exit status: %1").arg(code));
+            process->deleteLater();
+            statusBar()->showMessage(QStringLiteral("Command finished"), 4000);
+        });
+        process->start(program, arguments);
+        statusBar()->showMessage(QStringLiteral("Command running"));
     }
 
     void startTrace()
@@ -447,8 +465,8 @@ private:
         out << "ir-speed=" << irSpeed->value() << "\n";
         out << "ir-deadzone=" << irDeadzone->value() << "\n";
         out << "ir-smoothing=" << irSmoothing->value() << "\n";
-        for (auto it = desktopActions.cbegin(); it != desktopActions.cend(); ++it)
-            out << "desktop." << it.key() << '=' << it.value()->currentText() << "\n";
+        for (const QString &name : desktopBindingNames())
+            out << "desktop." << name << '=' << desktopActions.value(name)->currentText() << "\n";
         for (int row = 0; row < rules->rowCount(); ++row) {
             auto *kindCombo = qobject_cast<QComboBox *>(rules->cellWidget(row, 0));
             auto *profileCombo = qobject_cast<QComboBox *>(rules->cellWidget(row, 2));

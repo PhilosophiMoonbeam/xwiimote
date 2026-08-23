@@ -191,6 +191,9 @@ grep -F 'PKG_CHECK_MODULES([QT6_WIDGETS], [Qt6Widgets]' "$root/configure.ac" >/d
 grep -F 'bin_PROGRAMS += wiiland-config' "$root/Makefile.am" >/dev/null
 grep -F 'QApplication app(argc, argv);' "$root/tools/wiiland-config.cpp" >/dev/null
 grep -F 'QTabWidget' "$root/tools/wiiland-config.cpp" >/dev/null
+grep -F 'qOverload<int, QProcess::ExitStatus>(&QProcess::finished)' "$root/tools/wiiland-config.cpp" >/dev/null
+grep -F 'process->start(program, arguments);' "$root/tools/wiiland-config.cpp" >/dev/null
+grep -F 'desktopBindingNames()' "$root/tools/wiiland-config.cpp" >/dev/null
 
 
 
