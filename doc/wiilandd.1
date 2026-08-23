@@ -89,9 +89,10 @@ Run deterministic profile, config, button-map, IR, and pointer-motion tests, the
 This mode does not enumerate devices or open
 .BR /dev/uinput .
 .TP
-.BR --trace-events
+.BR --trace-events [ =all | keys | axes | motion-plus ]
 Print sequenced, monotonic-timestamped decoded libxwiimote event records before
-forwarding them. MotionPlus events are reported as
+forwarding them. Optional filters reduce output to key events, absolute-axis
+events, or MotionPlus events. MotionPlus events are reported as
 .B motion-plus
 with X/Y/Z axis payloads. Intended for hardware validation reports; combine with
 .B --dry-run

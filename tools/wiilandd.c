@@ -151,6 +151,13 @@ enum backend {
 	BACKEND_UINPUT,
 };
 
+enum trace_filter {
+	TRACE_FILTER_ALL,
+	TRACE_FILTER_KEYS,
+	TRACE_FILTER_AXES,
+	TRACE_FILTER_MOTION_PLUS,
+};
+
 struct bridge_device {
 	struct xwii_iface *iface;
 	char *syspath;
@@ -169,6 +176,7 @@ static volatile sig_atomic_t should_stop;
 static bool verbose;
 static bool dry_run;
 static bool trace_events;
+static enum trace_filter trace_filter = TRACE_FILTER_ALL;
 static unsigned long long trace_sequence;
 static unsigned int profiles = PROFILE_GAMEPAD;
 static enum backend backend = BACKEND_UINPUT;
@@ -1009,6 +1017,22 @@ static bool is_abs_event(unsigned int type)
 	}
 }
 
+static bool trace_event_matches(const struct xwii_event *event)
+{
+	switch (trace_filter) {
+	case TRACE_FILTER_ALL:
+		return true;
+	case TRACE_FILTER_KEYS:
+		return is_key_event(event->type);
+	case TRACE_FILTER_AXES:
+		return is_abs_event(event->type);
+	case TRACE_FILTER_MOTION_PLUS:
+		return event->type == XWII_EVENT_MOTION_PLUS;
+	default:
+		return true;
+	}
+}
+
 static int64_t trace_time_us(void)
 {
 	struct timespec ts;
@@ -1026,7 +1050,7 @@ static void trace_xwii_event(const struct bridge_device *dev,
 	int64_t now_us;
 	unsigned long long seq;
 
-	if (!trace_events)
+	if (!trace_events || !trace_event_matches(event))
 		return;
 
 	seq = ++trace_sequence;
@@ -1530,6 +1554,30 @@ static int parse_profile_value(const char *arg, unsigned int *out)
 	return -EINVAL;
 }
 
+
+static int parse_trace_events(const char *arg)
+{
+	trace_events = true;
+
+	if (!arg || !strcmp(arg, "all")) {
+		trace_filter = TRACE_FILTER_ALL;
+		return 0;
+	}
+	if (!strcmp(arg, "keys")) {
+		trace_filter = TRACE_FILTER_KEYS;
+		return 0;
+	}
+	if (!strcmp(arg, "axes")) {
+		trace_filter = TRACE_FILTER_AXES;
+		return 0;
+	}
+	if (!strcmp(arg, "motion-plus")) {
+		trace_filter = TRACE_FILTER_MOTION_PLUS;
+		return 0;
+	}
+
+	return -EINVAL;
+}
 static int parse_backend(const char *arg)
 {
 	if (!strcmp(arg, "uinput")) {
@@ -2455,6 +2503,30 @@ static int self_test_event_trace(void)
 	ret = expect_int("trace-time", trace_time_us() >= 0, 1);
 	if (ret)
 		return ret;
+	ret = parse_trace_events("motion-plus");
+	if (ret)
+		return ret;
+	ret = expect_int("trace-filter-motion-plus",
+			 trace_event_matches(&(struct xwii_event){
+				 .type = XWII_EVENT_MOTION_PLUS,
+			 }),
+			 1);
+	if (ret)
+		return ret;
+	ret = expect_int("trace-filter-motion-plus-key",
+			 trace_event_matches(&(struct xwii_event){
+				 .type = XWII_EVENT_KEY,
+			 }),
+			 0);
+	if (ret)
+		return ret;
+	ret = expect_int("trace-filter-invalid",
+			 parse_trace_events("bad"), -EINVAL);
+	if (ret)
+		return ret;
+	trace_events = false;
+	trace_filter = TRACE_FILTER_ALL;
+
 	return expect_int("trace-unknown-name",
 			  strcmp(event_type_name(XWII_EVENT_NUM), "unknown"), 0);
 }
@@ -2665,8 +2737,13 @@ int main(int argc, char **argv)
 			self_test = true;
 		} else if (!strcmp(argv[i], "--check-config")) {
 			check_config = true;
+		} else if (!strncmp(argv[i], "--trace-events=", 15)) {
+			if (parse_trace_events(argv[i] + 15)) {
+				usage(stderr);
+				return EINVAL;
+			}
 		} else if (!strcmp(argv[i], "--trace-events")) {
-			trace_events = true;
+			parse_trace_events(NULL);
 		} else if (!strcmp(argv[i], "--dump-config")) {
 			dump_config = true;
 		} else if (!strcmp(argv[i], "-v") || !strcmp(argv[i], "--verbose")) {
