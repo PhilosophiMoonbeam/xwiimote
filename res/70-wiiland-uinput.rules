@@ -1,8 +1,9 @@
-# Udev uinput permission setup for wiilandd
+# Udev permission setup for wiilandd
 #
-# wiilandd creates virtual evdev controllers through /dev/uinput so
-# Wayland compositors and native game stacks can consume Wii Remote input.
-# Distributions may install this rule or replace it with a stricter local
-# service policy. TAG+="uaccess" lets logind grant the active seat user access.
+# wiilandd reads hid-wiimote /dev/input/event* nodes through libxwiimote and
+# creates virtual evdev controllers through /dev/uinput. TAG+="uaccess" lets
+# logind grant the active seat user access on Wayland desktops while GROUP and
+# MODE keep a conventional input-group fallback for non-logind systems.
 
+SUBSYSTEM=="input", KERNEL=="event*", DRIVERS=="wiimote", TAG+="uaccess", GROUP="input", MODE="0660"
 KERNEL=="uinput", SUBSYSTEM=="misc", OPTIONS+="static_node=uinput", TAG+="uaccess", GROUP="input", MODE="0660"

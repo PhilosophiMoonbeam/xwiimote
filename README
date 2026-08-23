@@ -99,10 +99,10 @@ For hardware-free diagnostics in packaging or CI, run:
 `wiilandd --help` and `wiilandd --list` intentionally bypass configuration so
 diagnostics still work when a local config file is broken.
 
-The Wayland bridge needs read access to hid-wiimote input devices and write
-access to /dev/uinput. See ./doc/WIILAND for the migration plan, backend
-rationale, the sample config in ./res/wiilandd.conf, the example udev rule in
-./res/70-wiiland-uinput.rules, and the example user service in
+The Wayland bridge needs read access to hid-wiimote `/dev/input/event*` nodes and
+write access to `/dev/uinput`. See ./doc/WIILAND for the migration plan, backend
+rationale, the sample config in ./res/wiilandd.conf, the installable udev access
+rule in ./res/70-wiiland-uinput.rules, and the example user service in
 ./res/wiilandd.service. The service runs `wiilandd --check-config` before
 starting so broken configuration fails fast.
 
