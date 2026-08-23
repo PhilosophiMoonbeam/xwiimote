@@ -36,9 +36,6 @@ EXTRA_DIST = \
 	LICENSE \
 	res/50-xorg-fix-wiiland.conf \
 	res/70-udev-wiiland.rules \
-	res/70-wiiland-uinput.rules \
-	res/wiilandd.service \
-	res/wiilandd.conf \
 	tests/xwii_stubs.c \
 	.github/workflows/ci.yml \
 	doc/WIILAND \
@@ -64,6 +61,18 @@ pkgconfig_DATA = libxwiimote.pc
 EXTRA_DIST += \
 	$(pkgconfig_DATA) \
 	libxwiimote.pc.in
+
+udevrulesdir = $(libdir)/udev/rules.d
+dist_udevrules_DATA = \
+	res/70-wiiland-uinput.rules
+
+systemduserdir = $(prefix)/lib/systemd/user
+dist_systemduser_DATA = \
+	res/wiilandd.service
+
+wiilandexamplesdir = $(docdir)/examples
+dist_wiilandexamples_DATA = \
+	res/wiilandd.conf
 
 #
 # Default c/l-flags

@@ -106,6 +106,9 @@ rationale, the sample config in ./res/wiilandd.conf, the example udev rule in
 ./res/wiilandd.service. The service runs `wiilandd --check-config` before
 starting so broken configuration fails fast.
 
+`make install` installs the uinput udev rule, systemd user service, and sample
+configuration under the selected prefix.
+
 Documentation
 =============
 

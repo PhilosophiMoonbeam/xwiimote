@@ -68,8 +68,9 @@ Required runtime permissions:
    game stacks today.
 
 4. Distribution integration
-   Ship the example systemd user service, sample config, and udev rule from
-   res/. Keep the legacy Xorg blacklist file for legacy Xorg sessions only.
+   Automake installs the uinput udev rule, systemd user service, and sample
+   config from res/. Keep the legacy Xorg blacklist file for legacy Xorg
+   sessions only.
 
 5. Test hardware matrix
    Verify with original Wii Remote, Wii Remote Plus, Nunchuk, Classic
