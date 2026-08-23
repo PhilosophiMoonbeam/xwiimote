@@ -3,7 +3,11 @@
 set -eu
 
 wiilandd=${WIILANDD:-wiilandd}
-device=${1:-}
+device=
+if [ "$#" -gt 0 ]; then
+	device=$1
+	shift
+fi
 module_dir=${HID_WIIMOTE_MODULE_DIR:-/sys/module/hid_wiimote}
 os_release=${OS_RELEASE_PATH:-/etc/os-release}
 list_file=${TMPDIR:-/tmp}/wiilandd-hardware-report-list.$$
@@ -254,7 +258,9 @@ if [ -z "$device" ]; then
 	cat <<EOF
 
 Pass a device number or sysfs path to capture live dry-run traces:
-  WIILANDD=$wiilandd $0 <number-or-/sys/path>
+  WIILANDD=$wiilandd $0 <number-or-/sys/path> [extra wiilandd args]
+For MotionPlus-only traces:
+  WIILANDD=$wiilandd $0 <number-or-/sys/path> --trace-events=motion-plus
 
 During trace capture, exercise every button, stick, trigger, accelerometer,
 MotionPlus axis, IR pointer source, and attached extension. Stop with Ctrl-C.
@@ -264,4 +270,4 @@ fi
 
 section trace
 printf 'Tracing %s. Stop with Ctrl-C after exercising the hardware matrix.\n' "$device"
-exec "$wiilandd" --dry-run --trace-events --verbose --device "$device" --profile both
+exec "$wiilandd" --dry-run --trace-events --verbose --device "$device" --profile both "$@"
