@@ -46,7 +46,8 @@ wiilandd:
 Required runtime permissions:
   - normal input read access for hid-wiimote evdev nodes;
   - write access to /dev/uinput, normally via a distribution udev rule or a
-    system service running with the input/uinput capability policy.
+    service running with the input/uinput capability policy. The sample service
+    validates configuration with --check-config before starting.
 
 == Roadmap ==
 
@@ -67,8 +68,8 @@ Required runtime permissions:
    game stacks today.
 
 4. Distribution integration
-   Ship the example systemd user service and udev rule from res/. Keep the
-   legacy Xorg blacklist file for legacy Xorg sessions only.
+   Ship the example systemd user service, sample config, and udev rule from
+   res/. Keep the legacy Xorg blacklist file for legacy Xorg sessions only.
 
 5. Test hardware matrix
    Verify with original Wii Remote, Wii Remote Plus, Nunchuk, Classic

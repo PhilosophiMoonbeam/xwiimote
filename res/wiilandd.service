@@ -6,7 +6,8 @@ PartOf=graphical-session.target
 
 [Service]
 Type=simple
-ExecStart=wiilandd
+ExecStartPre=/usr/bin/wiilandd --check-config
+ExecStart=/usr/bin/wiilandd
 Restart=on-failure
 RestartSec=2s
 
