@@ -167,6 +167,7 @@ static bool trace_events;
 static unsigned int profiles = PROFILE_GAMEPAD;
 static int pointer_speed = 16;
 static int ir_speed = 8;
+static int ir_deadzone;
 static struct device_rule device_rules[MAX_DEVICE_RULES];
 static unsigned int device_rule_count;
 static struct desktop_binding desktop_bindings[] = {
@@ -825,6 +826,13 @@ static int scaled_ir_delta(int32_t from, int32_t to)
 {
 	return (int)(((int64_t)(to - from) * ir_speed) / 64);
 }
+static int apply_ir_deadzone(int delta)
+{
+	if (ir_deadzone && abs(delta) < ir_deadzone)
+		return 0;
+	return delta;
+}
+
 
 static const struct xwii_event_abs *first_valid_ir_source(
 					const struct xwii_event *event)
@@ -852,8 +860,8 @@ static void update_ir_pointer_state(struct bridge_device *dev,
 	}
 
 	if (dev->ir_active) {
-		*dx = scaled_ir_delta(dev->ir_x, src->x);
-		*dy = scaled_ir_delta(dev->ir_y, src->y);
+		*dx = apply_ir_deadzone(scaled_ir_delta(dev->ir_x, src->x));
+		*dy = apply_ir_deadzone(scaled_ir_delta(dev->ir_y, src->y));
 	}
 
 	dev->ir_active = true;
@@ -1436,6 +1444,7 @@ static void dump_config_state(FILE *out)
 	fprintf(out, "profile=%s\n", profile_name(profiles));
 	fprintf(out, "pointer-speed=%d\n", pointer_speed);
 	fprintf(out, "ir-speed=%d\n", ir_speed);
+	fprintf(out, "ir-deadzone=%d\n", ir_deadzone);
 
 	for (i = 0; i < ARRAY_SIZE(desktop_bindings); ++i)
 		fprintf(out, "desktop.%s=%s\n", desktop_bindings[i].name,
@@ -1493,6 +1502,11 @@ static int parse_pointer_speed(const char *arg)
 static int parse_ir_speed(const char *arg)
 {
 	return parse_int_range(arg, 1, 127, &ir_speed);
+}
+
+static int parse_ir_deadzone(const char *arg)
+{
+	return parse_int_range(arg, 0, 127, &ir_deadzone);
 }
 
 static int parse_desktop_action(const char *arg, int *out)
@@ -1666,6 +1680,8 @@ static int apply_config_line(const char *path, unsigned int lineno, char *line)
 		ret = parse_profile(value);
 	else if (!strcmp(key, "ir-speed"))
 		ret = parse_ir_speed(value);
+	else if (!strcmp(key, "ir-deadzone"))
+		ret = parse_ir_deadzone(value);
 	else if (!strcmp(key, "pointer-speed"))
 		ret = parse_pointer_speed(value);
 	else if (!strncmp(key, "desktop.", 8))
@@ -2022,6 +2038,19 @@ static int self_test_ir_pointer(void)
 	ret = expect_int("ir-delta-y", dy, -5);
 	if (ret)
 		return ret;
+	ir_deadzone = 6;
+	event.v.abs[1].x = 360;
+	event.v.abs[1].y = 220;
+	src = first_valid_ir_source(&event);
+	update_ir_pointer_state(&dev, src, &dx, &dy);
+	ret = expect_int("ir-deadzone-x", dx, 10);
+	if (ret)
+		return ret;
+	ret = expect_int("ir-deadzone-y", dy, 0);
+	if (ret)
+		return ret;
+	ir_deadzone = 0;
+
 
 	update_ir_pointer_state(&dev, NULL, &dx, &dy);
 	ret = expect_int("ir-reset-active", dev.ir_active, 0);
@@ -2111,6 +2140,26 @@ static int self_test_config(void)
 	ret = expect_int("ir-default-scale", scaled_ir_delta(200, 280), 10);
 	if (ret)
 		return ret;
+	ret = parse_ir_deadzone("0");
+	if (ret)
+		return ret;
+	ret = expect_int("ir-deadzone-min", ir_deadzone, 0);
+	if (ret)
+		return ret;
+
+	ret = parse_ir_deadzone("127");
+	if (ret)
+		return ret;
+	ret = expect_int("ir-deadzone-max", ir_deadzone, 127);
+	if (ret)
+		return ret;
+
+	ret = expect_int("ir-deadzone-invalid",
+			 parse_ir_deadzone("128"), -EINVAL);
+	if (ret)
+		return ret;
+	ir_deadzone = 0;
+
 
 	snprintf(line, sizeof(line), " profile = desktop # comment\n");
 	ret = apply_config_line("self-test", 1, line);
@@ -2145,6 +2194,14 @@ static int self_test_config(void)
 		return ret;
 	ret = expect_int("desktop-binding-a",
 			 desktop_key_code(XWII_KEY_A), KEY_ENTER);
+	if (ret)
+		return ret;
+
+	snprintf(line, sizeof(line), " ir-deadzone = 4\n");
+	ret = apply_config_line("self-test", 5, line);
+	if (ret)
+		return ret;
+	ret = expect_int("config-ir-deadzone", ir_deadzone, 4);
 	if (ret)
 		return ret;
 
@@ -2214,6 +2271,7 @@ static int self_test_config(void)
 	profiles = PROFILE_GAMEPAD;
 	pointer_speed = 16;
 	ir_speed = 8;
+	ir_deadzone = 0;
 	clear_device_rules();
 	reset_desktop_bindings();
 	return 0;
@@ -2274,6 +2332,7 @@ static int run_self_test(void)
 	profiles = PROFILE_GAMEPAD;
 	pointer_speed = 16;
 	ir_speed = 8;
+	ir_deadzone = 0;
 	clear_device_rules();
 	reset_desktop_bindings();
 
@@ -2326,6 +2385,7 @@ static void usage(FILE *out)
 		"\t-d, --device     Bridge one device instead of monitoring all devices\n"
 		"\t-p, --profile    gamepad, desktop, or both (default: gamepad)\n"
 		"\t    --ir-speed <1-127>       IR pointer gain (default: 8)\n"
+		"\t    --ir-deadzone <0-127>   IR jitter deadzone (default: 0)\n"
 		"\t    --pointer-speed <1-127>  Desktop pointer step (default: 16)\n"
 		"\t-c, --config     Load key=value config file\n"
 		"\t    --no-config  Do not load the default config file\n"
@@ -2424,6 +2484,16 @@ int main(int argc, char **argv)
 			}
 		} else if (!strcmp(argv[i], "--ir-speed")) {
 			if (++i >= argc || parse_ir_speed(argv[i])) {
+				usage(stderr);
+				return EINVAL;
+			}
+		} else if (!strncmp(argv[i], "--ir-deadzone=", 14)) {
+			if (parse_ir_deadzone(argv[i] + 14)) {
+				usage(stderr);
+				return EINVAL;
+			}
+		} else if (!strcmp(argv[i], "--ir-deadzone")) {
+			if (++i >= argc || parse_ir_deadzone(argv[i])) {
 				usage(stderr);
 				return EINVAL;
 			}

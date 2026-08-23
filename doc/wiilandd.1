@@ -52,6 +52,10 @@ Set the desktop profile pointer step in pixels per repeat tick. The default is
 Set the desktop profile IR pointer gain. The default is 8, matching one eighth
 of the raw IR camera delta.
 .TP
+.BR --ir-deadzone " " 0-127
+Suppress desktop profile IR pointer deltas smaller than this value after gain
+scaling. The default is 0.
+.TP
 .BR -c , " --config " path
 Load a key=value configuration file. Command-line options override loaded
 configuration.
@@ -116,6 +120,9 @@ Desktop profile pointer step.
 .TP
 .B ir-speed=1-127
 Desktop profile IR pointer gain.
+.TP
+.B ir-deadzone=0-127
+Desktop profile IR jitter deadzone after gain scaling.
 .TP
 .B desktop.a|b|plus|minus|home|one|two=ACTION
 Override desktop button output. Actions are
