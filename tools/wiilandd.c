@@ -123,6 +123,7 @@ static bool verbose;
 static bool dry_run;
 static unsigned int profiles = PROFILE_GAMEPAD;
 static int pointer_speed = 16;
+static int ir_speed = 8;
 static struct device_rule device_rules[MAX_DEVICE_RULES];
 static unsigned int device_rule_count;
 static struct desktop_binding desktop_bindings[] = {
@@ -640,7 +641,7 @@ static int tick_pointer(struct bridge_device *dev)
 
 static int scaled_ir_delta(int32_t from, int32_t to)
 {
-	return (to - from) / 8;
+	return (int)(((int64_t)(to - from) * ir_speed) / 64);
 }
 
 static const struct xwii_event_abs *first_valid_ir_source(
@@ -1135,6 +1136,11 @@ static int parse_pointer_speed(const char *arg)
 	return parse_int_range(arg, 1, 127, &pointer_speed);
 }
 
+static int parse_ir_speed(const char *arg)
+{
+	return parse_int_range(arg, 1, 127, &ir_speed);
+}
+
 static int parse_desktop_action(const char *arg, int *out)
 {
 	if (!strcmp(arg, "disabled")) {
@@ -1291,6 +1297,8 @@ static int apply_config_line(const char *path, unsigned int lineno, char *line)
 
 	if (!strcmp(key, "profile"))
 		ret = parse_profile(value);
+	else if (!strcmp(key, "ir-speed"))
+		ret = parse_ir_speed(value);
 	else if (!strcmp(key, "pointer-speed"))
 		ret = parse_pointer_speed(value);
 	else if (!strncmp(key, "desktop.", 8))
@@ -1594,6 +1602,30 @@ static int self_test_config(void)
 	if (ret)
 		return ret;
 
+	ret = parse_ir_speed("1");
+	if (ret)
+		return ret;
+	ret = expect_int("ir-speed-min", ir_speed, 1);
+	if (ret)
+		return ret;
+
+	ret = parse_ir_speed("127");
+	if (ret)
+		return ret;
+	ret = expect_int("ir-speed-max", ir_speed, 127);
+	if (ret)
+		return ret;
+
+	ret = expect_int("ir-speed-invalid",
+			 parse_ir_speed("128"), -EINVAL);
+	if (ret)
+		return ret;
+
+	ir_speed = 8;
+	ret = expect_int("ir-default-scale", scaled_ir_delta(200, 280), 10);
+	if (ret)
+		return ret;
+
 	snprintf(line, sizeof(line), " profile = desktop # comment\n");
 	ret = apply_config_line("self-test", 1, line);
 	if (ret)
@@ -1602,8 +1634,27 @@ static int self_test_config(void)
 	if (ret)
 		return ret;
 
-	snprintf(line, sizeof(line), " desktop.a = enter\n");
+	snprintf(line, sizeof(line), " pointer-speed = 31\n");
+	ret = apply_config_line("self-test", 2, line);
+	if (ret)
+		return ret;
+	ret = expect_int("config-pointer-speed", pointer_speed, 31);
+	if (ret)
+		return ret;
+
+	snprintf(line, sizeof(line), " ir-speed = 16\n");
 	ret = apply_config_line("self-test", 3, line);
+	if (ret)
+		return ret;
+	ret = expect_int("config-ir-speed", ir_speed, 16);
+	if (ret)
+		return ret;
+	ret = expect_int("ir-config-scale", scaled_ir_delta(200, 280), 20);
+	if (ret)
+		return ret;
+
+	snprintf(line, sizeof(line), " desktop.a = enter\n");
+	ret = apply_config_line("self-test", 4, line);
 	if (ret)
 		return ret;
 	ret = expect_int("desktop-binding-a",
@@ -1612,7 +1663,7 @@ static int self_test_config(void)
 		return ret;
 
 	snprintf(line, sizeof(line), " desktop.b = disabled\n");
-	ret = apply_config_line("self-test", 4, line);
+	ret = apply_config_line("self-test", 5, line);
 	if (ret)
 		return ret;
 	ret = expect_int("desktop-binding-disabled",
@@ -1625,18 +1676,10 @@ static int self_test_config(void)
 	if (ret)
 		return ret;
 
-	snprintf(line, sizeof(line), " pointer-speed = 31\n");
-	ret = apply_config_line("self-test", 2, line);
-	if (ret)
-		return ret;
-	ret = expect_int("config-pointer-speed", pointer_speed, 31);
-	if (ret)
-		return ret;
-
 	profiles = PROFILE_GAMEPAD;
 	clear_device_rules();
 	snprintf(line, sizeof(line), " device.blue.profile = desktop\n");
-	ret = apply_config_line("self-test", 3, line);
+	ret = apply_config_line("self-test", 6, line);
 	if (ret)
 		return ret;
 	ret = expect_int("device-profile-match",
@@ -1651,7 +1694,7 @@ static int self_test_config(void)
 		return ret;
 
 	snprintf(line, sizeof(line), " device.blue.profile = both\n");
-	ret = apply_config_line("self-test", 4, line);
+	ret = apply_config_line("self-test", 7, line);
 	if (ret)
 		return ret;
 	ret = expect_int("device-profile-override",
@@ -1661,12 +1704,13 @@ static int self_test_config(void)
 		return ret;
 
 	snprintf(line, sizeof(line), " # empty comment\n");
-	ret = apply_config_line("self-test", 3, line);
+	ret = apply_config_line("self-test", 8, line);
 	if (ret)
 		return ret;
 
 	profiles = PROFILE_GAMEPAD;
 	pointer_speed = 16;
+	ir_speed = 8;
 	clear_device_rules();
 	reset_desktop_bindings();
 	return 0;
@@ -1678,6 +1722,7 @@ static int run_self_test(void)
 
 	profiles = PROFILE_GAMEPAD;
 	pointer_speed = 16;
+	ir_speed = 8;
 	clear_device_rules();
 	reset_desktop_bindings();
 
@@ -1713,6 +1758,7 @@ static void usage(FILE *out)
 		"\t-l, --list       List connected Wii Remote devices and exit\n"
 		"\t-d, --device     Bridge one device instead of monitoring all devices\n"
 		"\t-p, --profile    gamepad, desktop, or both (default: gamepad)\n"
+		"\t    --ir-speed <1-127>       IR pointer gain (default: 8)\n"
 		"\t    --pointer-speed <1-127>  Desktop pointer step (default: 16)\n"
 		"\t-c, --config     Load key=value config file\n"
 		"\t    --no-config  Do not load the default config file\n"
@@ -1789,6 +1835,16 @@ int main(int argc, char **argv)
 			}
 		} else if (!strcmp(argv[i], "--pointer-speed")) {
 			if (++i >= argc || parse_pointer_speed(argv[i])) {
+				usage(stderr);
+				return EINVAL;
+			}
+		} else if (!strncmp(argv[i], "--ir-speed=", 11)) {
+			if (parse_ir_speed(argv[i] + 11)) {
+				usage(stderr);
+				return EINVAL;
+			}
+		} else if (!strcmp(argv[i], "--ir-speed")) {
+			if (++i >= argc || parse_ir_speed(argv[i])) {
 				usage(stderr);
 				return EINVAL;
 			}

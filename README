@@ -80,9 +80,9 @@ For desktop pointer/keyboard control, run:
 For one process that exposes both gamepad and desktop controls, run:
 	$ wiilandd --profile both
 
-To tune desktop pointer speed persistently:
+To tune desktop pointer speed and IR gain persistently:
 	$ mkdir -p ~/.config/wiiland
-	$ printf 'profile=desktop\npointer-speed=24\n' > ~/.config/wiiland/wiilandd.conf
+	$ printf 'profile=desktop\npointer-speed=24\nir-speed=10\n' > ~/.config/wiiland/wiilandd.conf
 
 Per-device rules can override that default by sysfs path substring:
 	$ printf 'profile=gamepad\ndevice.bluetooth.profile=desktop\n' > ~/.config/wiiland/wiilandd.conf

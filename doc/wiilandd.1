@@ -45,6 +45,10 @@ compositor overview key, and 1/2 send Page Down/Page Up.
 Set the desktop profile pointer step in pixels per repeat tick. The default is
 16.
 .TP
+.BR --ir-speed " " 1-127
+Set the desktop profile IR pointer gain. The default is 8, matching one eighth
+of the raw IR camera delta.
+.TP
 .BR -c , " --config " path
 Load a key=value configuration file. Command-line options override loaded
 configuration.
@@ -89,6 +93,9 @@ Default virtual input profile.
 .TP
 .B pointer-speed=1-127
 Desktop profile pointer step.
+.TP
+.B ir-speed=1-127
+Desktop profile IR pointer gain.
 .TP
 .B desktop.a|b|plus|minus|home|one|two=ACTION
 Override desktop button output. Actions are
