@@ -241,6 +241,24 @@ capture_device_list() {
 	return 0
 }
 
+report_device_uevent() {
+	index=$1
+	syspath=$2
+
+	if [ ! -r "$syspath/uevent" ]; then
+		printf 'device.%s.uevent=unavailable\n' "$index"
+		return 0
+	fi
+
+	while IFS= read -r line; do
+		case "$line" in
+		HID_ID=*|HID_NAME=*|HID_PHYS=*|HID_UNIQ=*|MODALIAS=*)
+			printf 'device.%s.uevent.%s\n' "$index" "$line"
+			;;
+		esac
+	done <"$syspath/uevent"
+}
+
 report_device_attrs() {
 	file=$1
 
@@ -264,6 +282,7 @@ report_device_attrs() {
 		printf 'device.%s.battery=' "$index"
 		read_battery_attr "$syspath"
 		printf '\n'
+		report_device_uevent "$index" "$syspath"
 		report_event_nodes "$index" "$syspath"
 	done <"$file"
 }

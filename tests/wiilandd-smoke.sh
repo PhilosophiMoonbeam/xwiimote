@@ -35,6 +35,7 @@ stub_sys_missing=$build_dir/sys/devices/wiimote1
 mkdir -p "$stub_sys" "$stub_sys_missing"
 printf '%s\n' wiimote >"$stub_sys/devtype"
 printf '%s\n' nunchuk >"$stub_sys/extension"
+printf '%s\n' 'HID_NAME=Nintendo Wii Remote' >"$stub_sys/uevent"
 XWII_STUB_DEVICES=$stub_sys:$stub_sys_missing "$bin" --list --verbose >"$build_dir/list"
 test "$(sed -n '1p' "$build_dir/list")" = "1	$stub_sys"
 test "$(sed -n '2p' "$build_dir/list")" = "	devtype=wiimote"
@@ -54,6 +55,10 @@ case "$1" in
 	printf '%s\n' 'wayland.wine-proton=required'
 	exit 0
 	;;
+--list)
+	printf '1\t%s\n' "$FAKE_DEVICE_SYSPATH"
+	exit 0
+	;;
 esac
 printf 'fake-wiilandd'
 for arg do
@@ -67,7 +72,8 @@ chmod +x "$fake_wiilandd"
 grep -F 'Usage:' "$build_dir/hardware-report-help" >/dev/null
 grep -F '<number-or-/sys/path>' "$build_dir/hardware-report-help" >/dev/null
 (cd "$build_dir" && XDG_CURRENT_DESKTOP=TestDesktop SWAYSOCK=/tmp/sway.sock \
-	WIILANDD=$fake_wiilandd "$root/tools/wiilandd-hardware-report.sh" \
+	FAKE_DEVICE_SYSPATH=$stub_sys WIILANDD=$fake_wiilandd \
+	"$root/tools/wiilandd-hardware-report.sh" \
 	7 --trace-events=motion-plus) >"$build_dir/hardware-report"
 if git_commit=$(git -C "$root" rev-parse --short HEAD 2>/dev/null); then
 	expected_commit=git.commit=$git_commit
@@ -83,6 +89,7 @@ grep -F 'manual.sdl=TODO:' "$build_dir/hardware-report" >/dev/null
 grep -F 'manual.wine-proton=TODO:' "$build_dir/hardware-report" >/dev/null
 grep -F 'manual.native-wayland-desktop=TODO:' "$build_dir/hardware-report" >/dev/null
 grep -F '$ '"$fake_wiilandd"' --axis-map' "$build_dir/hardware-report" >/dev/null
+grep -F 'device.1.uevent.HID_NAME=Nintendo Wii Remote' "$build_dir/hardware-report" >/dev/null
 grep -F 'nunchuk.accel.x=ABS_HAT1X' "$build_dir/hardware-report" >/dev/null
 grep -F '$ '"$fake_wiilandd"' --validation-checklist' "$build_dir/hardware-report" >/dev/null
 grep -F 'wayland.wine-proton=required' "$build_dir/hardware-report" >/dev/null
