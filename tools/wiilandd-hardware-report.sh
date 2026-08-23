@@ -11,15 +11,32 @@ section() {
 
 run_optional() {
 	if command -v "$1" >/dev/null 2>&1; then
-		"$@"
+		if ! "$@"; then
+			printf 'failed:'
+			printf ' %s' "$@"
+			printf '\n'
+		fi
 	else
 		printf 'unavailable: %s\n' "$1"
 	fi
 }
+run_pkg_version() {
+	printf '%s pkg-config version: ' "$1"
+	if command -v pkg-config >/dev/null 2>&1; then
+		if ! pkg-config --modversion "$1"; then
+			printf 'unavailable\n'
+		fi
+	else
+		printf 'unavailable\n'
+	fi
+}
+
 
 section host
 run_optional uname -srmo
 run_optional bluetoothctl --version
+run_optional modinfo hid-wiimote
+run_pkg_version libxwiimote
 if command -v loginctl >/dev/null 2>&1 && [ -n "${XDG_SESSION_ID:-}" ]; then
 	loginctl show-session "$XDG_SESSION_ID" -p Type -p Desktop -p Name || true
 else
