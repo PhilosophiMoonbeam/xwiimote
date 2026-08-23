@@ -58,9 +58,11 @@ Required runtime permissions:
    Next refinement is optional smoothing/deadzones for IR pointer motion.
 
 2. Per-device policy
-   Shipped as device.<syspath-substring>.profile rules for choosing gamepad,
-   desktop, or both per controller path. Next refinement is Bluetooth-address
-   matching once hardware reports define a stable identifier surface.
+   Shipped as device.<syspath-substring>.profile and
+   device-type.<devtype-substring>.profile rules for choosing gamepad, desktop,
+   or both per controller path/type. Bluetooth-address matching remains a future
+   refinement if hardware reports show a stable identifier surface worth
+   standardizing.
 
 3. Optional libei backend
    Add --backend=libei when libei and compositor support are common enough.
