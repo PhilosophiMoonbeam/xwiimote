@@ -79,7 +79,10 @@ Required runtime permissions:
 5. Test hardware matrix
    Completion requires direct reports for:
    - original Wii Remote: core buttons, accelerometer, IR desktop pointer;
-   - Wii Remote Plus: core buttons, accelerometer, MotionPlus axes;
+   - original Wii Remote plus external MotionPlus addon: hotplug detection and
+     MotionPlus X/Y/Z axes;
+   - Wii Remote Plus / built-in MotionPlus: core buttons, accelerometer,
+     MotionPlus X/Y/Z axes;
    - Nunchuk: stick, C/Z buttons, accelerometer passthrough;
    - Classic Controller: sticks, triggers, face buttons;
    - Wii U Pro Controller: sticks, triggers, face buttons;
@@ -89,8 +92,9 @@ Required runtime permissions:
 
    Each report must record kernel version, libxwiimote version, wiilandd
    --version output, git commit, compositor, distribution, Bluetooth adapter,
-   and whether SDL, Wine/Proton, and native Wayland desktop profile behavior
-   matched expectations.
+   device devtype (for example gen10/gen15/gen20), extension state, and whether
+   SDL, Wine/Proton, and native Wayland desktop profile behavior matched
+   expectations.
 
    Recommended capture sequence:
      tools/wiilandd-hardware-report.sh

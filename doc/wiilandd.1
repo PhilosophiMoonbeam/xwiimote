@@ -91,8 +91,9 @@ This mode does not enumerate devices or open
 .TP
 .BR --trace-events
 Print sequenced, monotonic-timestamped decoded libxwiimote event records before
-forwarding them. Intended for
-hardware validation reports; combine with
+forwarding them. MotionPlus events are reported as
+.B motion-plus
+with X/Y/Z axis payloads. Intended for hardware validation reports; combine with
 .B --dry-run
 to inspect devices without creating virtual input.
 .TP
