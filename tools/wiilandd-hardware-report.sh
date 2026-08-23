@@ -5,7 +5,8 @@ set -eu
 wiilandd=${WIILANDD:-wiilandd}
 device=${1:-}
 list_file=${TMPDIR:-/tmp}/wiilandd-hardware-report-list.$$
-trap 'rm -f "$list_file"' EXIT INT HUP TERM
+bt_file=${TMPDIR:-/tmp}/wiilandd-hardware-report-bt.$$
+trap 'rm -f "$list_file" "$bt_file"' EXIT INT HUP TERM
 
 section() {
 	printf '\n== %s ==\n' "$1"
@@ -111,6 +112,30 @@ report_event_nodes() {
 		report_path_access "device.$index.event.$event" "$node"
 	done
 }
+capture_bluetooth_controllers() {
+	if ! command -v bluetoothctl >/dev/null 2>&1; then
+		printf 'bluetoothctl controllers: unavailable\n'
+		return 0
+	fi
+
+	printf '$ bluetoothctl list\n'
+	if ! bluetoothctl list >"$bt_file"; then
+		printf 'failed: bluetoothctl list\n'
+		return 0
+	fi
+	cat "$bt_file"
+
+	while read -r kind address rest; do
+		if [ "$kind" != Controller ] || [ -z "${address:-}" ]; then
+			continue
+		fi
+		printf '$ bluetoothctl show %s\n' "$address"
+		if ! bluetoothctl show "$address"; then
+			printf 'failed: bluetoothctl show %s\n' "$address"
+		fi
+	done <"$bt_file"
+}
+
 
 
 
@@ -156,6 +181,7 @@ report_device_attrs() {
 section host
 run_optional uname -srmo
 run_optional bluetoothctl --version
+capture_bluetooth_controllers
 run_optional modinfo hid-wiimote
 run_pkg_version libxwiimote
 if command -v loginctl >/dev/null 2>&1 && [ -n "${XDG_SESSION_ID:-}" ]; then

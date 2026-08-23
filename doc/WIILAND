@@ -100,8 +100,9 @@ Required runtime permissions:
      tools/wiilandd-hardware-report.sh
      tools/wiilandd-hardware-report.sh N
 
-   The first command records finite host, permission, config, version,
-   device-list, devtype, extension, battery, and event-node access diagnostics.
+   The first command records finite host, Bluetooth controller, permission,
+   config, version, device-list, devtype, extension, battery, and event-node
+   access diagnostics.
    The second command captures sequenced, filtered --dry-run --trace-events
    --verbose output for one device; use --trace-events=motion-plus when
    validating MotionPlus only, or use the number from --list or a sysfs path.
