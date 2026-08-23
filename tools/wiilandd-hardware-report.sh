@@ -2,12 +2,32 @@
 # Collect WiiLand diagnostics for a real-hardware Wayland validation report.
 set -eu
 
+usage() {
+	cat <<EOF
+Usage:
+  $0
+  $0 <number-or-/sys/path> [extra wiilandd args]
+
+Collect finite WiiLand host, permission, config, device, axis-map, and manual
+validation diagnostics. With a device argument, continue into live dry-run trace
+capture and pass remaining arguments to wiilandd.
+EOF
+}
+
 wiilandd=${WIILANDD:-wiilandd}
 device=
-if [ "$#" -gt 0 ]; then
+case "${1:-}" in
+-h|--help)
+	usage
+	exit 0
+	;;
+'')
+	;;
+*)
 	device=$1
 	shift
-fi
+	;;
+esac
 default_repo_dir=$(CDPATH=; cd -- "$(dirname -- "$0")/.." && pwd)
 repo_dir=${WIILAND_REPO_DIR:-$default_repo_dir}
 module_dir=${HID_WIIMOTE_MODULE_DIR:-/sys/module/hid_wiimote}
