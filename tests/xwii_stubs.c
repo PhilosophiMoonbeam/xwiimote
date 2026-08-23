@@ -21,6 +21,13 @@ struct xwii_monitor {
 	const char *devices;
 	size_t pos;
 };
+static int env_ret(const char *name, int fallback)
+{
+	const char *value = getenv(name);
+
+	return value && value[0] ? atoi(value) : fallback;
+}
+
 
 const char *xwii_get_iface_name(unsigned int iface)
 {
@@ -30,9 +37,14 @@ const char *xwii_get_iface_name(unsigned int iface)
 
 int xwii_iface_new(struct xwii_iface **dev, const char *syspath)
 {
-	(void)dev;
+	static struct xwii_iface iface;
+
 	(void)syspath;
-	return -19;
+	if (getenv("XWII_STUB_IFACE_NEW_OK")) {
+		*dev = &iface;
+		return 0;
+	}
+	return env_ret("XWII_STUB_IFACE_NEW_RET", -19);
 }
 
 void xwii_iface_ref(struct xwii_iface *dev)
@@ -61,14 +73,14 @@ int xwii_iface_watch(struct xwii_iface *dev, bool watch)
 {
 	(void)dev;
 	(void)watch;
-	return 0;
+	return env_ret("XWII_STUB_WATCH_RET", 0);
 }
 
 int xwii_iface_open(struct xwii_iface *dev, unsigned int ifaces)
 {
 	(void)dev;
 	(void)ifaces;
-	return 0;
+	return env_ret("XWII_STUB_OPEN_RET", 0);
 }
 
 void xwii_iface_close(struct xwii_iface *dev, unsigned int ifaces)

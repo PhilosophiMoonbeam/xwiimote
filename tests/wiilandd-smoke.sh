@@ -52,6 +52,31 @@ printf '%s\n' nunchuk >"$stub_sys/extension"
 printf '%s\n' 'HID_NAME=Nintendo Wii Remote' >"$stub_sys/uevent"
 XWII_STUB_DEVICES=$stub_sys:$stub_sys_missing "$bin" --list --verbose >"$build_dir/list"
 test "$(sed -n '1p' "$build_dir/list")" = "1	$stub_sys"
+if XWII_STUB_DEVICES=/sys/fake "$bin" --no-config --dry-run \
+	>"$build_dir/add-fail-out" 2>"$build_dir/add-fail-err"; then
+	grep -F 'wiilandd: cannot add /sys/fake: -19' "$build_dir/add-fail-err" >/dev/null
+else
+	printf '%s\n' 'wiilandd failed monitor add-failure smoke' >&2
+	exit 1
+fi
+if XWII_STUB_DEVICES=/sys/fake XWII_STUB_IFACE_NEW_OK=1 XWII_STUB_WATCH_RET=-5 \
+	"$bin" --no-config --dry-run >"$build_dir/watch-fail-out" \
+	2>"$build_dir/watch-fail-err"; then
+	grep -F 'wiilandd: cannot watch /sys/fake: -5' "$build_dir/watch-fail-err" >/dev/null
+	grep -F 'wiilandd: cannot add /sys/fake: -5' "$build_dir/watch-fail-err" >/dev/null
+else
+	printf '%s\n' 'wiilandd failed watch-failure smoke' >&2
+	exit 1
+fi
+if XWII_STUB_DEVICES=/sys/fake XWII_STUB_IFACE_NEW_OK=1 XWII_STUB_OPEN_RET=-6 \
+	"$bin" --no-config --dry-run >"$build_dir/open-fail-out" \
+	2>"$build_dir/open-fail-err"; then
+	grep -F 'wiilandd: cannot open all interfaces for /sys/fake: -6' "$build_dir/open-fail-err" >/dev/null
+	grep -F 'wiilandd: cannot add /sys/fake: -6' "$build_dir/open-fail-err" >/dev/null
+else
+	printf '%s\n' 'wiilandd failed open-failure smoke' >&2
+	exit 1
+fi
 test "$(sed -n '2p' "$build_dir/list")" = "	devtype=wiimote"
 test "$(sed -n '3p' "$build_dir/list")" = "	extension=nunchuk"
 test "$(sed -n '4p' "$build_dir/list")" = "2	$stub_sys_missing"

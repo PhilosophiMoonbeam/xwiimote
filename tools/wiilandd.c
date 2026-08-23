@@ -1263,13 +1263,17 @@ static int add_device(struct bridge_device *devices, const char *syspath)
 	}
 
 	ret = xwii_iface_watch(dev->iface, true);
-	if (ret)
+	if (ret) {
 		fprintf(stderr, "wiilandd: cannot watch %s: %d\n", syspath, ret);
+		goto err_iface;
+	}
 
 	ret = xwii_iface_open(dev->iface, xwii_iface_available(dev->iface));
-	if (ret)
+	if (ret) {
 		fprintf(stderr, "wiilandd: cannot open all interfaces for %s: %d\n",
 			syspath, ret);
+		goto err_iface;
+	}
 
 	if (dev->profiles & PROFILE_GAMEPAD) {
 		dev->uinput_fd = create_virtual_controller(syspath);
@@ -1400,17 +1404,22 @@ static int poll_devices(struct bridge_device *devices, struct xwii_monitor *mon)
 
 			if (owners[i] == -1) {
 				while ((syspath = xwii_monitor_poll(mon))) {
-					add_device(devices, syspath);
+					ret = add_device(devices, syspath);
+					if (ret)
+						fprintf(stderr,
+							"wiilandd: cannot add %s: %d\n",
+							syspath, ret);
 					free(syspath);
 				}
 			} else {
 				ret = drain_device(&devices[owners[i]]);
-				if (ret == 1)
+				if (ret) {
+					if (ret != 1)
+						fprintf(stderr,
+							"wiilandd: event dispatch failed for %s: %d\n",
+							devices[owners[i]].syspath, ret);
 					remove_device(&devices[owners[i]]);
-				else if (ret)
-					fprintf(stderr,
-						"wiilandd: event dispatch failed for %s: %d\n",
-						devices[owners[i]].syspath, ret);
+				}
 			}
 		}
 	}
