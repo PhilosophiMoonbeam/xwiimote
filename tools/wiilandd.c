@@ -1146,8 +1146,7 @@ static int handle_xwii_event(struct bridge_device *dev,
 		info("device gone: %s\n", dev->syspath);
 		return 1;
 	case XWII_EVENT_WATCH:
-		reopen_available_ifaces(dev);
-		return 0;
+		return reopen_available_ifaces(dev);
 	case XWII_EVENT_KEY:
 	case XWII_EVENT_NUNCHUK_KEY:
 	case XWII_EVENT_CLASSIC_CONTROLLER_KEY:
