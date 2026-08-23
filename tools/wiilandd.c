@@ -1421,6 +1421,11 @@ static const char *desktop_action_name(int code)
 	}
 }
 
+static const char *device_rule_prefix(enum device_rule_kind kind)
+{
+	return kind == DEVICE_RULE_DEVTYPE ? "device-type" : "device";
+}
+
 static void dump_config_state(FILE *out)
 {
 	unsigned int i;
@@ -1434,7 +1439,9 @@ static void dump_config_state(FILE *out)
 			desktop_action_name(desktop_bindings[i].code));
 
 	for (i = 0; i < device_rule_count; ++i)
-		fprintf(out, "device.%s.profile=%s\n", device_rules[i].match,
+		fprintf(out, "%s.%s.profile=%s\n",
+			device_rule_prefix(device_rules[i].kind),
+			device_rules[i].match,
 			profile_name(device_rules[i].profiles));
 }
 
@@ -2221,8 +2228,18 @@ static int self_test_dump_format(void)
 			 strcmp(desktop_action_name(-1), "disabled"), 0);
 	if (ret)
 		return ret;
-	return expect_int("dump-action-enter",
-			  strcmp(desktop_action_name(KEY_ENTER), "enter"), 0);
+	ret = expect_int("dump-action-enter",
+			 strcmp(desktop_action_name(KEY_ENTER), "enter"), 0);
+	if (ret)
+		return ret;
+	ret = expect_int("dump-device-prefix",
+			 strcmp(device_rule_prefix(DEVICE_RULE_SYSPATH),
+				"device"), 0);
+	if (ret)
+		return ret;
+	return expect_int("dump-device-type-prefix",
+			  strcmp(device_rule_prefix(DEVICE_RULE_DEVTYPE),
+				 "device-type"), 0);
 }
 
 static int self_test_event_trace(void)
