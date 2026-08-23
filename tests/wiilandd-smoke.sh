@@ -67,6 +67,12 @@ grep -F 'fake-wiilandd [--dry-run] [--trace-events] [--verbose] [--device] [7] [
 
 
 
+if command -v shellcheck >/dev/null 2>&1; then
+	shellcheck "$root/tools/wiilandd-hardware-report.sh" "$root/tests/wiilandd-smoke.sh"
+else
+	printf '%s\n' 'warning: shellcheck not found; skipping shell smoke' >&2
+fi
+
 if command -v groff >/dev/null 2>&1; then
 	groff -man -Tascii "$root/doc/wiilandd.1" >/dev/null
 else
