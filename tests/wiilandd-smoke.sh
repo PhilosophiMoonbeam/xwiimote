@@ -168,6 +168,9 @@ grep -F '$ '"$fake_wiilandd"' --validation-checklist' "$build_dir/hardware-repor
 grep -F 'wayland.wine-proton=required' "$build_dir/hardware-report" >/dev/null
 grep -F '$ '"$fake_wiilandd"' --doctor' "$build_dir/hardware-report" >/dev/null
 grep -F 'dev.uinput.writable=no' "$build_dir/hardware-report" >/dev/null
+(cd "$build_dir" && WIILANDD=$fake_wiilandd \
+	"$root/tools/wiilandd-hardware-report.sh") >"$build_dir/hardware-report-no-device"
+grep -F -- '--trace-events=ir' "$build_dir/hardware-report-no-device" >/dev/null
 mkdir -p "$build_dir/nonrepo"
 (cd "$build_dir" && WIILAND_REPO_DIR=$build_dir/nonrepo \
 	WIILANDD=$fake_wiilandd "$root/tools/wiilandd-hardware-report.sh" \

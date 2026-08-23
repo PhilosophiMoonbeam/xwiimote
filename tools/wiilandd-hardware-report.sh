@@ -355,8 +355,9 @@ if [ -z "$device" ]; then
 
 Pass a device number or sysfs path to capture live dry-run traces:
   WIILANDD=$wiilandd $0 <number-or-/sys/path> [extra wiilandd args]
-For MotionPlus-only traces:
+For focused traces:
   WIILANDD=$wiilandd $0 <number-or-/sys/path> --trace-events=motion-plus
+  WIILANDD=$wiilandd $0 <number-or-/sys/path> --trace-events=ir
 
 During trace capture, exercise every button, stick, trigger, accelerometer,
 MotionPlus axis, IR pointer source, and attached extension. Stop with Ctrl-C.
