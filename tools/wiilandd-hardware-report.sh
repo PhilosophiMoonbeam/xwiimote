@@ -96,6 +96,22 @@ report_path_access() {
 		stat -c %G "$path"
 	fi
 }
+report_event_nodes() {
+	index=$1
+	syspath=$2
+
+	for event_dir in "$syspath"/input/input*/event*; do
+		if [ ! -d "$event_dir" ]; then
+			continue
+		fi
+
+		event=${event_dir##*/}
+		node=/dev/input/$event
+		printf 'device.%s.event.%s.node=%s\n' "$index" "$event" "$node"
+		report_path_access "device.$index.event.$event" "$node"
+	done
+}
+
 
 
 capture_device_list() {
@@ -132,6 +148,7 @@ report_device_attrs() {
 		printf 'device.%s.battery=' "$index"
 		read_battery_attr "$syspath"
 		printf '\n'
+		report_event_nodes "$index" "$syspath"
 	done <"$file"
 }
 
