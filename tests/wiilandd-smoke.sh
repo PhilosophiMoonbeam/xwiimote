@@ -35,8 +35,11 @@ cp "$root/res/wiilandd.conf" \
 "$bin" --config "$root/res/wiilandd.conf" --dump-config >/dev/null
 "$bin" --axis-map >"$build_dir/axis-map"
 grep -F 'nunchuk.accel.x=ABS_HAT1X' "$build_dir/axis-map" >/dev/null
+grep -F 'wiimote.a=BTN_SOUTH' "$build_dir/axis-map" >/dev/null
 grep -F 'pro.zl=BTN_TL2' "$build_dir/axis-map" >/dev/null
 grep -F 'guitar.stick.x=ABS_X' "$build_dir/axis-map" >/dev/null
+grep -F 'classic.zl=BTN_TL2' "$build_dir/axis-map" >/dev/null
+grep -F 'guitar.fret.mid=BTN_FRET_MID' "$build_dir/axis-map" >/dev/null
 "$bin" --validation-checklist >"$build_dir/validation-checklist"
 grep -F 'motion-plus-external.hotplug=required' "$build_dir/validation-checklist" >/dev/null
 grep -F 'wayland.wine-proton=required' "$build_dir/validation-checklist" >/dev/null
