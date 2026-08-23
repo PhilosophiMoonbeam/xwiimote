@@ -29,6 +29,8 @@ Dependencies:
 	- ncurses: Used for UI of xwiishow
 	- Linux uinput: Used by wiilandd to expose Wayland-native virtual
 		input devices
+	- Qt 6 Widgets: Optional; used only when building wiiland-config with
+		--enable-qt-ui
 
 This software packages contains:
 	libxwiimote.so: A userspace library which helps accessing connected Wii
@@ -42,6 +44,9 @@ This software packages contains:
 		and creates Linux uinput virtual controllers. Wayland compositors,
 		SDL, Wine/Proton, and native games can consume these devices
 		through the normal evdev/libinput stack without XWayland.
+	wiiland-config: Optional Qt 6 desktop frontend for configuring
+		wiilandd profiles, running diagnostics, and collecting validation
+		traces. Build with --enable-qt-ui when Qt6Widgets is installed.
 	50-xorg-fix-wiiland.conf: Legacy Xorg blacklist example kept in the
 		source tree for distributions that still maintain Xorg sessions.
 		The Wayland install path does not install it by default.
@@ -88,6 +93,9 @@ override system defaults.
 
 Per-device rules can override that default by sysfs path substring:
 	$ printf 'profile=gamepad\ndevice.bluetooth.profile=desktop\n' > ~/.config/wiiland/wiilandd.conf
+
+For the optional Qt 6 frontend, configure with `--enable-qt-ui` and run:
+	$ wiiland-config
 
 For hardware-free diagnostics in packaging or CI, run:
 	$ wiilandd --check-config --config res/wiilandd.conf

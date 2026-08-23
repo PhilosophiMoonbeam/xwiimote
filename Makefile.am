@@ -43,6 +43,7 @@ EXTRA_DIST = \
 	.github/workflows/ci.yml \
 	libxwiimote.sym
 EXTRA_DIST += res/wiilandd.service.in
+EXTRA_DIST += tools/wiiland-config.cpp
 
 
 #
@@ -51,6 +52,9 @@ EXTRA_DIST += res/wiilandd.service.in
 
 lib_LTLIBRARIES = libxwiimote.la
 bin_PROGRAMS = xwiishow wiilandd
+if HAVE_QT_UI
+bin_PROGRAMS += wiiland-config
+endif
 noinst_PROGRAMS = xwiidump
 include_HEADERS = lib/xwiimote.h
 man_MANS = \
@@ -168,6 +172,22 @@ wiilandd_LDADD = \
 	libxwiimote.la
 wiilandd_LDFLAGS = \
 	$(AM_LDFLAGS)
+
+if HAVE_QT_UI
+wiiland_config_SOURCES = \
+	tools/wiiland-config.cpp
+wiiland_config_CPPFLAGS = \
+	$(AM_CPPFLAGS) \
+	$(QT6_WIDGETS_CFLAGS) \
+	-DQT_NO_KEYWORDS
+wiiland_config_CXXFLAGS = \
+	$(AM_CXXFLAGS) \
+	-std=c++17
+wiiland_config_LDADD = \
+	$(QT6_WIDGETS_LIBS)
+wiiland_config_LDFLAGS = \
+	$(AM_LDFLAGS)
+endif
 
 check-local: wiilandd
 	$(AM_V_at)./wiilandd --self-test

@@ -187,6 +187,10 @@ grep -F 'git.commit=unavailable' "$build_dir/hardware-report-nongit" >/dev/null
 grep -F 'git.dirty=unavailable' "$build_dir/hardware-report-nongit" >/dev/null
 grep -F 'fake-wiilandd [--dry-run] [--trace-events] [--verbose] [--device] [7] [--profile] [both] [--trace-events=motion-plus]' \
 	"$build_dir/hardware-report" >/dev/null
+grep -F 'PKG_CHECK_MODULES([QT6_WIDGETS], [Qt6Widgets]' "$root/configure.ac" >/dev/null
+grep -F 'bin_PROGRAMS += wiiland-config' "$root/Makefile.am" >/dev/null
+grep -F 'QApplication app(argc, argv);' "$root/tools/wiiland-config.cpp" >/dev/null
+grep -F 'QTabWidget' "$root/tools/wiiland-config.cpp" >/dev/null
 
 
 

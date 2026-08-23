@@ -27,6 +27,7 @@ AM_SILENT_RULES([yes])
 
 AC_PROG_CC
 AC_PROG_CC_C99
+AC_PROG_CXX
 AM_PROG_CC_C_O
 AC_PROG_LN_S
 m4_ifdef([AM_PROG_AR], [AM_PROG_AR])
@@ -41,6 +42,21 @@ AC_SUBST(UDEV_LIBS)
 PKG_CHECK_MODULES([NCURSES], [ncurses])
 AC_SUBST(NCURSES_CFLAGS)
 AC_SUBST(NCURSES_LIBS)
+AC_ARG_ENABLE([qt-ui],
+              [AS_HELP_STRING([--enable-qt-ui=@<:@auto/yes/no@:>@],
+                              [build optional Qt 6 configuration UI])],
+              [enable_qt_ui="$enableval"],
+              [enable_qt_ui=auto])
+have_qt_ui=no
+if test "x$enable_qt_ui" != "xno"; then
+        PKG_CHECK_MODULES([QT6_WIDGETS], [Qt6Widgets],
+                          [have_qt_ui=yes],
+                          [if test "x$enable_qt_ui" = "xyes"; then
+                                   AC_MSG_ERROR([Qt6Widgets is required for --enable-qt-ui=yes])
+                           fi])
+fi
+AM_CONDITIONAL([HAVE_QT_UI], [test "$have_qt_ui" = yes])
+
 
 AC_MSG_CHECKING([whether to build with debugging on])
 AC_ARG_ENABLE([debug],
@@ -89,5 +105,7 @@ AC_MSG_NOTICE([Build configuration:
 
                 debug: $debug
               doxygen: $have_doxygen
+               qt-ui: $have_qt_ui
+
 
         Run "${MAKE-make}" to start compilation process])
