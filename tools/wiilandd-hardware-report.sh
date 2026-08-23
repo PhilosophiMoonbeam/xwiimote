@@ -55,6 +55,19 @@ read_sysfs_attr() {
 	fi
 }
 
+read_battery_attr() {
+	path=$1
+
+	for attr in "$path"/power_supply/*/capacity; do
+		if [ -r "$attr" ]; then
+			tr -d '\n' <"$attr"
+			return 0
+		fi
+	done
+
+	printf 'unavailable'
+}
+
 capture_device_list() {
 	printf '$ %s --list\n' "$wiilandd"
 	if ! "$wiilandd" --list >"$list_file"; then
@@ -85,6 +98,9 @@ report_device_attrs() {
 		printf '\n'
 		printf 'device.%s.extension=' "$index"
 		read_sysfs_attr "$syspath" extension
+		printf '\n'
+		printf 'device.%s.battery=' "$index"
+		read_battery_attr "$syspath"
 		printf '\n'
 	done <"$file"
 }
