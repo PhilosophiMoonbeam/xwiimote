@@ -17,7 +17,7 @@ jobs:
         run: tests/wiilandd-smoke.sh
       - name: Build and install staged package
         run: |
-          ./autogen.sh
+          NOCONFIGURE=1 ./autogen.sh
           ./configure --prefix=/usr
           make -j"$(nproc)"
           make check
