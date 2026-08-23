@@ -1519,6 +1519,7 @@ int main(int argc, char **argv)
 	bool explicit_config = false;
 	bool no_config = false;
 	bool self_test = false;
+	bool diagnostic = false;
 	int i, ret;
 
 	for (i = 1; i < argc; ++i) {
@@ -1537,10 +1538,13 @@ int main(int argc, char **argv)
 			no_config = true;
 		} else if (!strcmp(argv[i], "--self-test")) {
 			self_test = true;
+		} else if (!strcmp(argv[i], "-h") || !strcmp(argv[i], "--help") ||
+			   !strcmp(argv[i], "-l") || !strcmp(argv[i], "--list")) {
+			diagnostic = true;
 		}
 	}
 
-	if (!no_config && (!self_test || explicit_config)) {
+	if (!diagnostic && !no_config && (!self_test || explicit_config)) {
 		if (!config_path)
 			config_path = default_config_path();
 		if (config_path) {

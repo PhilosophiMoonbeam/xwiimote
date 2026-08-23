@@ -81,7 +81,8 @@ or
 .B $HOME/.config/wiiland/wiilandd.conf
 when present. Use
 .B --config
-to load an explicit file. Supported keys are:
+to load an explicit file. Help and list modes do not load configuration, so
+diagnostics remain available even with a broken config file. Supported keys are:
 .TP
 .B profile=gamepad|desktop|both
 Default virtual input profile.

@@ -87,6 +87,9 @@ To tune desktop pointer speed persistently:
 For hardware-free diagnostics in packaging or CI, run:
 	$ wiilandd --self-test
 
+`wiilandd --help` and `wiilandd --list` intentionally bypass configuration so
+diagnostics still work when a local config file is broken.
+
 The Wayland bridge needs read access to hid-wiimote input devices and write
 access to /dev/uinput. See ./doc/WIILAND for the migration plan, backend
 rationale, the example udev rule in ./res/70-wiiland-uinput.rules, and the
