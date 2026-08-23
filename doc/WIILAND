@@ -39,11 +39,11 @@ wiilandd:
     --config; res/wiilandd.conf is the distributable sample;
   - provides --self-test for deterministic profile, button-map, config, and
     pointer-motion validation without hardware;
-  - provides --axis-map for machine-readable virtual gamepad mapping during
-    hardware validation;
+  - provides --axis-map and --validation-checklist for machine-readable virtual
+    gamepad mapping and required hardware-validation coverage;
   - ships a CI smoke harness that compiles wiilandd against committed
-    libxwiimote stubs and runs --self-test, --check-config, --dump-config, and
-    --axis-map;
+    libxwiimote stubs and runs --self-test, --check-config, --dump-config,
+    --axis-map, and --validation-checklist;
   - provides --dry-run --trace-events for hardware validation reports without
     creating virtual input devices;
   - handles hotplug and extension changes without Xorg configuration.
@@ -106,9 +106,10 @@ Required runtime permissions:
 
    The first command records finite host, distribution, compositor/session
    environment, Bluetooth controller, hid-wiimote module-parameter, permission,
-   config, version, git commit/dirty state, axis map, device-list, devtype,
-   extension, battery, event-node access diagnostics, and manual validation
-   placeholders for SDL, Wine/Proton, and native Wayland desktop behavior.
+   config, version, git commit/dirty state, axis map, validation checklist,
+   device-list, devtype, extension, battery, event-node access diagnostics, and
+   manual validation placeholders for SDL, Wine/Proton, and native Wayland
+   desktop behavior.
    The second command captures sequenced, filtered --dry-run --trace-events
    --verbose output for one device. Extra arguments are passed to wiilandd; use
    --trace-events=motion-plus when validating MotionPlus only, or use the

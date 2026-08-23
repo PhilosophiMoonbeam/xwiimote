@@ -2758,6 +2758,37 @@ static void print_axis_map(void)
 	puts("balance.bottom-left=ABS_TILT_Y");
 }
 
+static void print_validation_checklist(void)
+{
+	puts("original.core-buttons=required");
+	puts("original.accelerometer=required");
+	puts("original.ir-desktop-pointer=required");
+	puts("motion-plus-external.hotplug=required");
+	puts("motion-plus-external.axes=required");
+	puts("motion-plus-builtin.axes=required");
+	puts("nunchuk.stick=required");
+	puts("nunchuk.buttons=required");
+	puts("nunchuk.accelerometer=required");
+	puts("classic.sticks=required");
+	puts("classic.triggers=required");
+	puts("classic.buttons=required");
+	puts("pro.sticks=required");
+	puts("pro.triggers=required");
+	puts("pro.buttons=required");
+	puts("guitar.frets=required");
+	puts("guitar.strum=required");
+	puts("guitar.whammy=required");
+	puts("guitar.stick=required");
+	puts("drums.pads=required");
+	puts("drums.cymbals-toms=required");
+	puts("drums.pedals=required");
+	puts("balance-board.sensors=required");
+	puts("wayland.sdl=required");
+	puts("wayland.wine-proton=required");
+	puts("wayland.desktop-profile=required");
+}
+
+
 static void usage(FILE *out)
 {
 	fprintf(out,
@@ -2785,6 +2816,8 @@ static void usage(FILE *out)
 		"\t    --trace-events[=all|keys|axes|motion-plus]\n"
 		"\t                  Print decoded libxwiimote events\n"
 		"\t    --axis-map   Print virtual gamepad axis mapping and exit\n"
+		"\t    --validation-checklist\n"
+		"\t                  Print required hardware validation matrix\n"
 		"\t    --dump-config  Print resolved configuration and exit\n"
 		"\t-v, --verbose    Print device lifecycle details\n"
 		"\n"
@@ -2827,7 +2860,8 @@ int main(int argc, char **argv)
 		} else if (!strcmp(argv[i], "--version") ||
 			   !strcmp(argv[i], "-h") || !strcmp(argv[i], "--help") ||
 			   !strcmp(argv[i], "-l") || !strcmp(argv[i], "--list") ||
-			   !strcmp(argv[i], "--axis-map")) {
+			   !strcmp(argv[i], "--axis-map") ||
+			   !strcmp(argv[i], "--validation-checklist")) {
 			diagnostic = true;
 		} else if (!strcmp(argv[i], "-v") || !strcmp(argv[i], "--verbose")) {
 			verbose = true;
@@ -2854,6 +2888,9 @@ int main(int argc, char **argv)
 			return abs(list_devices());
 		} else if (!strcmp(argv[i], "--axis-map")) {
 			print_axis_map();
+			return 0;
+		} else if (!strcmp(argv[i], "--validation-checklist")) {
+			print_validation_checklist();
 			return 0;
 		} else if (!strncmp(argv[i], "--profile=", 10)) {
 			if (parse_profile(argv[i] + 10)) {

@@ -22,6 +22,9 @@ test "$("$bin" --version)" = "wiilandd smoke"
 grep -F 'nunchuk.accel.x=ABS_HAT1X' "$build_dir/axis-map" >/dev/null
 grep -F 'pro.zl=BTN_TL2' "$build_dir/axis-map" >/dev/null
 grep -F 'guitar.stick.x=ABS_X' "$build_dir/axis-map" >/dev/null
+"$bin" --validation-checklist >"$build_dir/validation-checklist"
+grep -F 'motion-plus-external.hotplug=required' "$build_dir/validation-checklist" >/dev/null
+grep -F 'wayland.wine-proton=required' "$build_dir/validation-checklist" >/dev/null
 "$bin" --no-config --trace-events=motion-plus --dump-config >/dev/null
 if "$bin" --no-config --trace-events=bad --dump-config >/dev/null 2>&1; then
 	printf '%s\n' 'wiilandd accepted invalid trace event filter' >&2
@@ -45,6 +48,10 @@ cat >"$fake_wiilandd" <<'EOF'
 case "$1" in
 --axis-map)
 	printf '%s\n' 'nunchuk.accel.x=ABS_HAT1X'
+	exit 0
+	;;
+--validation-checklist)
+	printf '%s\n' 'wayland.wine-proton=required'
 	exit 0
 	;;
 esac
@@ -76,6 +83,8 @@ grep -F 'manual.wine-proton=TODO:' "$build_dir/hardware-report" >/dev/null
 grep -F 'manual.native-wayland-desktop=TODO:' "$build_dir/hardware-report" >/dev/null
 grep -F '$ '"$fake_wiilandd"' --axis-map' "$build_dir/hardware-report" >/dev/null
 grep -F 'nunchuk.accel.x=ABS_HAT1X' "$build_dir/hardware-report" >/dev/null
+grep -F '$ '"$fake_wiilandd"' --validation-checklist' "$build_dir/hardware-report" >/dev/null
+grep -F 'wayland.wine-proton=required' "$build_dir/hardware-report" >/dev/null
 mkdir -p "$build_dir/nonrepo"
 (cd "$build_dir" && WIILAND_REPO_DIR=$build_dir/nonrepo \
 	WIILANDD=$fake_wiilandd "$root/tools/wiilandd-hardware-report.sh" \
