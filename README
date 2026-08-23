@@ -89,6 +89,7 @@ Per-device rules can override that default by sysfs path substring:
 
 For hardware-free diagnostics in packaging or CI, run:
 	$ wiilandd --check-config --config res/wiilandd.conf
+	$ wiilandd --dump-config --config res/wiilandd.conf
 	$ wiilandd --self-test
 	$ wiilandd --dry-run --trace-events --verbose
 

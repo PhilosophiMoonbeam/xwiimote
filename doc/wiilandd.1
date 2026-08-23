@@ -64,6 +64,10 @@ virtual input. Useful for smoke tests and service diagnostics.
 Load configuration, apply command-line overrides, and exit without enumerating
 devices. Useful for packaging, CI, and service preflight checks.
 .TP
+.BR --dump-config
+Print the fully resolved configuration after loading files and applying
+command-line overrides, then exit.
+.TP
 .BR --self-test
 Run deterministic profile, config, button-map, IR, and pointer-motion tests, then exit.
 This mode does not enumerate devices or open

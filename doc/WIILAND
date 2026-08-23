@@ -38,7 +38,7 @@ wiilandd:
   - provides --self-test for deterministic profile, button-map, config, and
     pointer-motion validation without hardware;
   - ships a CI smoke harness that compiles wiilandd against committed
-    libxwiimote stubs and runs --self-test plus --check-config;
+    libxwiimote stubs and runs --self-test, --check-config, and --dump-config;
   - provides --dry-run --trace-events for hardware validation reports without
     creating virtual input devices;
   - handles hotplug and extension changes without Xorg configuration.

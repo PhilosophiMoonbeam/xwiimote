@@ -1228,6 +1228,7 @@ static int poll_devices(struct bridge_device *devices, struct xwii_monitor *mon)
 		if (ret < 0) {
 			if (errno == EINTR)
 				continue;
+
 			return -errno;
 		}
 		if (!ret) {
@@ -1366,6 +1367,61 @@ static int run_one(const char *arg)
 
 	cleanup_devices(devices);
 	return ret;
+}
+
+static const char *profile_name(unsigned int value)
+{
+	switch (value) {
+	case PROFILE_GAMEPAD:
+		return "gamepad";
+	case PROFILE_DESKTOP:
+		return "desktop";
+	case PROFILE_GAMEPAD | PROFILE_DESKTOP:
+		return "both";
+	default:
+		return "unknown";
+	}
+}
+
+static const char *desktop_action_name(int code)
+{
+	switch (code) {
+	case -1:
+		return "disabled";
+	case BTN_LEFT:
+		return "left-click";
+	case BTN_RIGHT:
+		return "right-click";
+	case KEY_ENTER:
+		return "enter";
+	case KEY_ESC:
+		return "escape";
+	case KEY_LEFTMETA:
+		return "overview";
+	case KEY_PAGEUP:
+		return "page-up";
+	case KEY_PAGEDOWN:
+		return "page-down";
+	default:
+		return "unknown";
+	}
+}
+
+static void dump_config_state(FILE *out)
+{
+	unsigned int i;
+
+	fprintf(out, "profile=%s\n", profile_name(profiles));
+	fprintf(out, "pointer-speed=%d\n", pointer_speed);
+	fprintf(out, "ir-speed=%d\n", ir_speed);
+
+	for (i = 0; i < ARRAY_SIZE(desktop_bindings); ++i)
+		fprintf(out, "desktop.%s=%s\n", desktop_bindings[i].name,
+			desktop_action_name(desktop_bindings[i].code));
+
+	for (i = 0; i < device_rule_count; ++i)
+		fprintf(out, "device.%s.profile=%s\n", device_rules[i].match,
+			profile_name(device_rules[i].profiles));
 }
 
 static int parse_profile_value(const char *arg, unsigned int *out)
@@ -2078,6 +2134,28 @@ static int self_test_config(void)
 	return 0;
 }
 
+
+static int self_test_dump_format(void)
+{
+	int ret;
+
+	ret = expect_int("dump-profile-gamepad",
+			 strcmp(profile_name(PROFILE_GAMEPAD), "gamepad"), 0);
+	if (ret)
+		return ret;
+	ret = expect_int("dump-profile-both",
+			 strcmp(profile_name(PROFILE_GAMEPAD | PROFILE_DESKTOP),
+				"both"), 0);
+	if (ret)
+		return ret;
+	ret = expect_int("dump-action-disabled",
+			 strcmp(desktop_action_name(-1), "disabled"), 0);
+	if (ret)
+		return ret;
+	return expect_int("dump-action-enter",
+			  strcmp(desktop_action_name(KEY_ENTER), "enter"), 0);
+}
+
 static int self_test_event_trace(void)
 {
 	int ret;
@@ -2128,6 +2206,9 @@ static int run_self_test(void)
 	ret = self_test_event_trace();
 	if (ret)
 		return ret;
+	ret = self_test_dump_format();
+	if (ret)
+		return ret;
 	ret = self_test_config();
 	if (ret)
 		return ret;
@@ -2156,6 +2237,7 @@ static void usage(FILE *out)
 		"\t    --check-config  Validate configuration and exit\n"
 		"\t    --self-test  Run deterministic self tests and exit\n"
 		"\t    --trace-events  Print decoded libxwiimote events\n"
+		"\t    --dump-config  Print resolved configuration and exit\n"
 		"\t-v, --verbose    Print device lifecycle details\n"
 		"\n"
 		"wiilandd is a Wayland-native bridge: it creates Linux uinput\n"
@@ -2170,6 +2252,7 @@ int main(int argc, char **argv)
 	bool no_config = false;
 	bool self_test = false;
 	bool check_config = false;
+	bool dump_config = false;
 	bool diagnostic = false;
 	int i, ret;
 
@@ -2191,6 +2274,8 @@ int main(int argc, char **argv)
 			self_test = true;
 		} else if (!strcmp(argv[i], "--check-config")) {
 			check_config = true;
+		} else if (!strcmp(argv[i], "--dump-config")) {
+			dump_config = true;
 		} else if (!strcmp(argv[i], "-h") || !strcmp(argv[i], "--help") ||
 			   !strcmp(argv[i], "-l") || !strcmp(argv[i], "--list")) {
 			diagnostic = true;
@@ -2255,6 +2340,8 @@ int main(int argc, char **argv)
 			check_config = true;
 		} else if (!strcmp(argv[i], "--trace-events")) {
 			trace_events = true;
+		} else if (!strcmp(argv[i], "--dump-config")) {
+			dump_config = true;
 		} else if (!strcmp(argv[i], "-v") || !strcmp(argv[i], "--verbose")) {
 			verbose = true;
 		} else if (!strcmp(argv[i], "-d") || !strcmp(argv[i], "--device")) {
@@ -2269,6 +2356,10 @@ int main(int argc, char **argv)
 		}
 	}
 
+	if (dump_config) {
+		dump_config_state(stdout);
+		return 0;
+	}
 	if (check_config)
 		return 0;
 	if (self_test)

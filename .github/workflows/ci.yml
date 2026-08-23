@@ -17,5 +17,7 @@ jobs:
         run: ./wiilandd-smoke --self-test
       - name: Validate sample config
         run: ./wiilandd-smoke --config res/wiilandd.conf --check-config
+      - name: Dump sample config
+        run: ./wiilandd-smoke --config res/wiilandd.conf --dump-config
       - name: Validate manpage rendering
         run: groff -man -Tascii doc/wiilandd.1 >/dev/null
