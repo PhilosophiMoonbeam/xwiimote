@@ -1711,6 +1711,12 @@ static int load_config_file(const char *path, bool required)
 
 	while (fgets(line, sizeof(line), file)) {
 		++lineno;
+		if (!strchr(line, '\n') && !feof(file)) {
+			fprintf(stderr, "wiilandd: %s:%u: line too long\n",
+				path, lineno);
+			fclose(file);
+			return -E2BIG;
+		}
 		ret = apply_config_line(path, lineno, line);
 		if (ret) {
 			fclose(file);
