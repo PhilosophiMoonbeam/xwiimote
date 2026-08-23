@@ -145,6 +145,9 @@ wiilandd_LDADD = \
 wiilandd_LDFLAGS = \
 	$(AM_LDFLAGS)
 
+check-local: wiilandd
+	$(AM_V_at)./wiilandd --self-test
+
 #
 # xwiidump
 #

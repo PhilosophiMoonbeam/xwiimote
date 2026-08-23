@@ -1012,6 +1012,169 @@ static int parse_profile(const char *arg)
 	return -EINVAL;
 }
 
+static int expect_int(const char *name, int got, int want)
+{
+	if (got == want)
+		return 0;
+
+	fprintf(stderr, "wiilandd self-test: %s: got %d want %d\n",
+		name, got, want);
+	return -EINVAL;
+}
+
+static int self_test_gamepad_map(void)
+{
+	static const struct {
+		unsigned int xwii;
+		int input;
+		const char *name;
+	} tests[] = {
+		{ XWII_KEY_LEFT, BTN_DPAD_LEFT, "left" },
+		{ XWII_KEY_RIGHT, BTN_DPAD_RIGHT, "right" },
+		{ XWII_KEY_UP, BTN_DPAD_UP, "up" },
+		{ XWII_KEY_DOWN, BTN_DPAD_DOWN, "down" },
+		{ XWII_KEY_A, BTN_SOUTH, "a" },
+		{ XWII_KEY_B, BTN_EAST, "b" },
+		{ XWII_KEY_PLUS, BTN_START, "plus" },
+		{ XWII_KEY_MINUS, BTN_SELECT, "minus" },
+		{ XWII_KEY_HOME, BTN_MODE, "home" },
+		{ XWII_KEY_ONE, BTN_1, "one" },
+		{ XWII_KEY_TWO, BTN_2, "two" },
+		{ XWII_KEY_X, BTN_NORTH, "x" },
+		{ XWII_KEY_Y, BTN_WEST, "y" },
+		{ XWII_KEY_TL, BTN_TL, "tl" },
+		{ XWII_KEY_TR, BTN_TR, "tr" },
+		{ XWII_KEY_ZL, BTN_TL2, "zl" },
+		{ XWII_KEY_ZR, BTN_TR2, "zr" },
+		{ XWII_KEY_THUMBL, BTN_THUMBL, "thumbl" },
+		{ XWII_KEY_THUMBR, BTN_THUMBR, "thumbr" },
+		{ XWII_KEY_C, BTN_C, "c" },
+		{ XWII_KEY_Z, BTN_Z, "z" },
+		{ XWII_KEY_STRUM_BAR_UP, BTN_STRUM_BAR_UP, "strum-up" },
+		{ XWII_KEY_STRUM_BAR_DOWN, BTN_STRUM_BAR_DOWN, "strum-down" },
+		{ XWII_KEY_FRET_FAR_UP, BTN_FRET_FAR_UP, "fret-far-up" },
+		{ XWII_KEY_FRET_UP, BTN_FRET_UP, "fret-up" },
+		{ XWII_KEY_FRET_MID, BTN_FRET_MID, "fret-mid" },
+		{ XWII_KEY_FRET_LOW, BTN_FRET_LOW, "fret-low" },
+		{ XWII_KEY_FRET_FAR_LOW, BTN_FRET_FAR_LOW, "fret-far-low" },
+	};
+	size_t i;
+	int ret;
+
+	for (i = 0; i < ARRAY_SIZE(tests); ++i) {
+		ret = expect_int(tests[i].name, map_key(tests[i].xwii),
+				 tests[i].input);
+		if (ret)
+			return ret;
+	}
+
+	return expect_int("unknown-gamepad-key", map_key(XWII_KEY_NUM), -1);
+}
+
+static int self_test_desktop_map(void)
+{
+	static const struct {
+		unsigned int xwii;
+		int input;
+		const char *name;
+	} tests[] = {
+		{ XWII_KEY_A, BTN_LEFT, "desktop-a" },
+		{ XWII_KEY_B, BTN_RIGHT, "desktop-b" },
+		{ XWII_KEY_PLUS, KEY_ENTER, "desktop-plus" },
+		{ XWII_KEY_MINUS, KEY_ESC, "desktop-minus" },
+		{ XWII_KEY_HOME, KEY_LEFTMETA, "desktop-home" },
+		{ XWII_KEY_ONE, KEY_PAGEDOWN, "desktop-one" },
+		{ XWII_KEY_TWO, KEY_PAGEUP, "desktop-two" },
+	};
+	struct bridge_device dev;
+	size_t i;
+	int ret;
+
+	for (i = 0; i < ARRAY_SIZE(tests); ++i) {
+		ret = expect_int(tests[i].name,
+				 desktop_key_code(tests[i].xwii),
+				 tests[i].input);
+		if (ret)
+			return ret;
+	}
+
+	ret = expect_int("unknown-desktop-key",
+			 desktop_key_code(XWII_KEY_NUM), -1);
+	if (ret)
+		return ret;
+
+	memset(&dev, 0, sizeof(dev));
+	update_pointer_key(&dev, POINTER_LEFT, 1);
+	update_pointer_key(&dev, POINTER_UP, 1);
+	ret = expect_int("pointer-left-up-dx", dev.pointer_dx, -16);
+	if (ret)
+		return ret;
+	ret = expect_int("pointer-left-up-dy", dev.pointer_dy, -16);
+	if (ret)
+		return ret;
+
+	update_pointer_key(&dev, POINTER_RIGHT, 1);
+	ret = expect_int("pointer-opposed-x", dev.pointer_dx, 0);
+	if (ret)
+		return ret;
+
+	update_pointer_key(&dev, POINTER_LEFT, 0);
+	ret = expect_int("pointer-right-dx", dev.pointer_dx, 16);
+	if (ret)
+		return ret;
+
+	update_pointer_key(&dev, POINTER_UP, 0);
+	update_pointer_key(&dev, POINTER_RIGHT, 0);
+	return expect_int("pointer-cleared", has_pointer_motion(&dev), 0);
+}
+
+static int self_test_profiles(void)
+{
+	int ret;
+
+	ret = parse_profile("gamepad");
+	if (ret)
+		return ret;
+	ret = expect_int("profile-gamepad", profiles, PROFILE_GAMEPAD);
+	if (ret)
+		return ret;
+
+	ret = parse_profile("desktop");
+	if (ret)
+		return ret;
+	ret = expect_int("profile-desktop", profiles, PROFILE_DESKTOP);
+	if (ret)
+		return ret;
+
+	ret = parse_profile("both");
+	if (ret)
+		return ret;
+	ret = expect_int("profile-both", profiles,
+			 PROFILE_GAMEPAD | PROFILE_DESKTOP);
+	if (ret)
+		return ret;
+
+	return expect_int("profile-invalid", parse_profile("bad"), -EINVAL);
+}
+
+static int run_self_test(void)
+{
+	int ret;
+
+	ret = self_test_gamepad_map();
+	if (ret)
+		return ret;
+	ret = self_test_desktop_map();
+	if (ret)
+		return ret;
+	ret = self_test_profiles();
+	if (ret)
+		return ret;
+
+	printf("wiilandd self-test: ok\n");
+	return 0;
+}
+
 static void usage(FILE *out)
 {
 	fprintf(out,
@@ -1025,6 +1188,7 @@ static void usage(FILE *out)
 		"\t-d, --device     Bridge one device instead of monitoring all devices\n"
 		"\t-p, --profile    gamepad, desktop, or both (default: gamepad)\n"
 		"\t-n, --dry-run    Do not create /dev/uinput devices or emit input\n"
+		"\t    --self-test  Run deterministic self tests and exit\n"
 		"\t-v, --verbose    Print device lifecycle details\n"
 		"\n"
 		"wiilandd is a Wayland-native bridge: it creates Linux uinput\n"
@@ -1034,6 +1198,7 @@ static void usage(FILE *out)
 int main(int argc, char **argv)
 {
 	const char *device = NULL;
+	bool self_test = false;
 	int i, ret;
 
 	for (i = 1; i < argc; ++i) {
@@ -1054,6 +1219,8 @@ int main(int argc, char **argv)
 			}
 		} else if (!strcmp(argv[i], "-n") || !strcmp(argv[i], "--dry-run")) {
 			dry_run = true;
+		} else if (!strcmp(argv[i], "--self-test")) {
+			self_test = true;
 		} else if (!strcmp(argv[i], "-v") || !strcmp(argv[i], "--verbose")) {
 			verbose = true;
 		} else if (!strcmp(argv[i], "-d") || !strcmp(argv[i], "--device")) {
@@ -1067,6 +1234,9 @@ int main(int argc, char **argv)
 			return EINVAL;
 		}
 	}
+	if (self_test)
+		return abs(run_self_test());
+
 
 	signal(SIGINT, on_signal);
 	signal(SIGTERM, on_signal);

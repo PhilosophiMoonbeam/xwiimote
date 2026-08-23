@@ -80,6 +80,9 @@ For desktop pointer/keyboard control, run:
 For one process that exposes both gamepad and desktop controls, run:
 	$ wiilandd --profile both
 
+For hardware-free diagnostics in packaging or CI, run:
+	$ wiilandd --self-test
+
 The Wayland bridge needs read access to hid-wiimote input devices and write
 access to /dev/uinput. See ./doc/WIILAND for the migration plan, backend
 rationale, the example udev rule in ./res/70-wiiland-uinput.rules, and the

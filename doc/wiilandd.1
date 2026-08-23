@@ -45,6 +45,11 @@ and 1/2 send Page Down/Page Up.
 Enumerate and open devices without creating /dev/uinput devices or emitting
 virtual input. Useful for smoke tests and service diagnostics.
 .TP
+.BR --self-test
+Run deterministic profile, button-map, and pointer-motion tests, then exit.
+This mode does not enumerate devices or open
+.BR /dev/uinput .
+.TP
 .BR -v , " --verbose"
 Print device lifecycle details.
 .SH PERMISSIONS
