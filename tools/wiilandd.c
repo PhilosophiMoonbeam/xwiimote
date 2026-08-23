@@ -146,6 +146,10 @@ struct desktop_binding {
 	int code;
 };
 
+enum backend {
+	BACKEND_UINPUT,
+};
+
 struct bridge_device {
 	struct xwii_iface *iface;
 	char *syspath;
@@ -165,6 +169,7 @@ static bool verbose;
 static bool dry_run;
 static bool trace_events;
 static unsigned int profiles = PROFILE_GAMEPAD;
+static enum backend backend = BACKEND_UINPUT;
 static int pointer_speed = 16;
 static int ir_speed = 8;
 static int ir_deadzone;
@@ -1453,10 +1458,21 @@ static const char *device_rule_prefix(enum device_rule_kind kind)
 	return kind == DEVICE_RULE_DEVTYPE ? "device-type" : "device";
 }
 
+static const char *backend_name(enum backend backend)
+{
+	switch (backend) {
+	case BACKEND_UINPUT:
+		return "uinput";
+	default:
+		return "unknown";
+	}
+}
+
 static void dump_config_state(FILE *out)
 {
 	unsigned int i;
 
+	fprintf(out, "backend=%s\n", backend_name(backend));
 	fprintf(out, "profile=%s\n", profile_name(profiles));
 	fprintf(out, "pointer-speed=%d\n", pointer_speed);
 	fprintf(out, "ir-speed=%d\n", ir_speed);
@@ -1486,6 +1502,16 @@ static int parse_profile_value(const char *arg, unsigned int *out)
 	}
 	if (!strcmp(arg, "both")) {
 		*out = PROFILE_GAMEPAD | PROFILE_DESKTOP;
+		return 0;
+	}
+
+	return -EINVAL;
+}
+
+static int parse_backend(const char *arg)
+{
+	if (!strcmp(arg, "uinput")) {
+		backend = BACKEND_UINPUT;
 		return 0;
 	}
 
@@ -1698,7 +1724,9 @@ static int apply_config_line(const char *path, unsigned int lineno, char *line)
 	key = trim(key);
 	value = trim(value);
 
-	if (!strcmp(key, "profile"))
+	if (!strcmp(key, "backend"))
+		ret = parse_backend(value);
+	else if (!strcmp(key, "profile"))
 		ret = parse_profile(value);
 	else if (!strcmp(key, "ir-speed"))
 		ret = parse_ir_speed(value);
@@ -2201,6 +2229,7 @@ static int self_test_config(void)
 	if (ret)
 		return ret;
 
+
 	ret = parse_ir_smoothing("95");
 	if (ret)
 		return ret;
@@ -2218,6 +2247,15 @@ static int self_test_config(void)
 	if (ret)
 		return ret;
 	ret = expect_int("config-profile", profiles, PROFILE_DESKTOP);
+	if (ret)
+		return ret;
+
+	snprintf(line, sizeof(line), " backend = uinput\n");
+	ret = apply_config_line("self-test", 2, line);
+	if (ret)
+		return ret;
+	ret = expect_int("config-backend",
+			 strcmp(backend_name(backend), "uinput"), 0);
 	if (ret)
 		return ret;
 
@@ -2314,6 +2352,17 @@ static int self_test_config(void)
 			 PROFILE_DESKTOP);
 	if (ret)
 		return ret;
+	ret = parse_backend("uinput");
+	if (ret)
+		return ret;
+	ret = expect_int("backend-uinput",
+			 strcmp(backend_name(backend), "uinput"), 0);
+	if (ret)
+		return ret;
+	ret = expect_int("backend-invalid", parse_backend("libei"), -EINVAL);
+	if (ret)
+		return ret;
+
 	ret = expect_int("device-type-profile-miss",
 			 profiles_for_device("/sys/devices/red/wiimote",
 					     "procontroller"),
@@ -2329,6 +2378,7 @@ static int self_test_config(void)
 	profiles = PROFILE_GAMEPAD;
 	pointer_speed = 16;
 	ir_speed = 8;
+	backend = BACKEND_UINPUT;
 	ir_deadzone = 0;
 	ir_smoothing = 0;
 	clear_device_rules();
@@ -2388,6 +2438,7 @@ static int run_self_test(void)
 {
 	int ret;
 
+	backend = BACKEND_UINPUT;
 	profiles = PROFILE_GAMEPAD;
 	pointer_speed = 16;
 	ir_speed = 8;
@@ -2444,6 +2495,7 @@ static void usage(FILE *out)
 		"\t-l, --list       List connected Wii Remote devices and exit\n"
 		"\t-d, --device     Bridge one device instead of monitoring all devices\n"
 		"\t-p, --profile    gamepad, desktop, or both (default: gamepad)\n"
+		"\t    --backend <uinput>       Input backend (default: uinput)\n"
 		"\t    --ir-speed <1-127>       IR pointer gain (default: 8)\n"
 		"\t    --ir-deadzone <0-127>   IR jitter deadzone (default: 0)\n"
 		"\t    --ir-smoothing <0-95>   IR smoothing percent (default: 0)\n"
@@ -2525,6 +2577,16 @@ int main(int argc, char **argv)
 			}
 		} else if (!strcmp(argv[i], "-p") || !strcmp(argv[i], "--profile")) {
 			if (++i >= argc || parse_profile(argv[i])) {
+				usage(stderr);
+				return EINVAL;
+			}
+		} else if (!strncmp(argv[i], "--backend=", 10)) {
+			if (parse_backend(argv[i] + 10)) {
+				usage(stderr);
+				return EINVAL;
+			}
+		} else if (!strcmp(argv[i], "--backend")) {
+			if (++i >= argc || parse_backend(argv[i])) {
 				usage(stderr);
 				return EINVAL;
 			}

@@ -5,10 +5,11 @@ session and Xorg input drivers are legacy compatibility only.
 
 == Decision ==
 
-The default Wayland path is a Linux uinput bridge, shipped as wiilandd.
-It consumes hid-wiimote/libxwiimote compatibility-library events and creates virtual evdev devices.
-Wayland compositors already ingest those devices through libinput and native
-game stacks already ingest them through evdev, SDL, Wine, and Proton.
+The default Wayland path is a Linux uinput bridge, shipped as wiilandd and
+exposed explicitly as backend=uinput/--backend uinput. It consumes
+hid-wiimote/libxwiimote compatibility-library events and creates virtual evdev
+devices. Wayland compositors already ingest those devices through libinput and
+native game stacks already ingest them through evdev, SDL, Wine, and Proton.
 
 This is intentionally not an XWayland or Xorg input-driver port. Wayland clients
 cannot generally inject input into other clients. Compositor-specific virtual

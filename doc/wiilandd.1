@@ -44,6 +44,11 @@ profile creates a virtual mouse/keyboard device: D-pad repeat and valid IR
 events move the pointer, A/B click, +/- send Enter/Escape, Home sends the
 compositor overview key, and 1/2 send Page Down/Page Up.
 .TP
+.BR --backend " " uinput
+Select the input backend. Only
+.B uinput
+is currently supported; it is the default compositor-independent Wayland path.
+.TP
 .BR --pointer-speed " " 1-127
 Set the desktop profile pointer step in pixels per repeat tick. The default is
 16.
@@ -115,6 +120,9 @@ when present. Later files override earlier values. Use
 to load one explicit file instead of the default hierarchy. Help and list modes
 do not load configuration, so diagnostics remain available even with a broken
 config file. Supported keys are:
+.TP
+.B backend=uinput
+Input backend. Only uinput is currently supported.
 .TP
 .B profile=gamepad|desktop|both
 Default virtual input profile.
