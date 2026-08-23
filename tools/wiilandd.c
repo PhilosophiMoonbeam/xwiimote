@@ -327,7 +327,7 @@ static int enable_abs_bits(int fd, struct uinput_user_dev *udev)
 {
 	static const int axes[] = {
 		ABS_X, ABS_Y, ABS_RX, ABS_RY, ABS_Z, ABS_RZ,
-		ABS_WHAMMY_BAR, ABS_FRET_BOARD,
+		ABS_WHAMMY_BAR, ABS_FRET_BOARD, ABS_MISC,
 	};
 	size_t i;
 	int ret;
@@ -347,6 +347,7 @@ static int enable_abs_bits(int fd, struct uinput_user_dev *udev)
 	setup_abs_axis(udev, ABS_RZ, 0, 1023, 0, 4);
 	setup_abs_axis(udev, ABS_WHAMMY_BAR, 0, 1023, 0, 4);
 	setup_abs_axis(udev, ABS_FRET_BOARD, 0, 1023, 0, 4);
+	setup_abs_axis(udev, ABS_MISC, 0, 1023, 0, 4);
 
 	return 0;
 }
@@ -505,6 +506,48 @@ static int forward_abs_pair(struct bridge_device *dev, int code_x, int code_y,
 	return emit_abs(dev->uinput_fd, code_y, abs->y);
 }
 
+static int drums_abs_code(unsigned int index)
+{
+	static const int codes[XWII_DRUMS_ABS_NUM] = {
+		[XWII_DRUMS_ABS_PAD] = ABS_X,
+		[XWII_DRUMS_ABS_CYMBAL_LEFT] = ABS_RX,
+		[XWII_DRUMS_ABS_CYMBAL_RIGHT] = ABS_RY,
+		[XWII_DRUMS_ABS_TOM_LEFT] = ABS_Z,
+		[XWII_DRUMS_ABS_TOM_RIGHT] = ABS_RZ,
+		[XWII_DRUMS_ABS_TOM_FAR_RIGHT] = ABS_WHAMMY_BAR,
+		[XWII_DRUMS_ABS_BASS] = ABS_FRET_BOARD,
+		[XWII_DRUMS_ABS_HI_HAT] = ABS_MISC,
+	};
+
+	if (index >= ARRAY_SIZE(codes))
+		return -1;
+
+	return codes[index];
+}
+
+static int forward_drums_move_event(struct bridge_device *dev,
+				    const struct xwii_event *event)
+{
+	unsigned int i;
+	int code, ret;
+
+	ret = forward_abs_pair(dev, ABS_X, ABS_Y,
+			       &event->v.abs[XWII_DRUMS_ABS_PAD]);
+	if (ret)
+		return ret;
+
+	for (i = XWII_DRUMS_ABS_CYMBAL_LEFT; i < XWII_DRUMS_ABS_NUM; ++i) {
+		code = drums_abs_code(i);
+		if (code < 0)
+			continue;
+		ret = emit_abs(dev->uinput_fd, code, event->v.abs[i].x);
+		if (ret)
+			return ret;
+	}
+
+	return 0;
+}
+
 static int forward_move_event(struct bridge_device *dev,
 			      const struct xwii_event *event)
 {
@@ -536,6 +579,9 @@ static int forward_move_event(struct bridge_device *dev,
 		if (!ret)
 			ret = emit_abs(dev->uinput_fd, ABS_FRET_BOARD,
 				       event->v.abs[2].x);
+		break;
+	case XWII_EVENT_DRUMS_MOVE:
+		ret = forward_drums_move_event(dev, event);
 		break;
 	default:
 		return 0;
@@ -748,6 +794,7 @@ static int handle_xwii_event(struct bridge_device *dev,
 	case XWII_EVENT_CLASSIC_CONTROLLER_MOVE:
 	case XWII_EVENT_PRO_CONTROLLER_MOVE:
 	case XWII_EVENT_GUITAR_MOVE:
+	case XWII_EVENT_DRUMS_MOVE:
 		if (dev->profiles & PROFILE_GAMEPAD)
 			return forward_move_event(dev, event);
 		return 0;
@@ -1495,6 +1542,37 @@ static int self_test_desktop_map(void)
 	return expect_int("pointer-cleared", has_pointer_motion(&dev), 0);
 }
 
+static int self_test_drums_map(void)
+{
+	static const struct {
+		unsigned int index;
+		int input;
+		const char *name;
+	} tests[] = {
+		{ XWII_DRUMS_ABS_PAD, ABS_X, "drums-pad" },
+		{ XWII_DRUMS_ABS_CYMBAL_LEFT, ABS_RX, "drums-cymbal-left" },
+		{ XWII_DRUMS_ABS_CYMBAL_RIGHT, ABS_RY, "drums-cymbal-right" },
+		{ XWII_DRUMS_ABS_TOM_LEFT, ABS_Z, "drums-tom-left" },
+		{ XWII_DRUMS_ABS_TOM_RIGHT, ABS_RZ, "drums-tom-right" },
+		{ XWII_DRUMS_ABS_TOM_FAR_RIGHT, ABS_WHAMMY_BAR,
+		  "drums-tom-far-right" },
+		{ XWII_DRUMS_ABS_BASS, ABS_FRET_BOARD, "drums-bass" },
+		{ XWII_DRUMS_ABS_HI_HAT, ABS_MISC, "drums-hi-hat" },
+	};
+	size_t i;
+	int ret;
+
+	for (i = 0; i < ARRAY_SIZE(tests); ++i) {
+		ret = expect_int(tests[i].name, drums_abs_code(tests[i].index),
+				 tests[i].input);
+		if (ret)
+			return ret;
+	}
+
+	return expect_int("drums-unknown", drums_abs_code(XWII_DRUMS_ABS_NUM),
+			  -1);
+}
+
 static int self_test_ir_pointer(void)
 {
 	struct xwii_event event;
@@ -1730,6 +1808,9 @@ static int run_self_test(void)
 	if (ret)
 		return ret;
 	ret = self_test_desktop_map();
+	if (ret)
+		return ret;
+	ret = self_test_drums_map();
 	if (ret)
 		return ret;
 	ret = self_test_ir_pointer();
