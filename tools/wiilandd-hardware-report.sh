@@ -341,6 +341,7 @@ run_wiilandd_probe --check-config
 run_wiilandd_probe --dump-config
 run_wiilandd_probe --axis-map
 run_wiilandd_probe --validation-checklist
+run_wiilandd_probe --doctor
 
 section devices
 if capture_device_list; then

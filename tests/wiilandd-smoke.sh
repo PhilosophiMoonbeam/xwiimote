@@ -25,6 +25,10 @@ grep -F 'guitar.stick.x=ABS_X' "$build_dir/axis-map" >/dev/null
 "$bin" --validation-checklist >"$build_dir/validation-checklist"
 grep -F 'motion-plus-external.hotplug=required' "$build_dir/validation-checklist" >/dev/null
 grep -F 'wayland.wine-proton=required' "$build_dir/validation-checklist" >/dev/null
+"$bin" --doctor >"$build_dir/doctor"
+grep -F 'session.wayland=' "$build_dir/doctor" >/dev/null
+grep -F 'dev.uinput.writable=' "$build_dir/doctor" >/dev/null
+grep -F 'backend=uinput' "$build_dir/doctor" >/dev/null
 "$bin" --no-config --trace-events=motion-plus --dump-config >/dev/null
 if "$bin" --no-config --trace-events=bad --dump-config >/dev/null 2>&1; then
 	printf '%s\n' 'wiilandd accepted invalid trace event filter' >&2
@@ -53,6 +57,10 @@ case "$1" in
 	;;
 --validation-checklist)
 	printf '%s\n' 'wayland.wine-proton=required'
+	exit 0
+	;;
+--doctor)
+	printf '%s\n' 'dev.uinput.writable=no'
 	exit 0
 	;;
 --list)
@@ -93,6 +101,8 @@ grep -F 'device.1.uevent.HID_NAME=Nintendo Wii Remote' "$build_dir/hardware-repo
 grep -F 'nunchuk.accel.x=ABS_HAT1X' "$build_dir/hardware-report" >/dev/null
 grep -F '$ '"$fake_wiilandd"' --validation-checklist' "$build_dir/hardware-report" >/dev/null
 grep -F 'wayland.wine-proton=required' "$build_dir/hardware-report" >/dev/null
+grep -F '$ '"$fake_wiilandd"' --doctor' "$build_dir/hardware-report" >/dev/null
+grep -F 'dev.uinput.writable=no' "$build_dir/hardware-report" >/dev/null
 mkdir -p "$build_dir/nonrepo"
 (cd "$build_dir" && WIILAND_REPO_DIR=$build_dir/nonrepo \
 	WIILANDD=$fake_wiilandd "$root/tools/wiilandd-hardware-report.sh" \

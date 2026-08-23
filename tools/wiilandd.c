@@ -2788,6 +2788,28 @@ static void print_validation_checklist(void)
 	puts("wayland.desktop-profile=required");
 }
 
+static void print_doctor(void)
+{
+	const char *wayland = getenv("WAYLAND_DISPLAY");
+	const char *session_type = getenv("XDG_SESSION_TYPE");
+	const char *desktop = getenv("XDG_CURRENT_DESKTOP");
+
+	printf("session.wayland=%s\n", wayland && wayland[0] ? "yes" : "no");
+	printf("session.type=%s\n",
+	       session_type && session_type[0] ? session_type : "unknown");
+	printf("session.desktop=%s\n",
+	       desktop && desktop[0] ? desktop : "unknown");
+	printf("dev.uinput.exists=%s\n",
+	       access("/dev/uinput", F_OK) == 0 ? "yes" : "no");
+	printf("dev.uinput.readable=%s\n",
+	       access("/dev/uinput", R_OK) == 0 ? "yes" : "no");
+	printf("dev.uinput.writable=%s\n",
+	       access("/dev/uinput", W_OK) == 0 ? "yes" : "no");
+	printf("backend=%s\n", backend_name(backend));
+	printf("profile=%s\n", profile_name(profiles));
+}
+
+
 
 static void usage(FILE *out)
 {
@@ -2818,6 +2840,7 @@ static void usage(FILE *out)
 		"\t    --axis-map   Print virtual gamepad axis mapping and exit\n"
 		"\t    --validation-checklist\n"
 		"\t                  Print required hardware validation matrix\n"
+		"\t    --doctor    Print runtime readiness diagnostics and exit\n"
 		"\t    --dump-config  Print resolved configuration and exit\n"
 		"\t-v, --verbose    Print device lifecycle details\n"
 		"\n"
@@ -2861,7 +2884,8 @@ int main(int argc, char **argv)
 			   !strcmp(argv[i], "-h") || !strcmp(argv[i], "--help") ||
 			   !strcmp(argv[i], "-l") || !strcmp(argv[i], "--list") ||
 			   !strcmp(argv[i], "--axis-map") ||
-			   !strcmp(argv[i], "--validation-checklist")) {
+			   !strcmp(argv[i], "--validation-checklist") ||
+			   !strcmp(argv[i], "--doctor")) {
 			diagnostic = true;
 		} else if (!strcmp(argv[i], "-v") || !strcmp(argv[i], "--verbose")) {
 			verbose = true;
@@ -2891,6 +2915,9 @@ int main(int argc, char **argv)
 			return 0;
 		} else if (!strcmp(argv[i], "--validation-checklist")) {
 			print_validation_checklist();
+			return 0;
+		} else if (!strcmp(argv[i], "--doctor")) {
+			print_doctor();
 			return 0;
 		} else if (!strncmp(argv[i], "--profile=", 10)) {
 			if (parse_profile(argv[i] + 10)) {
