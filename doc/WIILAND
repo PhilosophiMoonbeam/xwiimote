@@ -54,9 +54,9 @@ Required runtime permissions:
 == Roadmap ==
 
 1. Desktop profile
-   Shipped as --profile desktop and --profile both with D-pad motion, IR
-   pointer motion, configurable desktop button actions, and IR pointer gain.
-   Next refinement is optional smoothing/deadzones for IR pointer motion.
+   Shipped as --profile desktop and --profile both with D-pad motion,
+   configurable IR pointer motion, jitter deadzone, smoothing, and configurable
+   desktop button actions.
 
 2. Per-device policy
    Shipped as device.<syspath-substring>.profile and
