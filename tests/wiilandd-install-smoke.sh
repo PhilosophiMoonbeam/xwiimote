@@ -15,10 +15,15 @@ esac
 
 rules=$stage$prefix/lib/udev/rules.d/70-wiiland-uinput.rules
 service=$stage$prefix/lib/systemd/user/wiilandd.service
+doc=$stage$prefix/share/doc/wiiland/WIILAND
 config=$stage$prefix/share/doc/wiiland/examples/wiilandd.conf
 bin=$stage$prefix/bin/wiilandd
+man1=$stage$prefix/share/man/man1
+man7=$stage$prefix/share/man/man7
 
-for path in "$rules" "$service" "$config" "$bin"; do
+for path in "$rules" "$service" "$doc" "$config" "$bin" \
+	"$man1/xwiishow.1" "$man1/wiilandd.1" \
+	"$man7/wiiland.7" "$man7/libxwiimote.7"; do
 	if [ ! -e "$path" ]; then
 		printf '%s\n' "missing staged install artifact: $path" >&2
 		exit 1
@@ -30,8 +35,14 @@ done
 	exit 1
 }
 
+grep -F 'SUBSYSTEM=="input"' "$rules" >/dev/null
+grep -F 'DRIVERS=="wiimote"' "$rules" >/dev/null
 grep -F 'KERNEL=="uinput"' "$rules" >/dev/null
+grep -F 'SUBSYSTEM=="misc"' "$rules" >/dev/null
+grep -F 'OPTIONS+="static_node=uinput"' "$rules" >/dev/null
 grep -F 'TAG+="uaccess"' "$rules" >/dev/null
+grep -F 'GROUP="input"' "$rules" >/dev/null
+grep -F 'MODE="0660"' "$rules" >/dev/null
 grep -F "ExecStart=$prefix/bin/wiilandd" "$service" >/dev/null
 grep -F "ExecStartPre=$prefix/bin/wiilandd --check-config" "$service" >/dev/null
 grep -F 'WantedBy=graphical-session.target' "$service" >/dev/null

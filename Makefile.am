@@ -41,7 +41,6 @@ EXTRA_DIST = \
 	tests/wiilandd-install-smoke.sh \
 	tools/wiilandd-hardware-report.sh \
 	.github/workflows/ci.yml \
-	doc/WIILAND \
 	libxwiimote.sym
 EXTRA_DIST += res/wiilandd.service.in
 
@@ -60,6 +59,9 @@ man_MANS = \
 	doc/xwiishow.1 \
 	doc/wiilandd.1
 EXTRA_DIST += $(man_MANS)
+dist_doc_DATA = \
+	doc/WIILAND
+
 
 pkgconfigdir = $(libdir)/pkgconfig
 pkgconfig_DATA = libxwiimote.pc

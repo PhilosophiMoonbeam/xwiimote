@@ -121,8 +121,9 @@ configuration under the selected prefix.
 Documentation
 =============
 
-./doc/website/index.html: WiiLand project documentation
-./doc/*.3: Manpages
+./doc/WIILAND: Wayland migration plan, validation matrix, and packaging notes
+./doc/wiiland.7, ./doc/libxwiimote.7, ./doc/xwiishow.1, ./doc/wiilandd.1:
+	Installed manpages
 ./doc/DEVICES: Enumeration of all Nintendo Wii / Wii U related devices
 ./doc/DEV_*: Device communication/protocol descriptions
 

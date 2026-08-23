@@ -87,10 +87,13 @@ device detection and more advanced functionality. It is highly recommended to
 use a kernel version greater than, or equal to 3.11.
 
 .SS libxwiimote
-The kernel API for the Wii Remote is quite complex. It is documented in the
-WiiLand source repository in
-.B doc/INTERFACE
-.br
+The kernel API for the Wii Remote is quite complex. Protocol notes are kept in
+the WiiLand source repository in
+.BR doc/PROTOCOL ,
+while the public userspace API is documented by
+.BR libxwiimote (7)
+and
+.BR lib/xwiimote.h .
 To help application developers to use special Wii Remote functionality, we
 developed the
 .BR libxwiimote (7)

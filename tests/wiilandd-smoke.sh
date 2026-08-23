@@ -19,7 +19,10 @@ mkdir -p \
 	"$install_stage/usr/bin" \
 	"$install_stage/usr/lib/udev/rules.d" \
 	"$install_stage/usr/lib/systemd/user" \
-	"$install_stage/usr/share/doc/wiiland/examples"
+	"$install_stage/usr/share/doc/wiiland" \
+	"$install_stage/usr/share/doc/wiiland/examples" \
+	"$install_stage/usr/share/man/man1" \
+	"$install_stage/usr/share/man/man7"
 cp "$bin" "$install_stage/usr/bin/wiilandd"
 cp "$root/res/70-wiiland-uinput.rules" \
 	"$install_stage/usr/lib/udev/rules.d/70-wiiland-uinput.rules"
@@ -27,6 +30,11 @@ sed -e 's|@bindir@|/usr/bin|g' "$root/res/wiilandd.service.in" \
 	>"$install_stage/usr/lib/systemd/user/wiilandd.service"
 cp "$root/res/wiilandd.conf" \
 	"$install_stage/usr/share/doc/wiiland/examples/wiilandd.conf"
+cp "$root/doc/WIILAND" "$install_stage/usr/share/doc/wiiland/WIILAND"
+cp "$root/doc/xwiishow.1" "$root/doc/wiilandd.1" \
+	"$install_stage/usr/share/man/man1/"
+cp "$root/doc/wiiland.7" "$root/doc/libxwiimote.7" \
+	"$install_stage/usr/share/man/man7/"
 "$root/tests/wiilandd-install-smoke.sh" "$install_stage" /usr
 
 
@@ -194,6 +202,8 @@ fi
 if command -v groff >/dev/null 2>&1; then
 	groff -man -Tascii "$root/doc/wiilandd.1" >/dev/null
 	groff -man -Tascii "$root/doc/wiiland.7" >/dev/null
+	groff -man -Tascii "$root/doc/libxwiimote.7" >/dev/null
+	groff -man -Tascii "$root/doc/xwiishow.1" >/dev/null
 else
 	printf '%s\n' 'warning: groff not found; skipping manpage render smoke' >&2
 fi
