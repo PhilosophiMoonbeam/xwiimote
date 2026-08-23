@@ -35,6 +35,10 @@ EXTRA_DIST = \
 	DEV \
 	LICENSE \
 	res/50-xorg-fix-xwiimote.conf \
+	res/70-udev-xwiimote.rules \
+	res/70-xwiimote-uinput.rules \
+	res/xwiiwaylandd.service \
+	doc/WAYLAND \
 	libxwiimote.sym
 
 #
@@ -42,13 +46,14 @@ EXTRA_DIST = \
 #
 
 lib_LTLIBRARIES = libxwiimote.la
-bin_PROGRAMS = xwiishow
+bin_PROGRAMS = xwiishow xwiiwaylandd
 noinst_PROGRAMS = xwiidump
 include_HEADERS = lib/xwiimote.h
 man_MANS = \
 	doc/xwiimote.7 \
 	doc/libxwiimote.7 \
-	doc/xwiishow.1
+	doc/xwiishow.1 \
+	doc/xwiiwaylandd.1
 EXTRA_DIST += $(man_MANS)
 
 pkgconfigdir = $(libdir)/pkgconfig
@@ -125,6 +130,19 @@ xwiishow_LDADD = \
 	libxwiimote.la \
 	-lm
 xwiishow_LDFLAGS = \
+	$(AM_LDFLAGS)
+
+#
+# xwiiwaylandd
+#
+
+xwiiwaylandd_SOURCES = \
+	tools/xwiiwaylandd.c
+xwiiwaylandd_CPPFLAGS = \
+	$(AM_CPPFLAGS)
+xwiiwaylandd_LDADD = \
+	libxwiimote.la
+xwiiwaylandd_LDFLAGS = \
 	$(AM_LDFLAGS)
 
 #

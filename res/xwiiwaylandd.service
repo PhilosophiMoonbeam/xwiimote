@@ -1,0 +1,14 @@
+[Unit]
+Description=XWiimote Wayland input bridge
+Documentation=man:xwiiwaylandd(1)
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=xwiiwaylandd
+Restart=on-failure
+RestartSec=2s
+
+[Install]
+WantedBy=default.target

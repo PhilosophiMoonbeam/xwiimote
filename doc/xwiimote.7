@@ -113,12 +113,19 @@ connect devices without pairing/bonding.
 There are attempts to improve the detection of Wii Remotes in BlueZ. If you are
 sure that your device is not detected properly, please report a bug upstream.
 
+.SS Wayland sessions need a virtual input bridge
+Wayland compositors do not load Xorg input drivers and XWayland does not expose
+an input-driver extension point. For Wayland sessions, use
+.BR xwiiwaylandd (1)
+to translate Wii Remote events into Linux uinput virtual controllers. These
+devices are consumed by compositors through evdev/libinput and by native games
+through the normal Linux input stack.
 .SS The X-Server reacts weirdly on Wii Remote input
 By default the X-Server opens all input devices that are available on your
 machine. The Wii Remote input devices are very useless without a proper keymap
 so you should instruct your X-Server to ignore raw Wii Remotes input devices.
 The xwiimote source repository contains an xorg-config file
-.B res/50-xorg-disable-wiimote.conf
+.B res/50-xorg-fix-xwiimote.conf
 which can be installed into
 .B /etc/X11/xorg.conf.d/
 to ignore all raw Wii Remote input devices.
@@ -134,4 +141,5 @@ The XWiimote Project: http://dvdhrm.github.io/xwiimote
 
 .SH "SEE ALSO"
 .BR libxwiimote (7),
-.BR xwiishow (1)
+.BR xwiishow (1),
+.BR xwiiwaylandd (1)

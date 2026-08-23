@@ -1,0 +1,55 @@
+.TH XWIIWAYLANDD 1 "August 2026" "xwiimote" "XWiimote Manual"
+.SH NAME
+xwiiwaylandd \- bridge Wii Remote input to Wayland through Linux uinput
+.SH SYNOPSIS
+.B xwiiwaylandd
+.RI [ OPTIONS ]
+.br
+.B xwiiwaylandd --device
+.RI number | /sys/path
+.RI [ OPTIONS ]
+.SH DESCRIPTION
+.B xwiiwaylandd
+is the Wayland-native input bridge for XWiimote. It reads Wii Remote events
+through
+.B libxwiimote
+and creates virtual Linux uinput controllers. Wayland compositors consume these
+virtual evdev devices through libinput, while native games, SDL, Wine, and
+Proton can consume them through the normal Linux input stack.
+.PP
+This program does not use X11 and does not require XWayland. It is intended to
+replace the old Xorg input-driver path for Wayland sessions.
+.SH OPTIONS
+.TP
+.BR -h , " --help"
+Show help and exit.
+.TP
+.BR -l , " --list"
+List connected Wii Remote devices and exit. This does not create uinput devices.
+.TP
+.BR -d , " --device " number | /sys/path
+Bridge one device instead of monitoring all connected and hotplugged devices.
+A number refers to the output of
+.BR --list .
+.TP
+.BR -n , " --dry-run"
+Enumerate and open devices without creating /dev/uinput devices or emitting
+virtual input. Useful for smoke tests and service diagnostics.
+.TP
+.BR -v , " --verbose"
+Print device lifecycle details.
+.SH PERMISSIONS
+The process must be allowed to read the hid-wiimote input devices and write to
+.BR /dev/uinput .
+Distributions usually provide input-device access through logind/udev. Access
+to
+.B /dev/uinput
+may require a udev rule, a system service, or an input/uinput group policy.
+.SH BACKEND
+The default backend is Linux uinput because it is compositor-independent and is
+already consumed by Wayland compositors and game stacks. A future optional libei
+backend can provide compositor-mediated emulated input where available.
+.SH SEE ALSO
+.BR xwiimote (7),
+.BR libxwiimote (7),
+.BR xwiishow (1)

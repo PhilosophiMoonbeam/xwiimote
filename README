@@ -27,6 +27,8 @@ If "configure" is not available, use:
 Dependencies:
 	- libudev: Used for device enumeration
 	- ncurses: Used for UI of xwiishow
+	- Linux uinput: Used by xwiiwaylandd to expose Wayland-native virtual
+		input devices
 
 This software packages contains:
 	libxwiimote.so: A userspace library which helps accessing connected Wii
@@ -36,12 +38,14 @@ This software packages contains:
 	xwiishow: A test application which lists all connected Wii Remotes. If a
 		Wii Remote is passed as argument, it continuously reads input
 		from the device and prints it to the screen.
-	50-xorg-fix-xwiimote.conf: X configuration file which should be
-		installed into /etc/X11/xorg.conf.d/ by your distribution. It
-		adds all Wii Remotes to the input blacklist of the X-server.
-		This is needed since the raw Wii Remote kernel interface is
-		useless (even irritating) to the X-server. Instead the
-		xf86-input-xwiimote driver should be used.
+	xwiiwaylandd: A Wayland-native bridge which reads libxwiimote events
+		and creates Linux uinput virtual controllers. Wayland compositors,
+		SDL, Wine/Proton, and native games can consume these devices
+		through the normal evdev/libinput stack without XWayland.
+	50-xorg-fix-xwiimote.conf: Legacy Xorg configuration file which should
+		be installed into /etc/X11/xorg.conf.d/ by distributions that
+		still ship Xorg sessions. It adds raw Wii Remote devices to the
+		input blacklist of the X-server.
 	manpages: Several manpages are provided. One overview page and several
 		other pages for each tool and feature. They are installed by
 		the autotools scripts automatically alongside the library and
@@ -65,6 +69,15 @@ Usage
 
 Please see the website for help:
   http://xwiimote.github.io/xwiimote
+
+For Wayland sessions, run:
+	$ xwiiwaylandd --list
+	$ xwiiwaylandd
+
+The Wayland bridge needs read access to hid-wiimote input devices and write
+access to /dev/uinput. See ./doc/WAYLAND for the migration plan, backend
+rationale, the example udev rule in ./res/70-xwiimote-uinput.rules, and the
+example user service in ./res/xwiiwaylandd.service.
 
 Documentation
 =============
