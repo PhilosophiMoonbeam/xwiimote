@@ -10,6 +10,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install smoke dependencies
-        run: sudo apt-get update && sudo apt-get install -y build-essential groff
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y autoconf automake build-essential groff libncurses-dev libtool libudev-dev pkg-config
       - name: Run wiilandd smoke script
         run: tests/wiilandd-smoke.sh
+      - name: Build and install staged package
+        run: |
+          ./autogen.sh
+          ./configure --prefix=/usr
+          make -j"$(nproc)"
+          make check
+          make DESTDIR="$PWD/stage" install
+          tests/wiilandd-install-smoke.sh "$PWD/stage" /usr

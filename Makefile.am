@@ -38,6 +38,7 @@ EXTRA_DIST = \
 	res/70-udev-wiiland.rules \
 	tests/xwii_stubs.c \
 	tests/wiilandd-smoke.sh \
+	tests/wiilandd-install-smoke.sh \
 	tools/wiilandd-hardware-report.sh \
 	.github/workflows/ci.yml \
 	doc/WIILAND \

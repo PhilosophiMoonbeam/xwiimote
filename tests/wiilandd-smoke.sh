@@ -14,6 +14,21 @@ bin=$build_dir/wiilandd-smoke
 	-o "$bin"
 
 test "$("$bin" --version)" = "wiilandd smoke"
+install_stage=$build_dir/install-stage
+mkdir -p \
+	"$install_stage/usr/bin" \
+	"$install_stage/usr/lib/udev/rules.d" \
+	"$install_stage/usr/lib/systemd/user" \
+	"$install_stage/usr/share/doc/wiiland/examples"
+cp "$bin" "$install_stage/usr/bin/wiilandd"
+cp "$root/res/70-wiiland-uinput.rules" \
+	"$install_stage/usr/lib/udev/rules.d/70-wiiland-uinput.rules"
+sed -e 's|@bindir@|/usr/bin|g' "$root/res/wiilandd.service.in" \
+	>"$install_stage/usr/lib/systemd/user/wiilandd.service"
+cp "$root/res/wiilandd.conf" \
+	"$install_stage/usr/share/doc/wiiland/examples/wiilandd.conf"
+"$root/tests/wiilandd-install-smoke.sh" "$install_stage" /usr
+
 
 "$bin" --self-test
 "$bin" --config "$root/res/wiilandd.conf" --check-config
