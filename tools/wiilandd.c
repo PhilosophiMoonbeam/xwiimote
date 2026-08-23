@@ -169,6 +169,7 @@ static volatile sig_atomic_t should_stop;
 static bool verbose;
 static bool dry_run;
 static bool trace_events;
+static unsigned long long trace_sequence;
 static unsigned int profiles = PROFILE_GAMEPAD;
 static enum backend backend = BACKEND_UINPUT;
 static int pointer_speed = 16;
@@ -1023,10 +1024,12 @@ static void trace_xwii_event(const struct bridge_device *dev,
 {
 	size_t i;
 	int64_t now_us;
+	unsigned long long seq;
 
 	if (!trace_events)
 		return;
 
+	seq = ++trace_sequence;
 	now_us = trace_time_us();
 	if (now_us >= 0)
 		printf("time=%lld.%06lld ", (long long)(now_us / 1000000),
@@ -1034,8 +1037,8 @@ static void trace_xwii_event(const struct bridge_device *dev,
 	else
 		printf("time=unknown ");
 
-	printf("%s %s type=%u", dev->syspath, event_type_name(event->type),
-	       event->type);
+	printf("seq=%llu %s %s type=%u", seq, dev->syspath,
+	       event_type_name(event->type), event->type);
 	if (is_key_event(event->type)) {
 		printf(" key=%u state=%u", event->v.key.code,
 		       event->v.key.state);
