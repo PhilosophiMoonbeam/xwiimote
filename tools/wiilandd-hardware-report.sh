@@ -68,6 +68,36 @@ read_battery_attr() {
 	printf 'unavailable'
 }
 
+report_path_access() {
+	label=$1
+	path=$2
+
+	if [ -e "$path" ]; then
+		printf '%s.exists=yes\n' "$label"
+	else
+		printf '%s.exists=no\n' "$label"
+	fi
+	if [ -r "$path" ]; then
+		printf '%s.readable=yes\n' "$label"
+	else
+		printf '%s.readable=no\n' "$label"
+	fi
+	if [ -w "$path" ]; then
+		printf '%s.writable=yes\n' "$label"
+	else
+		printf '%s.writable=no\n' "$label"
+	fi
+	if command -v stat >/dev/null 2>&1 && [ -e "$path" ]; then
+		printf '%s.mode=' "$label"
+		stat -c %a "$path"
+		printf '%s.owner=' "$label"
+		stat -c %U "$path"
+		printf '%s.group=' "$label"
+		stat -c %G "$path"
+	fi
+}
+
+
 capture_device_list() {
 	printf '$ %s --list\n' "$wiilandd"
 	if ! "$wiilandd" --list >"$list_file"; then
@@ -119,6 +149,10 @@ fi
 printf 'XDG_CURRENT_DESKTOP=%s\n' "${XDG_CURRENT_DESKTOP:-}"
 printf 'WAYLAND_DISPLAY=%s\n' "${WAYLAND_DISPLAY:-}"
 printf 'XDG_SESSION_TYPE=%s\n' "${XDG_SESSION_TYPE:-}"
+
+section permissions
+run_optional id
+report_path_access dev.uinput /dev/uinput
 
 section wiilandd
 run_wiilandd_probe --version
