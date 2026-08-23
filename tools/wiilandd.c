@@ -125,8 +125,14 @@ enum pointer_key {
 	POINTER_DOWN = 1 << 3,
 };
 
+enum device_rule_kind {
+	DEVICE_RULE_SYSPATH,
+	DEVICE_RULE_DEVTYPE,
+};
+
 struct device_rule {
 	char *match;
+	enum device_rule_kind kind;
 	unsigned int profiles;
 };
 
@@ -170,7 +176,7 @@ static struct desktop_binding desktop_bindings[] = {
 	{ "two", XWII_KEY_TWO, KEY_PAGEUP, KEY_PAGEUP },
 };
 
-static unsigned int profiles_for_syspath(const char *syspath);
+static unsigned int profiles_for_device(const char *syspath, const char *devtype);
 
 static void on_signal(int signo)
 {
@@ -1083,6 +1089,7 @@ static bool has_device(struct bridge_device *devices, const char *syspath)
 static int add_device(struct bridge_device *devices, const char *syspath)
 {
 	struct bridge_device *dev = NULL;
+	char *devtype = NULL;
 	unsigned int i;
 	int ret;
 
@@ -1100,7 +1107,6 @@ static int add_device(struct bridge_device *devices, const char *syspath)
 
 	dev->uinput_fd = -1;
 	dev->desktop_fd = -1;
-	dev->profiles = profiles_for_syspath(syspath);
 	dev->syspath = strdup(syspath);
 	if (!dev->syspath)
 		return -ENOMEM;
@@ -1108,6 +1114,13 @@ static int add_device(struct bridge_device *devices, const char *syspath)
 	ret = xwii_iface_new(&dev->iface, syspath);
 	if (ret)
 		goto err_free;
+
+	if (!xwii_iface_get_devtype(dev->iface, &devtype)) {
+		dev->profiles = profiles_for_device(syspath, devtype);
+		free(devtype);
+	} else {
+		dev->profiles = profiles_for_device(syspath, NULL);
+	}
 
 	ret = xwii_iface_watch(dev->iface, true);
 	if (ret)
@@ -1549,7 +1562,8 @@ static void clear_device_rules(void)
 	device_rule_count = 0;
 }
 
-static int set_device_profile_rule(const char *match, unsigned int profiles)
+static int set_device_profile_rule(enum device_rule_kind kind, const char *match,
+				   unsigned int profiles)
 {
 	unsigned int i;
 	char *copy;
@@ -1558,7 +1572,8 @@ static int set_device_profile_rule(const char *match, unsigned int profiles)
 		return -EINVAL;
 
 	for (i = 0; i < device_rule_count; ++i) {
-		if (!strcmp(device_rules[i].match, match)) {
+		if (device_rules[i].kind == kind &&
+		    !strcmp(device_rules[i].match, match)) {
 			device_rules[i].profiles = profiles;
 			return 0;
 		}
@@ -1572,23 +1587,34 @@ static int set_device_profile_rule(const char *match, unsigned int profiles)
 		return -ENOMEM;
 
 	device_rules[device_rule_count].match = copy;
+	device_rules[device_rule_count].kind = kind;
 	device_rules[device_rule_count].profiles = profiles;
 	++device_rule_count;
 	return 0;
 }
 
-static unsigned int profiles_for_syspath(const char *syspath)
+static unsigned int profiles_for_device(const char *syspath, const char *devtype)
 {
 	unsigned int selected = profiles;
 	unsigned int i;
 
 	for (i = 0; i < device_rule_count; ++i) {
-		if (strstr(syspath, device_rules[i].match))
+		if (device_rules[i].kind == DEVICE_RULE_SYSPATH &&
+		    syspath && strstr(syspath, device_rules[i].match))
+			selected = device_rules[i].profiles;
+		else if (device_rules[i].kind == DEVICE_RULE_DEVTYPE &&
+			 devtype && strstr(devtype, device_rules[i].match))
 			selected = device_rules[i].profiles;
 	}
 
 	return selected;
 }
+
+static unsigned int profiles_for_syspath(const char *syspath)
+{
+	return profiles_for_device(syspath, NULL);
+}
+
 
 static char *trim(char *str)
 {
@@ -1639,7 +1665,16 @@ static int apply_config_line(const char *path, unsigned int lineno, char *line)
 		*suffix = 0;
 		ret = parse_profile_value(value, &profile_value);
 		if (!ret)
-			ret = set_device_profile_rule(key + 7, profile_value);
+			ret = set_device_profile_rule(DEVICE_RULE_SYSPATH,
+						      key + 7, profile_value);
+	} else if (!strncmp(key, "device-type.", 12) &&
+		   has_suffix(key, ".profile")) {
+		suffix = key + strlen(key) - strlen(".profile");
+		*suffix = 0;
+		ret = parse_profile_value(value, &profile_value);
+		if (!ret)
+			ret = set_device_profile_rule(DEVICE_RULE_DEVTYPE,
+						      key + 12, profile_value);
 	} else {
 		fprintf(stderr, "wiilandd: %s:%u: unknown key '%s'\n",
 			path, lineno, key);
@@ -2138,8 +2173,25 @@ static int self_test_config(void)
 	if (ret)
 		return ret;
 
-	snprintf(line, sizeof(line), " # empty comment\n");
+	snprintf(line, sizeof(line), " device-type.balanceboard.profile = desktop\n");
 	ret = apply_config_line("self-test", 8, line);
+	if (ret)
+		return ret;
+	ret = expect_int("device-type-profile-match",
+			 profiles_for_device("/sys/devices/red/wiimote",
+					     "balanceboard"),
+			 PROFILE_DESKTOP);
+	if (ret)
+		return ret;
+	ret = expect_int("device-type-profile-miss",
+			 profiles_for_device("/sys/devices/red/wiimote",
+					     "procontroller"),
+			 PROFILE_GAMEPAD);
+	if (ret)
+		return ret;
+
+	snprintf(line, sizeof(line), " # empty comment\n");
+	ret = apply_config_line("self-test", 9, line);
 	if (ret)
 		return ret;
 

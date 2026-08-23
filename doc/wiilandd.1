@@ -128,6 +128,15 @@ and
 .TP
 .B device.<syspath-substring>.profile=gamepad|desktop|both
 Override the profile for devices whose sysfs path contains the substring.
+.TP
+.B device-type.<devtype-substring>.profile=gamepad|desktop|both
+Override the profile for devices whose hid-wiimote devtype contains the
+substring, such as
+.BR gen10 ,
+.BR gen20 ,
+.BR balanceboard ,
+or
+.BR procontroller .
 Rules are evaluated in file order; later matching rules win.
 .SH FILES
 .TP
