@@ -80,6 +80,7 @@ dist_wiilandexamples_DATA = \
 	res/wiilandd.conf
 
 res/wiilandd.service: $(srcdir)/res/wiilandd.service.in Makefile
+	$(AM_V_at)$(MKDIR_P) res
 	$(AM_V_GEN)sed -e 's|@bindir[@]|$(bindir)|g' \
 		$(srcdir)/res/wiilandd.service.in >$@
 
