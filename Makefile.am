@@ -38,6 +38,7 @@ EXTRA_DIST = \
 	res/70-udev-wiiland.rules \
 	res/70-wiiland-uinput.rules \
 	res/wiilandd.service \
+	res/wiilandd.conf \
 	doc/WIILAND \
 	libxwiimote.sym
 

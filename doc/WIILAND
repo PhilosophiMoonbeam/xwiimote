@@ -32,7 +32,8 @@ wiilandd:
     the compositor overview key, and 1/2 send Page Down/Page Up;
   - supports key=value configuration for default profile, per-device profile
     overrides, and desktop pointer speed through
-    ~/.config/wiiland/wiilandd.conf or --config;
+    ~/.config/wiiland/wiilandd.conf or --config; res/wiilandd.conf is the
+    distributable sample;
   - provides --self-test for deterministic profile, button-map, config, and
     pointer-motion validation without hardware;
   - handles hotplug and extension changes without Xorg configuration.
