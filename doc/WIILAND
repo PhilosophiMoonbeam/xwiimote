@@ -39,8 +39,11 @@ wiilandd:
     --config; res/wiilandd.conf is the distributable sample;
   - provides --self-test for deterministic profile, button-map, config, and
     pointer-motion validation without hardware;
+  - provides --axis-map for machine-readable virtual gamepad mapping during
+    hardware validation;
   - ships a CI smoke harness that compiles wiilandd against committed
-    libxwiimote stubs and runs --self-test, --check-config, and --dump-config;
+    libxwiimote stubs and runs --self-test, --check-config, --dump-config, and
+    --axis-map;
   - provides --dry-run --trace-events for hardware validation reports without
     creating virtual input devices;
   - handles hotplug and extension changes without Xorg configuration.

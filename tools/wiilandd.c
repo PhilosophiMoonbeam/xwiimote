@@ -2714,6 +2714,50 @@ static int run_self_test(void)
 	return 0;
 }
 
+static void print_axis_map(void)
+{
+	puts("wiimote.accel.x=ABS_THROTTLE");
+	puts("wiimote.accel.y=ABS_RUDDER");
+	puts("wiimote.accel.z=ABS_WHEEL");
+	puts("nunchuk.stick.x=ABS_X");
+	puts("nunchuk.stick.y=ABS_Y");
+	puts("nunchuk.accel.x=ABS_HAT1X");
+	puts("nunchuk.accel.y=ABS_HAT1Y");
+	puts("nunchuk.accel.z=ABS_HAT2X");
+	puts("motion-plus.x=ABS_GAS");
+	puts("motion-plus.y=ABS_BRAKE");
+	puts("motion-plus.z=ABS_HAT0X");
+	puts("classic.left-stick.x=ABS_X");
+	puts("classic.left-stick.y=ABS_Y");
+	puts("classic.right-stick.x=ABS_RX");
+	puts("classic.right-stick.y=ABS_RY");
+	puts("classic.trigger.left=ABS_Z");
+	puts("classic.trigger.right=ABS_RZ");
+	puts("pro.left-stick.x=ABS_X");
+	puts("pro.left-stick.y=ABS_Y");
+	puts("pro.right-stick.x=ABS_RX");
+	puts("pro.right-stick.y=ABS_RY");
+	puts("pro.zl=BTN_TL2");
+	puts("pro.zr=BTN_TR2");
+	puts("guitar.stick.x=ABS_X");
+	puts("guitar.stick.y=ABS_Y");
+	puts("guitar.whammy=ABS_WHAMMY_BAR");
+	puts("guitar.fret-board=ABS_FRET_BOARD");
+	puts("drums.pad.x=ABS_X");
+	puts("drums.pad.y=ABS_Y");
+	puts("drums.cymbal.left=ABS_RX");
+	puts("drums.cymbal.right=ABS_RY");
+	puts("drums.tom.left=ABS_Z");
+	puts("drums.tom.right=ABS_RZ");
+	puts("drums.tom.far-right=ABS_WHAMMY_BAR");
+	puts("drums.bass=ABS_FRET_BOARD");
+	puts("drums.hi-hat=ABS_MISC");
+	puts("balance.top-right=ABS_PRESSURE");
+	puts("balance.bottom-right=ABS_DISTANCE");
+	puts("balance.top-left=ABS_TILT_X");
+	puts("balance.bottom-left=ABS_TILT_Y");
+}
+
 static void usage(FILE *out)
 {
 	fprintf(out,
@@ -2740,6 +2784,7 @@ static void usage(FILE *out)
 		"\t    --self-test  Run deterministic self tests and exit\n"
 		"\t    --trace-events[=all|keys|axes|motion-plus]\n"
 		"\t                  Print decoded libxwiimote events\n"
+		"\t    --axis-map   Print virtual gamepad axis mapping and exit\n"
 		"\t    --dump-config  Print resolved configuration and exit\n"
 		"\t-v, --verbose    Print device lifecycle details\n"
 		"\n"
@@ -2781,7 +2826,8 @@ int main(int argc, char **argv)
 			dump_config = true;
 		} else if (!strcmp(argv[i], "--version") ||
 			   !strcmp(argv[i], "-h") || !strcmp(argv[i], "--help") ||
-			   !strcmp(argv[i], "-l") || !strcmp(argv[i], "--list")) {
+			   !strcmp(argv[i], "-l") || !strcmp(argv[i], "--list") ||
+			   !strcmp(argv[i], "--axis-map")) {
 			diagnostic = true;
 		} else if (!strcmp(argv[i], "-v") || !strcmp(argv[i], "--verbose")) {
 			verbose = true;
@@ -2806,6 +2852,9 @@ int main(int argc, char **argv)
 			return 0;
 		} else if (!strcmp(argv[i], "-l") || !strcmp(argv[i], "--list")) {
 			return abs(list_devices());
+		} else if (!strcmp(argv[i], "--axis-map")) {
+			print_axis_map();
+			return 0;
 		} else if (!strncmp(argv[i], "--profile=", 10)) {
 			if (parse_profile(argv[i] + 10)) {
 				usage(stderr);

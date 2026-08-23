@@ -87,6 +87,10 @@ devices. Useful for packaging, CI, and service preflight checks.
 Print the fully resolved configuration after loading files and applying
 command-line overrides, then exit.
 .TP
+.BR --axis-map
+Print the virtual gamepad axis and button mapping used by the gamepad profile,
+then exit. This is a hardware-validation aid and does not enumerate devices.
+.TP
 .BR --self-test
 Run deterministic profile, config, button-map, IR, and pointer-motion tests, then exit.
 This mode does not enumerate devices or open

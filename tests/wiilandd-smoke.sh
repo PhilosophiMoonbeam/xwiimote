@@ -18,6 +18,10 @@ test "$("$bin" --version)" = "wiilandd smoke"
 "$bin" --self-test
 "$bin" --config "$root/res/wiilandd.conf" --check-config
 "$bin" --config "$root/res/wiilandd.conf" --dump-config >/dev/null
+"$bin" --axis-map >"$build_dir/axis-map"
+grep -F 'nunchuk.accel.x=ABS_HAT1X' "$build_dir/axis-map" >/dev/null
+grep -F 'pro.zl=BTN_TL2' "$build_dir/axis-map" >/dev/null
+grep -F 'guitar.stick.x=ABS_X' "$build_dir/axis-map" >/dev/null
 "$bin" --no-config --trace-events=motion-plus --dump-config >/dev/null
 if "$bin" --no-config --trace-events=bad --dump-config >/dev/null 2>&1; then
 	printf '%s\n' 'wiilandd accepted invalid trace event filter' >&2
