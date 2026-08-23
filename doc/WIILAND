@@ -104,7 +104,8 @@ Required runtime permissions:
    The first command records finite host, distribution, compositor/session
    environment, Bluetooth controller, hid-wiimote module-parameter, permission,
    config, version, git commit/dirty state, device-list, devtype, extension,
-   battery, and event-node access diagnostics.
+   battery, event-node access diagnostics, and manual validation placeholders
+   for SDL, Wine/Proton, and native Wayland desktop behavior.
    The second command captures sequenced, filtered --dry-run --trace-events
    --verbose output for one device. Extra arguments are passed to wiilandd; use
    --trace-events=motion-plus when validating MotionPlus only, or use the

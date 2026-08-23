@@ -247,6 +247,14 @@ report_device_attrs() {
 		report_event_nodes "$index" "$syspath"
 	done <"$file"
 }
+report_manual_validation_placeholders() {
+	section manual-validation
+	printf 'manual.sdl=TODO: validate virtual gamepad in an SDL input tester\n'
+	printf 'manual.wine-proton=TODO: validate virtual gamepad in one Wine/Proton game\n'
+	printf 'manual.native-wayland-desktop=TODO: validate desktop profile pointer/buttons under the target compositor\n'
+	printf 'manual.notes=TODO: record pass/fail details, game/app names, and deviations\n'
+}
+
 
 
 section host
@@ -286,6 +294,7 @@ section devices
 if capture_device_list; then
 	report_device_attrs "$list_file"
 fi
+report_manual_validation_placeholders
 
 if [ -z "$device" ]; then
 	cat <<EOF

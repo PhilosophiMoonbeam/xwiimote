@@ -58,6 +58,9 @@ grep -F "$expected_commit" "$build_dir/hardware-report" >/dev/null
 grep -F 'git.dirty=' "$build_dir/hardware-report" >/dev/null
 grep -F 'XDG_CURRENT_DESKTOP=TestDesktop' "$build_dir/hardware-report" >/dev/null
 grep -F 'SWAYSOCK=/tmp/sway.sock' "$build_dir/hardware-report" >/dev/null
+grep -F 'manual.sdl=TODO:' "$build_dir/hardware-report" >/dev/null
+grep -F 'manual.wine-proton=TODO:' "$build_dir/hardware-report" >/dev/null
+grep -F 'manual.native-wayland-desktop=TODO:' "$build_dir/hardware-report" >/dev/null
 mkdir -p "$build_dir/nonrepo"
 (cd "$build_dir" && WIILAND_REPO_DIR=$build_dir/nonrepo \
 	WIILANDD=$fake_wiilandd "$root/tools/wiilandd-hardware-report.sh" \
