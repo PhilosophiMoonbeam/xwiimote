@@ -161,6 +161,7 @@ wiilandd_LDFLAGS = \
 
 check-local: wiilandd
 	$(AM_V_at)./wiilandd --self-test
+	$(AM_V_at)$(SHELL) $(top_srcdir)/tests/wiilandd-smoke.sh
 
 #
 # xwiidump
