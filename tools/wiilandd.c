@@ -11,6 +11,7 @@
 #include <fcntl.h>
 #include <linux/input.h>
 #include <linux/uinput.h>
+#include <time.h>
 #include <poll.h>
 #include <signal.h>
 #include <stdbool.h>
@@ -1007,13 +1008,31 @@ static bool is_abs_event(unsigned int type)
 	}
 }
 
+static int64_t trace_time_us(void)
+{
+	struct timespec ts;
+
+	if (clock_gettime(CLOCK_MONOTONIC, &ts) < 0)
+		return -1;
+
+	return (int64_t)ts.tv_sec * 1000000 + ts.tv_nsec / 1000;
+}
+
 static void trace_xwii_event(const struct bridge_device *dev,
 			     const struct xwii_event *event)
 {
 	size_t i;
+	int64_t now_us;
 
 	if (!trace_events)
 		return;
+
+	now_us = trace_time_us();
+	if (now_us >= 0)
+		printf("time=%lld.%06lld ", (long long)(now_us / 1000000),
+		       (long long)(now_us % 1000000));
+	else
+		printf("time=unknown ");
 
 	printf("%s %s type=%u", dev->syspath, event_type_name(event->type),
 	       event->type);
@@ -2428,6 +2447,9 @@ static int self_test_event_trace(void)
 		return ret;
 	ret = expect_int("trace-ir-name",
 			 strcmp(event_type_name(XWII_EVENT_IR), "ir"), 0);
+	if (ret)
+		return ret;
+	ret = expect_int("trace-time", trace_time_us() >= 0, 1);
 	if (ret)
 		return ret;
 	return expect_int("trace-unknown-name",

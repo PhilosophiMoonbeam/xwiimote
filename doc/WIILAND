@@ -97,8 +97,9 @@ Required runtime permissions:
      tools/wiilandd-hardware-report.sh N
 
    The first command records finite host, config, version, and device-list
-   diagnostics. The second command captures --dry-run --trace-events --verbose
-   output for one device; use the number from --list or a sysfs path.
+   diagnostics. The second command captures monotonic-timestamped
+   --dry-run --trace-events --verbose output for one device; use the number from
+   --list or a sysfs path.
 
    After dry-run traces show expected events, repeat without --dry-run and
    validate the virtual gamepad in an SDL input tester, one Wine/Proton game,
