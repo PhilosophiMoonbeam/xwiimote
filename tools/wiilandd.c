@@ -1256,7 +1256,8 @@ static int add_device(struct bridge_device *devices, const char *syspath)
 		if (!dry_run && dev->desktop_fd < 0) {
 			ret = dev->desktop_fd;
 			fprintf(stderr,
-				"wiilandd: cannot create /dev/uinput desktop device for %s: %d\n",
+				"wiilandd: cannot create /dev/uinput desktop device for %s: %d\n"
+				"wiilandd: ensure the uinput module is loaded and the user can write /dev/uinput\n",
 				syspath, ret);
 			goto err_uinput;
 		}
