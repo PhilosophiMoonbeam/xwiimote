@@ -124,9 +124,10 @@ through the normal Linux input stack.
 By default the X-Server opens all input devices that are available on your
 machine. The Wii Remote input devices are very useless without a proper keymap
 so you should instruct your X-Server to ignore raw Wii Remotes input devices.
-The WiiLand source repository contains an xorg-config file
+The WiiLand source repository keeps the legacy Xorg blacklist example
 .B res/50-xorg-fix-wiiland.conf
-which can be installed into
+for distributions that still maintain Xorg sessions. The default Wayland
+package install does not install it. Xorg-focused packages may install it into
 .B /etc/X11/xorg.conf.d/
 to ignore all raw Wii Remote input devices.
 .br

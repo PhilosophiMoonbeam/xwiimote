@@ -42,10 +42,9 @@ This software packages contains:
 		and creates Linux uinput virtual controllers. Wayland compositors,
 		SDL, Wine/Proton, and native games can consume these devices
 		through the normal evdev/libinput stack without XWayland.
-	50-xorg-fix-wiiland.conf: Legacy Xorg configuration file which should
-		be installed into /etc/X11/xorg.conf.d/ by distributions that
-		still ship Xorg sessions. It adds raw Wii Remote devices to the
-		input blacklist of the X-server.
+	50-xorg-fix-wiiland.conf: Legacy Xorg blacklist example kept in the
+		source tree for distributions that still maintain Xorg sessions.
+		The Wayland install path does not install it by default.
 	manpages: Several manpages are provided. One overview page and several
 		other pages for each tool and feature. They are installed by
 		the autotools scripts automatically alongside the library and
@@ -103,9 +102,10 @@ The Wayland bridge needs read access to hid-wiimote `/dev/input/event*` nodes an
 write access to `/dev/uinput`. See ./doc/WIILAND for the migration plan, backend
 rationale, the sample config in ./res/wiilandd.conf, the installable udev access
 rule in ./res/70-wiiland-uinput.rules, and the example user service in
-./res/wiilandd.service. The service runs `wiilandd --check-config` before
-starting so broken configuration fails fast. The unit uses systemd's binary
-search path so prefix installs under `/usr` and `/usr/local` both work.
+./res/wiilandd.service.in. The service runs `wiilandd --check-config` before
+starting so broken configuration fails fast. The installed unit is generated with
+the configured `bindir`, so `/usr` and `/usr/local` prefix builds use the
+matching `wiilandd` binary path.
 
 `make install` installs the uinput udev rule, systemd user service, and sample
 configuration under the selected prefix.
