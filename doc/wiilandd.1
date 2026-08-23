@@ -204,12 +204,14 @@ with
 .B --check-config
 preflight before starting
 .BR wiilandd .
-.SH GAMEPAD AXES
-The gamepad profile exposes extension sensors on stable evdev absolute axes so
-SDL, Wine/Proton, and native input testers can validate each source separately.
+.SH GAMEPAD MAPPING
+The gamepad profile exposes core and extension buttons as evdev button codes and
+extension sensors on stable evdev absolute axes so SDL, Wine/Proton, and native
+input testers can validate each source separately.
 .TP
-.B Wii Remote accelerometer
-X/Y/Z use
+.B Wii Remote
+Core buttons use D-pad, South/East, Start/Select, Mode, and 1/2 button events.
+Accelerometer X/Y/Z use
 .BR ABS_THROTTLE ,
 .BR ABS_RUDDER ,
 and
@@ -254,7 +256,9 @@ Stick X/Y use
 whammy and fret board use
 .BR ABS_WHAMMY_BAR
 and
-.BR ABS_FRET_BOARD .
+.BR ABS_FRET_BOARD ;
+strum/fret buttons use dedicated guitar button events, and +/Home use
+.BR BTN_START / BTN_MODE .
 .TP
 .B Drums
 Pad X/Y use
@@ -269,7 +273,9 @@ and
 bass and hi-hat pedals use
 .BR ABS_FRET_BOARD
 and
-.BR ABS_MISC .
+.BR ABS_MISC ;
++/- use
+.BR BTN_START / BTN_SELECT .
 .TP
 .B Balance Board
 The four weight sensors use
