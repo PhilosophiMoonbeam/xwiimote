@@ -75,9 +75,22 @@
 #ifndef ABS_FRET_BOARD
 #define ABS_FRET_BOARD 0x4a
 #endif
+#ifndef ABS_PRESSURE
+#define ABS_PRESSURE 0x18
+#endif
+#ifndef ABS_DISTANCE
+#define ABS_DISTANCE 0x19
+#endif
+#ifndef ABS_TILT_X
+#define ABS_TILT_X 0x1a
+#endif
+#ifndef ABS_TILT_Y
+#define ABS_TILT_Y 0x1b
+#endif
 
 #define MAX_DEVICES 32
 #define MAX_DEVICE_RULES 32
+#define BALANCE_SENSOR_COUNT 4
 #define ARRAY_SIZE(_a) (sizeof(_a) / sizeof((_a)[0]))
 
 enum bridge_profile {
@@ -328,6 +341,7 @@ static int enable_abs_bits(int fd, struct uinput_user_dev *udev)
 	static const int axes[] = {
 		ABS_X, ABS_Y, ABS_RX, ABS_RY, ABS_Z, ABS_RZ,
 		ABS_WHAMMY_BAR, ABS_FRET_BOARD, ABS_MISC,
+		ABS_PRESSURE, ABS_DISTANCE, ABS_TILT_X, ABS_TILT_Y,
 	};
 	size_t i;
 	int ret;
@@ -347,6 +361,10 @@ static int enable_abs_bits(int fd, struct uinput_user_dev *udev)
 	setup_abs_axis(udev, ABS_RZ, 0, 1023, 0, 4);
 	setup_abs_axis(udev, ABS_WHAMMY_BAR, 0, 1023, 0, 4);
 	setup_abs_axis(udev, ABS_FRET_BOARD, 0, 1023, 0, 4);
+	setup_abs_axis(udev, ABS_PRESSURE, 0, 65535, 0, 4);
+	setup_abs_axis(udev, ABS_DISTANCE, 0, 65535, 0, 4);
+	setup_abs_axis(udev, ABS_TILT_X, 0, 65535, 0, 4);
+	setup_abs_axis(udev, ABS_TILT_Y, 0, 65535, 0, 4);
 	setup_abs_axis(udev, ABS_MISC, 0, 1023, 0, 4);
 
 	return 0;
@@ -506,6 +524,39 @@ static int forward_abs_pair(struct bridge_device *dev, int code_x, int code_y,
 	return emit_abs(dev->uinput_fd, code_y, abs->y);
 }
 
+static int balance_abs_code(unsigned int index)
+{
+	static const int codes[BALANCE_SENSOR_COUNT] = {
+		ABS_PRESSURE,
+		ABS_DISTANCE,
+		ABS_TILT_X,
+		ABS_TILT_Y,
+	};
+
+	if (index >= ARRAY_SIZE(codes))
+		return -1;
+
+	return codes[index];
+}
+
+static int forward_balance_board_event(struct bridge_device *dev,
+				       const struct xwii_event *event)
+{
+	unsigned int i;
+	int code, ret;
+
+	for (i = 0; i < BALANCE_SENSOR_COUNT; ++i) {
+		code = balance_abs_code(i);
+		if (code < 0)
+			continue;
+		ret = emit_abs(dev->uinput_fd, code, event->v.abs[i].x);
+		if (ret)
+			return ret;
+	}
+
+	return 0;
+}
+
 static int drums_abs_code(unsigned int index)
 {
 	static const int codes[XWII_DRUMS_ABS_NUM] = {
@@ -579,6 +630,9 @@ static int forward_move_event(struct bridge_device *dev,
 		if (!ret)
 			ret = emit_abs(dev->uinput_fd, ABS_FRET_BOARD,
 				       event->v.abs[2].x);
+		break;
+	case XWII_EVENT_BALANCE_BOARD:
+		ret = forward_balance_board_event(dev, event);
 		break;
 	case XWII_EVENT_DRUMS_MOVE:
 		ret = forward_drums_move_event(dev, event);
@@ -795,6 +849,7 @@ static int handle_xwii_event(struct bridge_device *dev,
 	case XWII_EVENT_PRO_CONTROLLER_MOVE:
 	case XWII_EVENT_GUITAR_MOVE:
 	case XWII_EVENT_DRUMS_MOVE:
+	case XWII_EVENT_BALANCE_BOARD:
 		if (dev->profiles & PROFILE_GAMEPAD)
 			return forward_move_event(dev, event);
 		return 0;
@@ -1573,6 +1628,32 @@ static int self_test_drums_map(void)
 			  -1);
 }
 
+static int self_test_balance_board_map(void)
+{
+	static const struct {
+		unsigned int index;
+		int input;
+		const char *name;
+	} tests[] = {
+		{ 0, ABS_PRESSURE, "balance-sensor-0" },
+		{ 1, ABS_DISTANCE, "balance-sensor-1" },
+		{ 2, ABS_TILT_X, "balance-sensor-2" },
+		{ 3, ABS_TILT_Y, "balance-sensor-3" },
+	};
+	size_t i;
+	int ret;
+
+	for (i = 0; i < ARRAY_SIZE(tests); ++i) {
+		ret = expect_int(tests[i].name, balance_abs_code(tests[i].index),
+				 tests[i].input);
+		if (ret)
+			return ret;
+	}
+
+	return expect_int("balance-unknown",
+			  balance_abs_code(BALANCE_SENSOR_COUNT), -1);
+}
+
 static int self_test_ir_pointer(void)
 {
 	struct xwii_event event;
@@ -1811,6 +1892,9 @@ static int run_self_test(void)
 	if (ret)
 		return ret;
 	ret = self_test_drums_map();
+	if (ret)
+		return ret;
+	ret = self_test_balance_board_map();
 	if (ret)
 		return ret;
 	ret = self_test_ir_pointer();
