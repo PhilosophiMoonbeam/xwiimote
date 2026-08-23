@@ -35,6 +35,22 @@ test "$(sed -n '3p' "$build_dir/list")" = "	extension=nunchuk"
 test "$(sed -n '4p' "$build_dir/list")" = "2	$stub_sys_missing"
 test "$(sed -n '5p' "$build_dir/list")" = "	devtype=unavailable"
 test "$(sed -n '6p' "$build_dir/list")" = "	extension=unavailable"
+fake_wiilandd=$build_dir/fake-wiilandd
+cat >"$fake_wiilandd" <<'EOF'
+#!/bin/sh
+printf 'fake-wiilandd'
+for arg do
+	printf ' [%s]' "$arg"
+done
+printf '\n'
+exit 0
+EOF
+chmod +x "$fake_wiilandd"
+WIILANDD=$fake_wiilandd "$root/tools/wiilandd-hardware-report.sh" \
+	7 --trace-events=motion-plus >"$build_dir/hardware-report"
+grep -F 'fake-wiilandd [--dry-run] [--trace-events] [--verbose] [--device] [7] [--profile] [both] [--trace-events=motion-plus]' \
+	"$build_dir/hardware-report" >/dev/null
+
 
 
 
