@@ -106,6 +106,7 @@
 #define ABS_HAT0X 0x10
 #endif
 
+#define SYSTEM_CONFIG_PATH "/etc/wiiland/wiilandd.conf"
 #define MAX_DEVICES 32
 #define MAX_DEVICE_RULES 32
 #define BALANCE_SENSOR_COUNT 4
@@ -1709,6 +1710,22 @@ static const char *default_config_path(void)
 	return path;
 }
 
+static int load_default_config_files(void)
+{
+	const char *user_path;
+	int ret;
+
+	ret = load_config_file(SYSTEM_CONFIG_PATH, false);
+	if (ret)
+		return ret;
+
+	user_path = default_config_path();
+	if (!user_path)
+		return 0;
+
+	return load_config_file(user_path, false);
+}
+
 static int expect_int(const char *name, int got, int want)
 {
 	if (got == want)
@@ -2283,13 +2300,12 @@ int main(int argc, char **argv)
 	}
 
 	if (!diagnostic && !no_config && (!self_test || explicit_config)) {
-		if (!config_path)
-			config_path = default_config_path();
-		if (config_path) {
-			ret = load_config_file(config_path, explicit_config);
-			if (ret)
-				return abs(ret);
-		}
+		if (explicit_config)
+			ret = load_config_file(config_path, true);
+		else
+			ret = load_default_config_files();
+		if (ret)
+			return abs(ret);
 	}
 
 	for (i = 1; i < argc; ++i) {

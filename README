@@ -84,6 +84,9 @@ To tune desktop pointer speed and IR gain persistently:
 	$ mkdir -p ~/.config/wiiland
 	$ printf 'profile=desktop\npointer-speed=24\nir-speed=10\n' > ~/.config/wiiland/wiilandd.conf
 
+System-wide defaults can use `/etc/wiiland/wiilandd.conf`; user config files
+override system defaults.
+
 Per-device rules can override that default by sysfs path substring:
 	$ printf 'profile=gamepad\ndevice.bluetooth.profile=desktop\n' > ~/.config/wiiland/wiilandd.conf
 

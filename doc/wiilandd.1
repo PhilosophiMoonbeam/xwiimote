@@ -94,13 +94,16 @@ Unless
 is set,
 .B wiilandd
 loads
+.B /etc/wiiland/wiilandd.conf
+first, then
 .B $XDG_CONFIG_HOME/wiiland/wiilandd.conf
 or
 .B $HOME/.config/wiiland/wiilandd.conf
-when present. Use
+when present. Later files override earlier values. Use
 .B --config
-to load an explicit file. Help and list modes do not load configuration, so
-diagnostics remain available even with a broken config file. Supported keys are:
+to load one explicit file instead of the default hierarchy. Help and list modes
+do not load configuration, so diagnostics remain available even with a broken
+config file. Supported keys are:
 .TP
 .B profile=gamepad|desktop|both
 Default virtual input profile.
