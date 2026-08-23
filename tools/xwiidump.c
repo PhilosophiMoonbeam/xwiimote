@@ -1,11 +1,11 @@
 /*
- * XWiimote - tools
+ * WiiLand - tools
  * Written 2010, 2011 by David Herrmann
  * Dedicated to the Public Domain
  */
 
 /*
- * XWiimote EEPROM Dump
+ * WiiLand EEPROM Dump
  * This tool reads the whole eeprom of a wiimote and dumps the output to
  * stdout. This requires debugfs support and euid 0/root.
  * Pass as argument the eeprom input file. This requires that debugfs is

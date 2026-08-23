@@ -1,5 +1,5 @@
 /*
- * XWiimote - tools - xwiishow
+ * WiiLand - tools - xwiishow
  * Written 2010-2013 by David Herrmann
  * Dedicated to the Public Domain
  */

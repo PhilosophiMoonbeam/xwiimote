@@ -1,5 +1,5 @@
 /*
- * XWiimote - tools - xwiiwaylandd
+ * WiiLand - tools - wiilandd
  * Wayland-native virtual input bridge using Linux uinput.
  *
  * This deliberately does not talk to X11. It consumes libxwiimote events from
@@ -79,15 +79,32 @@
 #define MAX_DEVICES 32
 #define ARRAY_SIZE(_a) (sizeof(_a) / sizeof((_a)[0]))
 
+enum bridge_profile {
+	PROFILE_GAMEPAD = 1 << 0,
+	PROFILE_DESKTOP = 1 << 1,
+};
+
+enum pointer_key {
+	POINTER_LEFT = 1 << 0,
+	POINTER_RIGHT = 1 << 1,
+	POINTER_UP = 1 << 2,
+	POINTER_DOWN = 1 << 3,
+};
+
 struct bridge_device {
 	struct xwii_iface *iface;
 	char *syspath;
 	int uinput_fd;
+	int desktop_fd;
+	unsigned int pointer_keys;
+	int pointer_dx;
+	int pointer_dy;
 };
 
 static volatile sig_atomic_t should_stop;
 static bool verbose;
 static bool dry_run;
+static unsigned int profiles = PROFILE_GAMEPAD;
 
 static void on_signal(int signo)
 {
@@ -164,6 +181,14 @@ static int emit_abs(int fd, int code, int32_t value)
 		return 0;
 
 	return emit_event(fd, EV_ABS, (uint16_t)code, value);
+}
+
+static int emit_rel(int fd, int code, int32_t value)
+{
+	if (code < 0 || !value)
+		return 0;
+
+	return emit_event(fd, EV_REL, (uint16_t)code, value);
 }
 
 static int map_key(unsigned int code)
@@ -294,6 +319,85 @@ static int enable_abs_bits(int fd, struct uinput_user_dev *udev)
 	return 0;
 }
 
+static int enable_desktop_bits(int fd)
+{
+	static const int keys[] = {
+		BTN_LEFT, BTN_RIGHT,
+		KEY_ENTER, KEY_ESC, KEY_LEFTMETA, KEY_PAGEUP, KEY_PAGEDOWN,
+	};
+	static const int rels[] = {
+		REL_X, REL_Y,
+	};
+	size_t i;
+	int ret;
+
+	ret = set_bit(fd, UI_SET_EVBIT, EV_KEY);
+	if (ret)
+		return ret;
+
+	for (i = 0; i < ARRAY_SIZE(keys); ++i) {
+		ret = set_bit(fd, UI_SET_KEYBIT, keys[i]);
+		if (ret)
+			return ret;
+	}
+
+	ret = set_bit(fd, UI_SET_EVBIT, EV_REL);
+	if (ret)
+		return ret;
+
+	for (i = 0; i < ARRAY_SIZE(rels); ++i) {
+		ret = set_bit(fd, UI_SET_RELBIT, rels[i]);
+		if (ret)
+			return ret;
+	}
+
+	return 0;
+}
+
+static int create_virtual_desktop(const char *syspath)
+{
+	struct uinput_user_dev udev;
+	int fd, ret;
+
+	if (dry_run) {
+		info("dry-run: would create uinput desktop device for %s\n",
+		     syspath);
+		return -1;
+	}
+
+	fd = open("/dev/uinput", O_WRONLY | O_NONBLOCK | O_CLOEXEC);
+	if (fd < 0)
+		return -errno;
+
+	memset(&udev, 0, sizeof(udev));
+	snprintf(udev.name, sizeof(udev.name), "WiiLand Wayland Desktop");
+	udev.id.bustype = BUS_BLUETOOTH;
+	udev.id.vendor = 0x057e;
+	udev.id.product = 0x0337;
+	udev.id.version = 1;
+
+	ret = enable_desktop_bits(fd);
+	if (ret)
+		goto err_close;
+
+	if (write(fd, &udev, sizeof(udev)) != (ssize_t)sizeof(udev)) {
+		ret = errno ? -errno : -EIO;
+		goto err_close;
+	}
+
+	if (ioctl(fd, UI_DEV_CREATE) < 0) {
+		ret = -errno;
+		goto err_close;
+	}
+
+	info("created virtual Wayland desktop device for %s\n", syspath);
+	return fd;
+
+err_close:
+	close(fd);
+	return ret;
+}
+
 static int create_virtual_controller(const char *syspath)
 {
 	struct uinput_user_dev udev;
@@ -309,7 +413,7 @@ static int create_virtual_controller(const char *syspath)
 		return -errno;
 
 	memset(&udev, 0, sizeof(udev));
-	snprintf(udev.name, sizeof(udev.name), "XWiimote Wayland Controller");
+	snprintf(udev.name, sizeof(udev.name), "WiiLand Wayland Controller");
 	udev.id.bustype = BUS_BLUETOOTH;
 	udev.id.vendor = 0x057e;
 	udev.id.product = 0x0337;
@@ -411,6 +515,100 @@ static int forward_move_event(struct bridge_device *dev,
 	return emit_syn(dev->uinput_fd);
 }
 
+static void refresh_pointer_velocity(struct bridge_device *dev)
+{
+	dev->pointer_dx = 0;
+	dev->pointer_dy = 0;
+
+	if (dev->pointer_keys & POINTER_LEFT)
+		dev->pointer_dx -= 16;
+	if (dev->pointer_keys & POINTER_RIGHT)
+		dev->pointer_dx += 16;
+	if (dev->pointer_keys & POINTER_UP)
+		dev->pointer_dy -= 16;
+	if (dev->pointer_keys & POINTER_DOWN)
+		dev->pointer_dy += 16;
+}
+
+static int update_pointer_key(struct bridge_device *dev, unsigned int bit,
+			      unsigned int state)
+{
+	if (state)
+		dev->pointer_keys |= bit;
+	else
+		dev->pointer_keys &= ~bit;
+
+	refresh_pointer_velocity(dev);
+	return 0;
+}
+
+static int desktop_key_code(unsigned int code)
+{
+	switch (code) {
+	case XWII_KEY_A:
+		return BTN_LEFT;
+	case XWII_KEY_B:
+		return BTN_RIGHT;
+	case XWII_KEY_PLUS:
+		return KEY_ENTER;
+	case XWII_KEY_MINUS:
+		return KEY_ESC;
+	case XWII_KEY_HOME:
+		return KEY_LEFTMETA;
+	case XWII_KEY_ONE:
+		return KEY_PAGEDOWN;
+	case XWII_KEY_TWO:
+		return KEY_PAGEUP;
+	default:
+		return -1;
+	}
+}
+
+static int forward_desktop_key_event(struct bridge_device *dev,
+				     const struct xwii_event *event)
+{
+	if (event->type != XWII_EVENT_KEY)
+		return 0;
+
+	switch (event->v.key.code) {
+	case XWII_KEY_LEFT:
+		return update_pointer_key(dev, POINTER_LEFT, event->v.key.state);
+	case XWII_KEY_RIGHT:
+		return update_pointer_key(dev, POINTER_RIGHT, event->v.key.state);
+	case XWII_KEY_UP:
+		return update_pointer_key(dev, POINTER_UP, event->v.key.state);
+	case XWII_KEY_DOWN:
+		return update_pointer_key(dev, POINTER_DOWN, event->v.key.state);
+	default:
+		return emit_key(dev->desktop_fd,
+				desktop_key_code(event->v.key.code),
+				event->v.key.state);
+	}
+}
+
+static bool has_pointer_motion(const struct bridge_device *dev)
+{
+	return dev->desktop_fd >= 0 && (dev->pointer_dx || dev->pointer_dy);
+}
+
+static int tick_pointer(struct bridge_device *dev)
+{
+	int ret;
+
+	if (!has_pointer_motion(dev))
+		return 0;
+
+	ret = emit_rel(dev->desktop_fd, REL_X, dev->pointer_dx);
+	if (ret)
+		return ret;
+
+	ret = emit_rel(dev->desktop_fd, REL_Y, dev->pointer_dy);
+	if (ret)
+		return ret;
+
+	return emit_syn(dev->desktop_fd);
+}
+
 static int reopen_available_ifaces(struct bridge_device *dev)
 {
 	unsigned int todo;
@@ -422,7 +620,7 @@ static int reopen_available_ifaces(struct bridge_device *dev)
 
 	ret = xwii_iface_open(dev->iface, todo);
 	if (ret)
-		fprintf(stderr, "xwiiwaylandd: cannot open new interfaces for %s: %d\n",
+		fprintf(stderr, "wiilandd: cannot open new interfaces for %s: %d\n",
 			dev->syspath, ret);
 
 	return ret;
@@ -431,6 +629,7 @@ static int reopen_available_ifaces(struct bridge_device *dev)
 static int handle_xwii_event(struct bridge_device *dev,
 			     const struct xwii_event *event)
 {
+	int ret;
 	switch (event->type) {
 	case XWII_EVENT_GONE:
 		info("device gone: %s\n", dev->syspath);
@@ -444,12 +643,19 @@ static int handle_xwii_event(struct bridge_device *dev,
 	case XWII_EVENT_PRO_CONTROLLER_KEY:
 	case XWII_EVENT_GUITAR_KEY:
 	case XWII_EVENT_DRUMS_KEY:
-		return forward_key_event(dev, event);
+		ret = 0;
+		if (profiles & PROFILE_GAMEPAD)
+			ret = forward_key_event(dev, event);
+		if (!ret && (profiles & PROFILE_DESKTOP))
+			ret = forward_desktop_key_event(dev, event);
+		return ret;
 	case XWII_EVENT_NUNCHUK_MOVE:
 	case XWII_EVENT_CLASSIC_CONTROLLER_MOVE:
 	case XWII_EVENT_PRO_CONTROLLER_MOVE:
 	case XWII_EVENT_GUITAR_MOVE:
-		return forward_move_event(dev, event);
+		if (profiles & PROFILE_GAMEPAD)
+			return forward_move_event(dev, event);
+		return 0;
 	default:
 		return 0;
 	}
@@ -480,10 +686,12 @@ static void remove_device(struct bridge_device *dev)
 
 	info("removing %s\n", dev->syspath);
 	destroy_virtual_controller(dev->uinput_fd);
+	destroy_virtual_controller(dev->desktop_fd);
 	xwii_iface_unref(dev->iface);
 	free(dev->syspath);
 	memset(dev, 0, sizeof(*dev));
 	dev->uinput_fd = -1;
+	dev->desktop_fd = -1;
 }
 
 static bool has_device(struct bridge_device *devices, const char *syspath)
@@ -517,6 +725,7 @@ static int add_device(struct bridge_device *devices, const char *syspath)
 		return -ENOSPC;
 
 	dev->uinput_fd = -1;
+	dev->desktop_fd = -1;
 	dev->syspath = strdup(syspath);
 	if (!dev->syspath)
 		return -ENOMEM;
@@ -527,32 +736,49 @@ static int add_device(struct bridge_device *devices, const char *syspath)
 
 	ret = xwii_iface_watch(dev->iface, true);
 	if (ret)
-		fprintf(stderr, "xwiiwaylandd: cannot watch %s: %d\n", syspath, ret);
+		fprintf(stderr, "wiilandd: cannot watch %s: %d\n", syspath, ret);
 
 	ret = xwii_iface_open(dev->iface, xwii_iface_available(dev->iface));
 	if (ret)
-		fprintf(stderr, "xwiiwaylandd: cannot open all interfaces for %s: %d\n",
+		fprintf(stderr, "wiilandd: cannot open all interfaces for %s: %d\n",
 			syspath, ret);
 
-	dev->uinput_fd = create_virtual_controller(syspath);
-	if (!dry_run && dev->uinput_fd < 0) {
-		ret = dev->uinput_fd;
-		fprintf(stderr,
-			"xwiiwaylandd: cannot create /dev/uinput device for %s: %d\n"
-			"xwiiwaylandd: ensure the uinput module is loaded and the user can write /dev/uinput\n",
-			syspath, ret);
-		goto err_iface;
+	if (profiles & PROFILE_GAMEPAD) {
+		dev->uinput_fd = create_virtual_controller(syspath);
+		if (!dry_run && dev->uinput_fd < 0) {
+			ret = dev->uinput_fd;
+			fprintf(stderr,
+				"wiilandd: cannot create /dev/uinput gamepad for %s: %d\n"
+				"wiilandd: ensure the uinput module is loaded and the user can write /dev/uinput\n",
+				syspath, ret);
+			goto err_iface;
+		}
+	}
+
+	if (profiles & PROFILE_DESKTOP) {
+		dev->desktop_fd = create_virtual_desktop(syspath);
+		if (!dry_run && dev->desktop_fd < 0) {
+			ret = dev->desktop_fd;
+			fprintf(stderr,
+				"wiilandd: cannot create /dev/uinput desktop device for %s: %d\n",
+				syspath, ret);
+			goto err_uinput;
+		}
 	}
 
 	info("bridging %s\n", syspath);
 	return 0;
 
+err_uinput:
+	destroy_virtual_controller(dev->uinput_fd);
+	destroy_virtual_controller(dev->desktop_fd);
 err_iface:
 	xwii_iface_unref(dev->iface);
 err_free:
 	free(dev->syspath);
 	memset(dev, 0, sizeof(*dev));
 	dev->uinput_fd = -1;
+	dev->desktop_fd = -1;
 	return ret;
 }
 
@@ -564,13 +790,42 @@ static void cleanup_devices(struct bridge_device *devices)
 		remove_device(&devices[i]);
 }
 
+static bool any_pointer_motion(struct bridge_device *devices)
+{
+	unsigned int i;
+
+	for (i = 0; i < MAX_DEVICES; ++i) {
+		if (devices[i].iface && has_pointer_motion(&devices[i]))
+			return true;
+	}
+
+	return false;
+}
+
+static int tick_pointers(struct bridge_device *devices)
+{
+	unsigned int i;
+	int ret;
+
+	for (i = 0; i < MAX_DEVICES; ++i) {
+		if (!devices[i].iface)
+			continue;
+
+		ret = tick_pointer(&devices[i]);
+		if (ret)
+			return ret;
+	}
+
+	return 0;
+}
+
 static int poll_devices(struct bridge_device *devices, struct xwii_monitor *mon)
 {
 	struct pollfd fds[MAX_DEVICES + 1];
 	int owners[MAX_DEVICES + 1];
 	char *syspath;
 	unsigned int i, nfds;
-	int ret, mon_fd;
+	int ret, mon_fd, timeout;
 
 	while (!should_stop) {
 		nfds = 0;
@@ -594,11 +849,18 @@ static int poll_devices(struct bridge_device *devices, struct xwii_monitor *mon)
 		if (nfds == 0)
 			return 0;
 
-		ret = poll(fds, nfds, -1);
+		timeout = any_pointer_motion(devices) ? 16 : -1;
+		ret = poll(fds, nfds, timeout);
 		if (ret < 0) {
 			if (errno == EINTR)
 				continue;
 			return -errno;
+		}
+		if (!ret) {
+			ret = tick_pointers(devices);
+			if (ret)
+				return ret;
+			continue;
 		}
 
 		for (i = 0; i < nfds; ++i) {
@@ -616,7 +878,7 @@ static int poll_devices(struct bridge_device *devices, struct xwii_monitor *mon)
 					remove_device(&devices[owners[i]]);
 				else if (ret)
 					fprintf(stderr,
-						"xwiiwaylandd: event dispatch failed for %s: %d\n",
+						"wiilandd: event dispatch failed for %s: %d\n",
 						devices[owners[i]].syspath, ret);
 			}
 		}
@@ -700,7 +962,7 @@ static int run_monitor(void)
 	while ((syspath = xwii_monitor_poll(mon))) {
 		ret = add_device(devices, syspath);
 		if (ret)
-			fprintf(stderr, "xwiiwaylandd: cannot add %s: %d\n", syspath, ret);
+			fprintf(stderr, "wiilandd: cannot add %s: %d\n", syspath, ret);
 		free(syspath);
 	}
 
@@ -719,7 +981,7 @@ static int run_one(const char *arg)
 	memset(devices, 0, sizeof(devices));
 	syspath = resolve_device_arg(arg);
 	if (!syspath) {
-		fprintf(stderr, "xwiiwaylandd: cannot resolve device '%s'\n", arg);
+		fprintf(stderr, "wiilandd: cannot resolve device '%s'\n", arg);
 		return -ENODEV;
 	}
 
@@ -732,21 +994,40 @@ static int run_one(const char *arg)
 	return ret;
 }
 
+static int parse_profile(const char *arg)
+{
+	if (!strcmp(arg, "gamepad")) {
+		profiles = PROFILE_GAMEPAD;
+		return 0;
+	}
+	if (!strcmp(arg, "desktop")) {
+		profiles = PROFILE_DESKTOP;
+		return 0;
+	}
+	if (!strcmp(arg, "both")) {
+		profiles = PROFILE_GAMEPAD | PROFILE_DESKTOP;
+		return 0;
+	}
+
+	return -EINVAL;
+}
+
 static void usage(FILE *out)
 {
 	fprintf(out,
 		"Usage:\n"
-		"\txwiiwaylandd [OPTIONS]\n"
-		"\txwiiwaylandd --device <number|/sys/path> [OPTIONS]\n"
+		"\twiilandd [OPTIONS]\n"
+		"\twiilandd --device <number|/sys/path> [OPTIONS]\n"
 		"\n"
 		"Options:\n"
 		"\t-h, --help       Show this help\n"
 		"\t-l, --list       List connected Wii Remote devices and exit\n"
 		"\t-d, --device     Bridge one device instead of monitoring all devices\n"
+		"\t-p, --profile    gamepad, desktop, or both (default: gamepad)\n"
 		"\t-n, --dry-run    Do not create /dev/uinput devices or emit input\n"
 		"\t-v, --verbose    Print device lifecycle details\n"
 		"\n"
-		"xwiiwaylandd is a Wayland-native bridge: it creates Linux uinput\n"
+		"wiilandd is a Wayland-native bridge: it creates Linux uinput\n"
 		"virtual controllers consumed by Wayland compositors through evdev/libinput.\n");
 }
 
@@ -761,6 +1042,16 @@ int main(int argc, char **argv)
 			return 0;
 		} else if (!strcmp(argv[i], "-l") || !strcmp(argv[i], "--list")) {
 			return abs(list_devices());
+		} else if (!strncmp(argv[i], "--profile=", 10)) {
+			if (parse_profile(argv[i] + 10)) {
+				usage(stderr);
+				return EINVAL;
+			}
+		} else if (!strcmp(argv[i], "-p") || !strcmp(argv[i], "--profile")) {
+			if (++i >= argc || parse_profile(argv[i])) {
+				usage(stderr);
+				return EINVAL;
+			}
 		} else if (!strcmp(argv[i], "-n") || !strcmp(argv[i], "--dry-run")) {
 			dry_run = true;
 		} else if (!strcmp(argv[i], "-v") || !strcmp(argv[i], "--verbose")) {

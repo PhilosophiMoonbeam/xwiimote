@@ -1,16 +1,16 @@
 /*
- * XWiimote - lib
+ * WiiLand - libxwiimote compatibility library
  * Written 2010-2013 by David Herrmann <dh.herrmann@gmail.com>
  * Dedicated to the Public Domain
  */
 
 /*
- * Device Enumeration and Monitorig
+ * Device Enumeration and Monitoring
  * Use libudev to enumerate all currently connected devices and allow
  * monitoring the system for new devices.
  * Normal applications should integrate this into their own udev-monitor.
  * However, smaller applications might not use udev on their own so this API
- * wraps the udev API in a small easy xwiimote API.
+ * wraps the udev API in the libxwiimote compatibility API.
  */
 
 #include <fcntl.h>

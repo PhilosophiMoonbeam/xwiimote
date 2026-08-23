@@ -1,5 +1,5 @@
 #
-# XWiimote - makefile
+# WiiLand - makefile
 # Written by David Herrmann, 2011-2013
 # Dedicated to the Public Domain
 #
@@ -34,11 +34,11 @@ EXTRA_DIST = \
 	COPYING \
 	DEV \
 	LICENSE \
-	res/50-xorg-fix-xwiimote.conf \
-	res/70-udev-xwiimote.rules \
-	res/70-xwiimote-uinput.rules \
-	res/xwiiwaylandd.service \
-	doc/WAYLAND \
+	res/50-xorg-fix-wiiland.conf \
+	res/70-udev-wiiland.rules \
+	res/70-wiiland-uinput.rules \
+	res/wiilandd.service \
+	doc/WIILAND \
 	libxwiimote.sym
 
 #
@@ -46,14 +46,14 @@ EXTRA_DIST = \
 #
 
 lib_LTLIBRARIES = libxwiimote.la
-bin_PROGRAMS = xwiishow xwiiwaylandd
+bin_PROGRAMS = xwiishow wiilandd
 noinst_PROGRAMS = xwiidump
 include_HEADERS = lib/xwiimote.h
 man_MANS = \
-	doc/xwiimote.7 \
+	doc/wiiland.7 \
 	doc/libxwiimote.7 \
 	doc/xwiishow.1 \
-	doc/xwiiwaylandd.1
+	doc/wiilandd.1
 EXTRA_DIST += $(man_MANS)
 
 pkgconfigdir = $(libdir)/pkgconfig
@@ -133,16 +133,16 @@ xwiishow_LDFLAGS = \
 	$(AM_LDFLAGS)
 
 #
-# xwiiwaylandd
+# wiilandd
 #
 
-xwiiwaylandd_SOURCES = \
-	tools/xwiiwaylandd.c
-xwiiwaylandd_CPPFLAGS = \
+wiilandd_SOURCES = \
+	tools/wiilandd.c
+wiilandd_CPPFLAGS = \
 	$(AM_CPPFLAGS)
-xwiiwaylandd_LDADD = \
+wiilandd_LDADD = \
 	libxwiimote.la
-xwiiwaylandd_LDFLAGS = \
+wiilandd_LDFLAGS = \
 	$(AM_LDFLAGS)
 
 #

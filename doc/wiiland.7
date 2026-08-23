@@ -2,12 +2,12 @@
 .\" Written 2012 by David Herrmann
 .\" Dedicated to the Public Domain
 .\"
-.TH "XWIIMOTE" 7 "August 2013" "David Herrmann" "Wii Remote Driver"
+.TH "WIILAND" 7 "August 2026" "WiiLand" "Wii Remote Driver"
 .SH NAME
-XWiimote \- Nintendo Wii Remote Linux Device Driver
+WiiLand \- Nintendo Wii Remote Linux and Wayland Device Stack
 
 .SH DESCRIPTION
-The XWiimote driver and utilities can be used to connect a Nintendo Wii Remote
+The WiiLand driver and utilities can be used to connect a Nintendo Wii Remote
 to your computer. It consists of a linux kernel driver, a BlueZ Bluetooth plugin
 and user-space utilities. They replace the old user-space drivers like
 .B cwiid
@@ -54,7 +54,7 @@ This should work with any BlueZ version.
 If you have a Wii Remote connected to your host you can test it with the
 .BR xwiishow (1)
 application. However, if you do not have the
-.B xwiimote
+.B wiiland
 user-space tools installed, you can find Wii Remotes with
 .br
 .B "    ls /sys/module/hid_wiimote/drivers/hid:wiimote/"
@@ -88,7 +88,7 @@ use a kernel version greater than, or equal to 3.11.
 
 .SS libxwiimote
 The kernel API for the Wii Remote is quite complex. It is documented in the
-xwiimote source repository in
+WiiLand source repository in
 .B doc/INTERFACE
 .br
 To help application developers to use special Wii Remote functionality, we
@@ -116,7 +116,7 @@ sure that your device is not detected properly, please report a bug upstream.
 .SS Wayland sessions need a virtual input bridge
 Wayland compositors do not load Xorg input drivers and XWayland does not expose
 an input-driver extension point. For Wayland sessions, use
-.BR xwiiwaylandd (1)
+.BR wiilandd (1)
 to translate Wii Remote events into Linux uinput virtual controllers. These
 devices are consumed by compositors through evdev/libinput and by native games
 through the normal Linux input stack.
@@ -124,8 +124,8 @@ through the normal Linux input stack.
 By default the X-Server opens all input devices that are available on your
 machine. The Wii Remote input devices are very useless without a proper keymap
 so you should instruct your X-Server to ignore raw Wii Remotes input devices.
-The xwiimote source repository contains an xorg-config file
-.B res/50-xorg-fix-xwiimote.conf
+The WiiLand source repository contains an xorg-config file
+.B res/50-xorg-fix-wiiland.conf
 which can be installed into
 .B /etc/X11/xorg.conf.d/
 to ignore all raw Wii Remote input devices.
@@ -137,9 +137,9 @@ your X-Server.
 .SH AUTHOR
 David Herrmann <dh.herrmann@googlemail.com>
 .br
-The XWiimote Project: http://dvdhrm.github.io/xwiimote
+The WiiLand Project: https://github.com/PhilosophiMoonbeam/wiiland
 
 .SH "SEE ALSO"
 .BR libxwiimote (7),
 .BR xwiishow (1),
-.BR xwiiwaylandd (1)
+.BR wiilandd (1)

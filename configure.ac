@@ -1,16 +1,16 @@
 #
-# XWiimote - configure
+# WiiLand - configure
 # Written by David Herrmann, 2011
 # Dedicated to the Public Domain
 #
 
 AC_PREREQ(2.68)
 
-AC_INIT([xwiimote],
+AC_INIT([wiiland],
         [2],
-        [http://github.com/dvdhrm/xwiimote/issues],
-        [xwiimote],
-        [http://dvdhrm.github.io/xwiimote])
+        [https://github.com/PhilosophiMoonbeam/wiiland/issues],
+        [wiiland],
+        [https://github.com/PhilosophiMoonbeam/wiiland])
 AC_CONFIG_SRCDIR([lib/xwiimote.h])
 AC_CONFIG_AUX_DIR([build-aux])
 AC_CONFIG_MACRO_DIR([m4])

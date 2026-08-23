@@ -1,5 +1,5 @@
 /*
- * XWiimote - lib
+ * WiiLand - libxwiimote compatibility library
  * Written 2010-2013 by David Herrmann <dh.herrmann@gmail.com>
  * Dedicated to the Public Domain
  */

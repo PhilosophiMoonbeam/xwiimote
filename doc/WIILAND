@@ -1,12 +1,12 @@
-= XWiimote Wayland Plan =
+= WiiLand Plan =
 
 Status: active migration plan for distributions where Wayland is the primary
 session and Xorg input drivers are legacy compatibility only.
 
 == Decision ==
 
-The default Wayland path is a Linux uinput bridge, shipped as xwiiwaylandd.
-It consumes hid-wiimote/libxwiimote events and creates virtual evdev devices.
+The default Wayland path is a Linux uinput bridge, shipped as wiilandd.
+It consumes hid-wiimote/libxwiimote compatibility-library events and creates virtual evdev devices.
 Wayland compositors already ingest those devices through libinput and native
 game stacks already ingest them through evdev, SDL, Wine, and Proton.
 
@@ -18,12 +18,18 @@ will be an optional backend, not a replacement for the uinput baseline.
 
 == Current shipped behavior ==
 
-xwiiwaylandd:
-  - monitors hid-wiimote devices through libxwiimote;
-  - creates one virtual uinput gamepad per Wii Remote;
+wiilandd:
+  - monitors hid-wiimote devices through libxwiimote compatibility library;
+  - creates one virtual uinput gamepad per Wii Remote by default;
+  - optionally creates a virtual desktop mouse/keyboard with --profile desktop
+    or --profile both;
   - forwards core, Nunchuk, Classic Controller, Pro Controller, Guitar, and
-    Drums button events;
-  - forwards Nunchuk, Classic Controller, Pro Controller, and Guitar axes;
+    Drums button events to the gamepad profile;
+  - forwards Nunchuk, Classic Controller, Pro Controller, and Guitar axes to
+    the gamepad profile;
+  - maps Wii Remote core input in the desktop profile: D-pad moves the pointer,
+    A/B click, +/- send Enter/Escape, Home sends the compositor overview key,
+    and 1/2 send Page Down/Page Up;
   - handles hotplug and extension changes without Xorg configuration.
 
 Required runtime permissions:
@@ -34,10 +40,8 @@ Required runtime permissions:
 == Roadmap ==
 
 1. Desktop profile
-   Add an optional pointer/keyboard profile for Wii Remote core and IR events:
-   A/B as mouse buttons, D-pad or IR as pointer movement, +/-/Home as desktop
-   keys. Keep the default profile gamepad-safe so games do not see synthetic
-   keyboard/mouse events unless requested.
+   Shipped as --profile desktop and --profile both. Next refinements are IR
+   pointer support and configurable button mapping.
 
 2. Per-device policy
    Add a small configuration file for profiles and axis normalization. Avoid a
@@ -52,7 +56,7 @@ Required runtime permissions:
 
 4. Distribution integration
    Ship the example systemd user service and udev rule from res/. Keep the
-   legacy Xorg blacklist file for Xorg sessions only.
+   legacy Xorg blacklist file for legacy Xorg sessions only.
 
 5. Test hardware matrix
    Verify with original Wii Remote, Wii Remote Plus, Nunchuk, Classic

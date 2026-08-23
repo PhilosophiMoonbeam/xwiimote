@@ -1,12 +1,12 @@
 [Unit]
-Description=XWiimote Wayland input bridge
-Documentation=man:xwiiwaylandd(1)
+Description=WiiLand input bridge
+Documentation=man:wiilandd(1)
 After=graphical-session.target
 PartOf=graphical-session.target
 
 [Service]
 Type=simple
-ExecStart=xwiiwaylandd
+ExecStart=wiilandd
 Restart=on-failure
 RestartSec=2s
 

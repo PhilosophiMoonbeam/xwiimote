@@ -4,7 +4,7 @@ libdir=@libdir@
 includedir=@includedir@
 
 Name: libxwiimote
-Description: Library to control Nintendo Wii Remotes
+Description: WiiLand compatibility library to control Nintendo Wii Remotes
 Requires: libudev
 Version: @PACKAGE_VERSION@
 Libs: -L${libdir} -lxwiimote

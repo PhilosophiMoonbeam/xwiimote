@@ -1,16 +1,16 @@
-.TH XWIIWAYLANDD 1 "August 2026" "xwiimote" "XWiimote Manual"
+.TH WIILANDD 1 "August 2026" "wiiland" "WiiLand Manual"
 .SH NAME
-xwiiwaylandd \- bridge Wii Remote input to Wayland through Linux uinput
+wiilandd \- bridge Wii Remote input to Wayland through Linux uinput
 .SH SYNOPSIS
-.B xwiiwaylandd
+.B wiilandd
 .RI [ OPTIONS ]
 .br
-.B xwiiwaylandd --device
+.B wiilandd --device
 .RI number | /sys/path
 .RI [ OPTIONS ]
 .SH DESCRIPTION
-.B xwiiwaylandd
-is the Wayland-native input bridge for XWiimote. It reads Wii Remote events
+.B wiilandd
+is the Wayland-native input bridge for WiiLand. It reads Wii Remote events
 through
 .B libxwiimote
 and creates virtual Linux uinput controllers. Wayland compositors consume these
@@ -32,6 +32,15 @@ Bridge one device instead of monitoring all connected and hotplugged devices.
 A number refers to the output of
 .BR --list .
 .TP
+.BR -p , " --profile " gamepad | desktop | both
+Select the virtual input profile. The default
+.B gamepad
+profile creates a virtual controller for games. The
+.B desktop
+profile creates a virtual mouse/keyboard device: D-pad moves the pointer,
+A/B click, +/- send Enter/Escape, Home sends the compositor overview key,
+and 1/2 send Page Down/Page Up.
+.TP
 .BR -n , " --dry-run"
 Enumerate and open devices without creating /dev/uinput devices or emitting
 virtual input. Useful for smoke tests and service diagnostics.
@@ -47,9 +56,15 @@ to
 may require a udev rule, a system service, or an input/uinput group policy.
 .SH BACKEND
 The default backend is Linux uinput because it is compositor-independent and is
-already consumed by Wayland compositors and game stacks. A future optional libei
-backend can provide compositor-mediated emulated input where available.
+already consumed by Wayland compositors and game stacks. The gamepad profile is
+safe as a login default; use
+.B --profile=desktop
+or
+.B --profile=both
+when the Wii Remote should also drive the desktop pointer and keyboard. A future
+optional libei backend can provide compositor-mediated emulated input where
+available.
 .SH SEE ALSO
-.BR xwiimote (7),
+.BR wiiland (7),
 .BR libxwiimote (7),
 .BR xwiishow (1)

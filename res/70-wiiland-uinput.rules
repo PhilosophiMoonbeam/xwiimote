@@ -1,6 +1,6 @@
-# Udev uinput permission setup for xwiiwaylandd
+# Udev uinput permission setup for wiilandd
 #
-# xwiiwaylandd creates virtual evdev controllers through /dev/uinput so
+# wiilandd creates virtual evdev controllers through /dev/uinput so
 # Wayland compositors and native game stacks can consume Wii Remote input.
 # Distributions may install this rule or replace it with a stricter local
 # service policy. TAG+="uaccess" lets logind grant the active seat user access.

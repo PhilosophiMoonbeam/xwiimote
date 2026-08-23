@@ -1,7 +1,7 @@
 #!/bin/sh
 
 #
-# XWiimote - tools
+# WiiLand - tools
 # Written 2011-2013 by David Herrmann
 # Dedicated to the Public Domain
 #

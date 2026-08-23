@@ -1,16 +1,16 @@
 Overview {#mainpage}
 ========
 
-xwiimote is an open-source device driver for Nintendo Wii / Wii U remotes. It
+WiiLand is an open-source device driver for Nintendo Wii / Wii U remotes. It
 contains tools and libraries which work together with the official hid-wiimote
 kernel driver, available since linux-3.1.
 
 If you want to use a Nintendo Wii Remote or any compatible device (including the
 Nintendo Wii Balance Board, Nintendo Wii U Pro Controller, and more) on your
-linux system, the xwiimote software stack provides everything you need.
+linux system, the WiiLand software stack provides everything you need.
 
 This distribution is hosted at:
-  http://xwiimote.github.io/xwiimote
+  https://github.com/PhilosophiMoonbeam/wiiland
 Use this website to contact the maintainers or developers or to file bug
 reports.
 
@@ -27,7 +27,7 @@ If "configure" is not available, use:
 Dependencies:
 	- libudev: Used for device enumeration
 	- ncurses: Used for UI of xwiishow
-	- Linux uinput: Used by xwiiwaylandd to expose Wayland-native virtual
+	- Linux uinput: Used by wiilandd to expose Wayland-native virtual
 		input devices
 
 This software packages contains:
@@ -38,11 +38,11 @@ This software packages contains:
 	xwiishow: A test application which lists all connected Wii Remotes. If a
 		Wii Remote is passed as argument, it continuously reads input
 		from the device and prints it to the screen.
-	xwiiwaylandd: A Wayland-native bridge which reads libxwiimote events
+	wiilandd: A Wayland-native bridge which reads libxwiimote events
 		and creates Linux uinput virtual controllers. Wayland compositors,
 		SDL, Wine/Proton, and native games can consume these devices
 		through the normal evdev/libinput stack without XWayland.
-	50-xorg-fix-xwiimote.conf: Legacy Xorg configuration file which should
+	50-xorg-fix-wiiland.conf: Legacy Xorg configuration file which should
 		be installed into /etc/X11/xorg.conf.d/ by distributions that
 		still ship Xorg sessions. It adds raw Wii Remote devices to the
 		input blacklist of the X-server.
@@ -68,21 +68,27 @@ Usage
 =====
 
 Please see the website for help:
-  http://xwiimote.github.io/xwiimote
+  https://github.com/PhilosophiMoonbeam/wiiland
 
-For Wayland sessions, run:
-	$ xwiiwaylandd --list
-	$ xwiiwaylandd
+For Wayland game sessions, run:
+	$ wiilandd --list
+	$ wiilandd
+
+For desktop pointer/keyboard control, run:
+	$ wiilandd --profile desktop
+
+For one process that exposes both gamepad and desktop controls, run:
+	$ wiilandd --profile both
 
 The Wayland bridge needs read access to hid-wiimote input devices and write
-access to /dev/uinput. See ./doc/WAYLAND for the migration plan, backend
-rationale, the example udev rule in ./res/70-xwiimote-uinput.rules, and the
-example user service in ./res/xwiiwaylandd.service.
+access to /dev/uinput. See ./doc/WIILAND for the migration plan, backend
+rationale, the example udev rule in ./res/70-wiiland-uinput.rules, and the
+example user service in ./res/wiilandd.service.
 
 Documentation
 =============
 
-./doc/website/index.html: Official website of XWiimote and documentation
+./doc/website/index.html: WiiLand project documentation
 ./doc/*.3: Manpages
 ./doc/DEVICES: Enumeration of all Nintendo Wii / Wii U related devices
 ./doc/DEV_*: Device communication/protocol descriptions
@@ -125,7 +131,7 @@ Contact
 =======
 
 Website:
-  http://xwiimote.github.io/xwiimote
+  https://github.com/PhilosophiMoonbeam/wiiland
 
 For email contact please see ./COPYING for a list of contributors or
 write an email to the current maintainer at:
