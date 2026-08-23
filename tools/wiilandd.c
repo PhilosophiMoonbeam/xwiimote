@@ -1354,6 +1354,7 @@ static int poll_devices(struct bridge_device *devices, struct xwii_monitor *mon)
 			return -errno;
 		}
 		if (!ret) {
+
 			ret = tick_pointers(devices);
 			if (ret)
 				return ret;
@@ -1384,6 +1385,18 @@ static int poll_devices(struct bridge_device *devices, struct xwii_monitor *mon)
 	return 0;
 }
 
+static void print_list_attr(const char *syspath, const char *name)
+{
+	char value[128];
+
+	printf("\t%s=", name);
+	if (!read_sysfs_attr(syspath, name, value, sizeof(value)))
+		printf("%s", value);
+	else
+		printf("unavailable");
+	printf("\n");
+}
+
 static int list_devices(void)
 {
 	struct xwii_monitor *mon;
@@ -1397,14 +1410,8 @@ static int list_devices(void)
 	while ((syspath = xwii_monitor_poll(mon))) {
 		printf("%u\t%s\n", ++count, syspath);
 		if (verbose) {
-			char value[128];
-
-			if (!read_sysfs_attr(syspath, "devtype", value,
-					     sizeof(value)))
-				printf("\tdevtype=%s\n", value);
-			if (!read_sysfs_attr(syspath, "extension", value,
-					     sizeof(value)))
-				printf("\textension=%s\n", value);
+			print_list_attr(syspath, "devtype");
+			print_list_attr(syspath, "extension");
 		}
 		free(syspath);
 	}
