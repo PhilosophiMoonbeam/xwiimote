@@ -25,8 +25,9 @@ wiilandd:
     or --profile both;
   - forwards core, Nunchuk, Classic Controller, Pro Controller, Guitar, and
     Drums button events to the gamepad profile;
-  - forwards Nunchuk, Classic Controller, Pro Controller, Guitar, Drums, and
-    Balance Board axes to the gamepad profile;
+  - forwards accelerometer, MotionPlus, Nunchuk, Classic Controller,
+    Pro Controller, Guitar, Drums, and Balance Board axes to the gamepad
+    profile;
   - maps Wii Remote core input in the desktop profile: D-pad repeat and valid
     IR events move the pointer, A/B click, +/- send Enter/Escape, Home sends
     the compositor overview key, and 1/2 send Page Down/Page Up;

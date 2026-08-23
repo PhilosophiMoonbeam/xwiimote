@@ -87,10 +87,29 @@
 #ifndef ABS_TILT_Y
 #define ABS_TILT_Y 0x1b
 #endif
+#ifndef ABS_THROTTLE
+#define ABS_THROTTLE 0x06
+#endif
+#ifndef ABS_RUDDER
+#define ABS_RUDDER 0x07
+#endif
+#ifndef ABS_WHEEL
+#define ABS_WHEEL 0x08
+#endif
+#ifndef ABS_GAS
+#define ABS_GAS 0x09
+#endif
+#ifndef ABS_BRAKE
+#define ABS_BRAKE 0x0a
+#endif
+#ifndef ABS_HAT0X
+#define ABS_HAT0X 0x10
+#endif
 
 #define MAX_DEVICES 32
 #define MAX_DEVICE_RULES 32
 #define BALANCE_SENSOR_COUNT 4
+#define SENSOR_AXIS_COUNT 3
 #define ARRAY_SIZE(_a) (sizeof(_a) / sizeof((_a)[0]))
 
 enum bridge_profile {
@@ -342,6 +361,8 @@ static int enable_abs_bits(int fd, struct uinput_user_dev *udev)
 		ABS_X, ABS_Y, ABS_RX, ABS_RY, ABS_Z, ABS_RZ,
 		ABS_WHAMMY_BAR, ABS_FRET_BOARD, ABS_MISC,
 		ABS_PRESSURE, ABS_DISTANCE, ABS_TILT_X, ABS_TILT_Y,
+		ABS_THROTTLE, ABS_RUDDER, ABS_WHEEL,
+		ABS_GAS, ABS_BRAKE, ABS_HAT0X,
 	};
 	size_t i;
 	int ret;
@@ -524,6 +545,49 @@ static int forward_abs_pair(struct bridge_device *dev, int code_x, int code_y,
 	return emit_abs(dev->uinput_fd, code_y, abs->y);
 }
 
+static int accel_abs_code(unsigned int index)
+{
+	static const int codes[SENSOR_AXIS_COUNT] = {
+		ABS_THROTTLE,
+		ABS_RUDDER,
+		ABS_WHEEL,
+	};
+
+	if (index >= ARRAY_SIZE(codes))
+		return -1;
+
+	return codes[index];
+}
+
+static int motion_plus_abs_code(unsigned int index)
+{
+	static const int codes[SENSOR_AXIS_COUNT] = {
+		ABS_GAS,
+		ABS_BRAKE,
+		ABS_HAT0X,
+	};
+
+	if (index >= ARRAY_SIZE(codes))
+		return -1;
+
+	return codes[index];
+}
+
+static int forward_xyz_event(struct bridge_device *dev,
+			     const struct xwii_event_abs *abs,
+			     int (*axis_code)(unsigned int))
+{
+	int ret;
+
+	ret = emit_abs(dev->uinput_fd, axis_code(0), abs->x);
+	if (ret)
+		return ret;
+	ret = emit_abs(dev->uinput_fd, axis_code(1), abs->y);
+	if (ret)
+		return ret;
+	return emit_abs(dev->uinput_fd, axis_code(2), abs->z);
+}
+
 static int balance_abs_code(unsigned int index)
 {
 	static const int codes[BALANCE_SENSOR_COUNT] = {
@@ -605,6 +669,9 @@ static int forward_move_event(struct bridge_device *dev,
 	int ret;
 
 	switch (event->type) {
+	case XWII_EVENT_ACCEL:
+		ret = forward_xyz_event(dev, &event->v.abs[0], accel_abs_code);
+		break;
 	case XWII_EVENT_NUNCHUK_MOVE:
 		ret = forward_abs_pair(dev, ABS_X, ABS_Y, &event->v.abs[0]);
 		break;
@@ -633,6 +700,10 @@ static int forward_move_event(struct bridge_device *dev,
 		break;
 	case XWII_EVENT_BALANCE_BOARD:
 		ret = forward_balance_board_event(dev, event);
+		break;
+	case XWII_EVENT_MOTION_PLUS:
+		ret = forward_xyz_event(dev, &event->v.abs[0],
+					motion_plus_abs_code);
 		break;
 	case XWII_EVENT_DRUMS_MOVE:
 		ret = forward_drums_move_event(dev, event);
@@ -844,6 +915,8 @@ static int handle_xwii_event(struct bridge_device *dev,
 		if (!ret && (dev->profiles & PROFILE_DESKTOP))
 			ret = forward_desktop_key_event(dev, event);
 		return ret;
+	case XWII_EVENT_ACCEL:
+	case XWII_EVENT_MOTION_PLUS:
 	case XWII_EVENT_NUNCHUK_MOVE:
 	case XWII_EVENT_CLASSIC_CONTROLLER_MOVE:
 	case XWII_EVENT_PRO_CONTROLLER_MOVE:
@@ -1654,6 +1727,37 @@ static int self_test_balance_board_map(void)
 			  balance_abs_code(BALANCE_SENSOR_COUNT), -1);
 }
 
+static int self_test_sensor_map(void)
+{
+	int ret;
+
+	ret = expect_int("accel-x", accel_abs_code(0), ABS_THROTTLE);
+	if (ret)
+		return ret;
+	ret = expect_int("accel-y", accel_abs_code(1), ABS_RUDDER);
+	if (ret)
+		return ret;
+	ret = expect_int("accel-z", accel_abs_code(2), ABS_WHEEL);
+	if (ret)
+		return ret;
+	ret = expect_int("accel-unknown", accel_abs_code(SENSOR_AXIS_COUNT),
+			 -1);
+	if (ret)
+		return ret;
+
+	ret = expect_int("motion-plus-x", motion_plus_abs_code(0), ABS_GAS);
+	if (ret)
+		return ret;
+	ret = expect_int("motion-plus-y", motion_plus_abs_code(1), ABS_BRAKE);
+	if (ret)
+		return ret;
+	ret = expect_int("motion-plus-z", motion_plus_abs_code(2), ABS_HAT0X);
+	if (ret)
+		return ret;
+	return expect_int("motion-plus-unknown",
+			  motion_plus_abs_code(SENSOR_AXIS_COUNT), -1);
+}
+
 static int self_test_ir_pointer(void)
 {
 	struct xwii_event event;
@@ -1895,6 +1999,9 @@ static int run_self_test(void)
 	if (ret)
 		return ret;
 	ret = self_test_balance_board_map();
+	if (ret)
+		return ret;
+	ret = self_test_sensor_map();
 	if (ret)
 		return ret;
 	ret = self_test_ir_pointer();
