@@ -5,6 +5,7 @@ set -eu
 wiilandd=${WIILANDD:-wiilandd}
 device=${1:-}
 module_dir=${HID_WIIMOTE_MODULE_DIR:-/sys/module/hid_wiimote}
+os_release=${OS_RELEASE_PATH:-/etc/os-release}
 list_file=${TMPDIR:-/tmp}/wiilandd-hardware-report-list.$$
 bt_file=${TMPDIR:-/tmp}/wiilandd-hardware-report-bt.$$
 trap 'rm -f "$list_file" "$bt_file"' EXIT INT HUP TERM
@@ -158,6 +159,22 @@ report_module_parameters() {
 		printf '\n'
 	done
 }
+report_os_release() {
+	if [ ! -r "$os_release" ]; then
+		printf 'os-release=unavailable\n'
+		return 0
+	fi
+
+	printf 'os-release.path=%s\n' "$os_release"
+	while IFS= read -r line; do
+		case "$line" in
+		NAME=*|PRETTY_NAME=*|ID=*|VERSION_ID=*|VERSION_CODENAME=*)
+			printf 'os-release.%s\n' "$line"
+			;;
+		esac
+	done <"$os_release"
+}
+
 
 
 
@@ -204,6 +221,7 @@ report_device_attrs() {
 
 section host
 run_optional uname -srmo
+report_os_release
 run_optional bluetoothctl --version
 capture_bluetooth_controllers
 run_optional modinfo hid-wiimote
