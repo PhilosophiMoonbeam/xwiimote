@@ -11,13 +11,5 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install smoke dependencies
         run: sudo apt-get update && sudo apt-get install -y build-essential groff
-      - name: Compile wiilandd smoke binary
-        run: gcc -std=gnu99 -Wall -Wextra -Werror -Ilib tools/wiilandd.c tests/xwii_stubs.c -o wiilandd-smoke
-      - name: Run deterministic self-test
-        run: ./wiilandd-smoke --self-test
-      - name: Validate sample config
-        run: ./wiilandd-smoke --config res/wiilandd.conf --check-config
-      - name: Dump sample config
-        run: ./wiilandd-smoke --config res/wiilandd.conf --dump-config
-      - name: Validate manpage rendering
-        run: groff -man -Tascii doc/wiilandd.1 >/dev/null
+      - name: Run wiilandd smoke script
+        run: tests/wiilandd-smoke.sh

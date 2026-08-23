@@ -122,6 +122,10 @@ Development
 
 Please see ./DEV for development information.
 
+Run `tests/wiilandd-smoke.sh` to compile the hardware-free `wiilandd` smoke
+binary, exercise deterministic self-tests, validate the sample config, and
+render the daemon manpage when `groff` is installed.
+
 Copying
 =======
 

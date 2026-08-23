@@ -37,6 +37,7 @@ EXTRA_DIST = \
 	res/50-xorg-fix-wiiland.conf \
 	res/70-udev-wiiland.rules \
 	tests/xwii_stubs.c \
+	tests/wiilandd-smoke.sh \
 	.github/workflows/ci.yml \
 	doc/WIILAND \
 	libxwiimote.sym
