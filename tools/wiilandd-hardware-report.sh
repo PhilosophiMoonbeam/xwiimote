@@ -62,6 +62,17 @@ read_sysfs_attr() {
 	fi
 }
 
+report_git_commit() {
+	if command -v git >/dev/null 2>&1; then
+		printf 'git.commit='
+		if ! git rev-parse --short HEAD 2>/dev/null; then
+			printf 'unavailable\n'
+		fi
+	else
+		printf 'git.commit=unavailable\n'
+	fi
+}
+
 read_battery_attr() {
 	path=$1
 
@@ -246,6 +257,7 @@ report_path_access dev.uinput /dev/uinput
 
 section wiilandd
 run_wiilandd_probe --version
+report_git_commit
 run_wiilandd_probe --check-config
 run_wiilandd_probe --dump-config
 
