@@ -107,13 +107,13 @@ Required runtime permissions:
      tools/wiilandd-hardware-report.sh N
      tools/wiilandd-hardware-report.sh N --trace-events=motion-plus
 
-   The first command records finite host, UTC capture timestamp, distribution,
-   compositor/session environment, Bluetooth controller, hid-wiimote
-   module-parameter, permission, config, version, git commit/dirty state, axis
-   map, validation checklist, doctor diagnostics, device-list, devtype,
-   extension, sysfs uevent identity, battery, event-node access diagnostics,
-   and manual validation placeholders for SDL, Wine/Proton, and native Wayland
-   desktop behavior.
+   The first command records finite report schema version, host, UTC capture
+   timestamp, distribution, compositor/session environment, Bluetooth
+   controller, hid-wiimote module-parameter, permission, config, version, git
+   commit/dirty state, axis map, validation checklist, doctor diagnostics,
+   device-list, devtype, extension, sysfs uevent identity, battery, event-node
+   access diagnostics, and manual validation placeholders for SDL, Wine/Proton,
+   and native Wayland desktop behavior.
    The second command captures sequenced, filtered --dry-run --trace-events
    --verbose output for one device. Extra arguments are passed to wiilandd; use
    --trace-events=motion-plus when validating MotionPlus only, or use the

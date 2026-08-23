@@ -307,6 +307,7 @@ report_timestamp() {
 
 
 section host
+printf 'report.schema.version=1\n'
 report_timestamp
 run_optional uname -srmo
 report_os_release

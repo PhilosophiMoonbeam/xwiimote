@@ -146,6 +146,7 @@ if git_commit=$(git -C "$root" rev-parse --short HEAD 2>/dev/null); then
 else
 	expected_commit=git.commit=unavailable
 fi
+grep -F 'report.schema.version=1' "$build_dir/hardware-report" >/dev/null
 grep -F 'report.timestamp.utc=' "$build_dir/hardware-report" >/dev/null
 grep -F "$expected_commit" "$build_dir/hardware-report" >/dev/null
 grep -F 'git.dirty=' "$build_dir/hardware-report" >/dev/null
