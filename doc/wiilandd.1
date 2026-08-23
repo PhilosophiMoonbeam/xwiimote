@@ -69,6 +69,12 @@ Run deterministic profile, config, button-map, IR, and pointer-motion tests, the
 This mode does not enumerate devices or open
 .BR /dev/uinput .
 .TP
+.BR --trace-events
+Print decoded libxwiimote event records before forwarding them. Intended for
+hardware validation reports; combine with
+.B --dry-run
+to inspect devices without creating virtual input.
+.TP
 .BR -v , " --verbose"
 Print device lifecycle details.
 .SH PERMISSIONS

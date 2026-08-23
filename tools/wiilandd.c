@@ -153,6 +153,7 @@ struct bridge_device {
 static volatile sig_atomic_t should_stop;
 static bool verbose;
 static bool dry_run;
+static bool trace_events;
 static unsigned int profiles = PROFILE_GAMEPAD;
 static int pointer_speed = 16;
 static int ir_speed = 8;
@@ -892,6 +893,103 @@ static int reopen_available_ifaces(struct bridge_device *dev)
 	return ret;
 }
 
+static const char *event_type_name(unsigned int type)
+{
+	switch (type) {
+	case XWII_EVENT_KEY:
+		return "key";
+	case XWII_EVENT_ACCEL:
+		return "accelerometer";
+	case XWII_EVENT_IR:
+		return "ir";
+	case XWII_EVENT_BALANCE_BOARD:
+		return "balance-board";
+	case XWII_EVENT_MOTION_PLUS:
+		return "motion-plus";
+	case XWII_EVENT_WATCH:
+		return "watch";
+	case XWII_EVENT_CLASSIC_CONTROLLER_KEY:
+		return "classic-key";
+	case XWII_EVENT_CLASSIC_CONTROLLER_MOVE:
+		return "classic-move";
+	case XWII_EVENT_NUNCHUK_KEY:
+		return "nunchuk-key";
+	case XWII_EVENT_NUNCHUK_MOVE:
+		return "nunchuk-move";
+	case XWII_EVENT_DRUMS_KEY:
+		return "drums-key";
+	case XWII_EVENT_DRUMS_MOVE:
+		return "drums-move";
+	case XWII_EVENT_GUITAR_KEY:
+		return "guitar-key";
+	case XWII_EVENT_GUITAR_MOVE:
+		return "guitar-move";
+	case XWII_EVENT_GONE:
+		return "gone";
+	case XWII_EVENT_PRO_CONTROLLER_KEY:
+		return "pro-key";
+	case XWII_EVENT_PRO_CONTROLLER_MOVE:
+		return "pro-move";
+	default:
+		return "unknown";
+	}
+}
+
+static bool is_key_event(unsigned int type)
+{
+	switch (type) {
+	case XWII_EVENT_KEY:
+	case XWII_EVENT_CLASSIC_CONTROLLER_KEY:
+	case XWII_EVENT_NUNCHUK_KEY:
+	case XWII_EVENT_DRUMS_KEY:
+	case XWII_EVENT_GUITAR_KEY:
+	case XWII_EVENT_PRO_CONTROLLER_KEY:
+		return true;
+	default:
+		return false;
+	}
+}
+
+static bool is_abs_event(unsigned int type)
+{
+	switch (type) {
+	case XWII_EVENT_ACCEL:
+	case XWII_EVENT_IR:
+	case XWII_EVENT_BALANCE_BOARD:
+	case XWII_EVENT_MOTION_PLUS:
+	case XWII_EVENT_CLASSIC_CONTROLLER_MOVE:
+	case XWII_EVENT_NUNCHUK_MOVE:
+	case XWII_EVENT_DRUMS_MOVE:
+	case XWII_EVENT_GUITAR_MOVE:
+	case XWII_EVENT_PRO_CONTROLLER_MOVE:
+		return true;
+	default:
+		return false;
+	}
+}
+
+static void trace_xwii_event(const struct bridge_device *dev,
+			     const struct xwii_event *event)
+{
+	size_t i;
+
+	if (!trace_events)
+		return;
+
+	printf("%s %s type=%u", dev->syspath, event_type_name(event->type),
+	       event->type);
+	if (is_key_event(event->type)) {
+		printf(" key=%u state=%u", event->v.key.code,
+		       event->v.key.state);
+	} else if (is_abs_event(event->type)) {
+		for (i = 0; i < XWII_ABS_NUM; ++i)
+			printf(" abs%zu=%d,%d,%d", i, event->v.abs[i].x,
+			       event->v.abs[i].y, event->v.abs[i].z);
+	}
+	putchar('\n');
+	fflush(stdout);
+}
+
 static int handle_xwii_event(struct bridge_device *dev,
 			     const struct xwii_event *event)
 {
@@ -947,6 +1045,7 @@ static int drain_device(struct bridge_device *dev)
 		if (ret)
 			return ret;
 
+		trace_xwii_event(dev, &event);
 		ret = handle_xwii_event(dev, &event);
 		if (ret)
 			return ret;
@@ -1979,6 +2078,22 @@ static int self_test_config(void)
 	return 0;
 }
 
+static int self_test_event_trace(void)
+{
+	int ret;
+
+	ret = expect_int("trace-key-name",
+			 strcmp(event_type_name(XWII_EVENT_KEY), "key"), 0);
+	if (ret)
+		return ret;
+	ret = expect_int("trace-ir-name",
+			 strcmp(event_type_name(XWII_EVENT_IR), "ir"), 0);
+	if (ret)
+		return ret;
+	return expect_int("trace-unknown-name",
+			  strcmp(event_type_name(XWII_EVENT_NUM), "unknown"), 0);
+}
+
 static int run_self_test(void)
 {
 	int ret;
@@ -2010,6 +2125,9 @@ static int run_self_test(void)
 	ret = self_test_profiles();
 	if (ret)
 		return ret;
+	ret = self_test_event_trace();
+	if (ret)
+		return ret;
 	ret = self_test_config();
 	if (ret)
 		return ret;
@@ -2037,6 +2155,7 @@ static void usage(FILE *out)
 		"\t-n, --dry-run    Do not create /dev/uinput devices or emit input\n"
 		"\t    --check-config  Validate configuration and exit\n"
 		"\t    --self-test  Run deterministic self tests and exit\n"
+		"\t    --trace-events  Print decoded libxwiimote events\n"
 		"\t-v, --verbose    Print device lifecycle details\n"
 		"\n"
 		"wiilandd is a Wayland-native bridge: it creates Linux uinput\n"
@@ -2134,6 +2253,8 @@ int main(int argc, char **argv)
 			self_test = true;
 		} else if (!strcmp(argv[i], "--check-config")) {
 			check_config = true;
+		} else if (!strcmp(argv[i], "--trace-events")) {
+			trace_events = true;
 		} else if (!strcmp(argv[i], "-v") || !strcmp(argv[i], "--verbose")) {
 			verbose = true;
 		} else if (!strcmp(argv[i], "-d") || !strcmp(argv[i], "--device")) {
