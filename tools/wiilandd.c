@@ -1763,6 +1763,7 @@ static void usage(FILE *out)
 		"\t-c, --config     Load key=value config file\n"
 		"\t    --no-config  Do not load the default config file\n"
 		"\t-n, --dry-run    Do not create /dev/uinput devices or emit input\n"
+		"\t    --check-config  Validate configuration and exit\n"
 		"\t    --self-test  Run deterministic self tests and exit\n"
 		"\t-v, --verbose    Print device lifecycle details\n"
 		"\n"
@@ -1777,6 +1778,7 @@ int main(int argc, char **argv)
 	bool explicit_config = false;
 	bool no_config = false;
 	bool self_test = false;
+	bool check_config = false;
 	bool diagnostic = false;
 	int i, ret;
 
@@ -1796,6 +1798,8 @@ int main(int argc, char **argv)
 			no_config = true;
 		} else if (!strcmp(argv[i], "--self-test")) {
 			self_test = true;
+		} else if (!strcmp(argv[i], "--check-config")) {
+			check_config = true;
 		} else if (!strcmp(argv[i], "-h") || !strcmp(argv[i], "--help") ||
 			   !strcmp(argv[i], "-l") || !strcmp(argv[i], "--list")) {
 			diagnostic = true;
@@ -1856,6 +1860,8 @@ int main(int argc, char **argv)
 			dry_run = true;
 		} else if (!strcmp(argv[i], "--self-test")) {
 			self_test = true;
+		} else if (!strcmp(argv[i], "--check-config")) {
+			check_config = true;
 		} else if (!strcmp(argv[i], "-v") || !strcmp(argv[i], "--verbose")) {
 			verbose = true;
 		} else if (!strcmp(argv[i], "-d") || !strcmp(argv[i], "--device")) {
@@ -1870,6 +1876,8 @@ int main(int argc, char **argv)
 		}
 	}
 
+	if (check_config)
+		return 0;
 	if (self_test)
 		return abs(run_self_test());
 

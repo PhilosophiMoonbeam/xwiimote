@@ -88,6 +88,7 @@ Per-device rules can override that default by sysfs path substring:
 	$ printf 'profile=gamepad\ndevice.bluetooth.profile=desktop\n' > ~/.config/wiiland/wiilandd.conf
 
 For hardware-free diagnostics in packaging or CI, run:
+	$ wiilandd --check-config --config res/wiilandd.conf
 	$ wiilandd --self-test
 
 `wiilandd --help` and `wiilandd --list` intentionally bypass configuration so

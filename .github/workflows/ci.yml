@@ -16,6 +16,6 @@ jobs:
       - name: Run deterministic self-test
         run: ./wiilandd-smoke --self-test
       - name: Validate sample config
-        run: ./wiilandd-smoke --config res/wiilandd.conf --self-test
+        run: ./wiilandd-smoke --config res/wiilandd.conf --check-config
       - name: Validate manpage rendering
         run: groff -man -Tascii doc/wiilandd.1 >/dev/null

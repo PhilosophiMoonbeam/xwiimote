@@ -60,6 +60,10 @@ Skip the default configuration file.
 Enumerate and open devices without creating /dev/uinput devices or emitting
 virtual input. Useful for smoke tests and service diagnostics.
 .TP
+.BR --check-config
+Load configuration, apply command-line overrides, and exit without enumerating
+devices. Useful for packaging, CI, and service preflight checks.
+.TP
 .BR --self-test
 Run deterministic profile, config, button-map, IR, and pointer-motion tests, then exit.
 This mode does not enumerate devices or open
