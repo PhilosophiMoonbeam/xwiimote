@@ -23,6 +23,15 @@ if "$bin" --no-config --trace-events=bad --dump-config >/dev/null 2>&1; then
 	printf '%s\n' 'wiilandd accepted invalid trace event filter' >&2
 	exit 1
 fi
+stub_sys=$build_dir/sys/devices/wiimote0
+mkdir -p "$stub_sys"
+printf '%s\n' wiimote >"$stub_sys/devtype"
+printf '%s\n' nunchuk >"$stub_sys/extension"
+XWII_STUB_DEVICES=$stub_sys "$bin" --list --verbose >"$build_dir/list"
+test "$(sed -n '1p' "$build_dir/list")" = "1	$stub_sys"
+test "$(sed -n '2p' "$build_dir/list")" = "	devtype=wiimote"
+test "$(sed -n '3p' "$build_dir/list")" = "	extension=nunchuk"
+
 
 
 if command -v groff >/dev/null 2>&1; then

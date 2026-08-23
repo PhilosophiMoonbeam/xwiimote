@@ -25,7 +25,10 @@ replace the old Xorg input-driver path for Wayland sessions.
 Show help and exit.
 .TP
 .BR -l , " --list"
-List connected Wii Remote devices and exit. This does not create uinput devices.
+List connected Wii Remote devices and exit. Combine with
+.B --verbose
+to include devtype and extension attributes from sysfs. This does not create
+uinput devices.
 .TP
 .BR --version
 Print the wiilandd version and exit.

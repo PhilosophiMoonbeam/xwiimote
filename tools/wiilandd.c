@@ -251,6 +251,36 @@ static int emit_syn(int fd)
 	return emit_event(fd, EV_SYN, SYN_REPORT, 0);
 }
 
+static int read_sysfs_attr(const char *syspath, const char *name, char *buf,
+			   size_t size)
+{
+	char path[4096];
+	ssize_t len;
+	int fd;
+
+	if (!size)
+		return -EINVAL;
+
+	if (snprintf(path, sizeof(path), "%s/%s", syspath, name) >=
+	    (int)sizeof(path))
+		return -ENAMETOOLONG;
+
+	fd = open(path, O_RDONLY | O_CLOEXEC);
+	if (fd < 0)
+		return -errno;
+
+	len = read(fd, buf, size - 1);
+	close(fd);
+	if (len < 0)
+		return -errno;
+
+	while (len > 0 && (buf[len - 1] == '\n' || buf[len - 1] == '\r' ||
+			   buf[len - 1] == ' ' || buf[len - 1] == '\t'))
+		--len;
+	buf[len] = '\0';
+	return 0;
+}
+
 static int emit_key(int fd, int code, unsigned int state)
 {
 	int ret;
@@ -1366,6 +1396,16 @@ static int list_devices(void)
 
 	while ((syspath = xwii_monitor_poll(mon))) {
 		printf("%u\t%s\n", ++count, syspath);
+		if (verbose) {
+			char value[128];
+
+			if (!read_sysfs_attr(syspath, "devtype", value,
+					     sizeof(value)))
+				printf("\tdevtype=%s\n", value);
+			if (!read_sysfs_attr(syspath, "extension", value,
+					     sizeof(value)))
+				printf("\textension=%s\n", value);
+		}
 		free(syspath);
 	}
 
@@ -2590,6 +2630,7 @@ static void usage(FILE *out)
 		"\t-h, --help       Show this help\n"
 		"\t    --version    Show version\n"
 		"\t-l, --list       List connected Wii Remote devices and exit\n"
+		"\t                 Combine with --verbose for devtype/extension\n"
 		"\t-d, --device     Bridge one device instead of monitoring all devices\n"
 		"\t-p, --profile    gamepad, desktop, or both (default: gamepad)\n"
 		"\t    --backend <uinput>       Input backend (default: uinput)\n"
@@ -2647,6 +2688,8 @@ int main(int argc, char **argv)
 			   !strcmp(argv[i], "-h") || !strcmp(argv[i], "--help") ||
 			   !strcmp(argv[i], "-l") || !strcmp(argv[i], "--list")) {
 			diagnostic = true;
+		} else if (!strcmp(argv[i], "-v") || !strcmp(argv[i], "--verbose")) {
+			verbose = true;
 		}
 	}
 

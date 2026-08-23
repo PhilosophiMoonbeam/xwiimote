@@ -8,6 +8,8 @@
 
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdlib.h>
+#include <string.h>
 
 #include "xwiimote.h"
 
@@ -16,7 +18,8 @@ struct xwii_iface {
 };
 
 struct xwii_monitor {
-	int unused;
+	const char *devices;
+	size_t pos;
 };
 
 const char *xwii_get_iface_name(unsigned int iface)
@@ -172,6 +175,8 @@ struct xwii_monitor *xwii_monitor_new(bool poll, bool direct)
 
 	(void)poll;
 	(void)direct;
+	mon.devices = getenv("XWII_STUB_DEVICES");
+	mon.pos = 0;
 	return &mon;
 }
 
@@ -194,6 +199,28 @@ int xwii_monitor_get_fd(struct xwii_monitor *monitor, bool blocking)
 
 char *xwii_monitor_poll(struct xwii_monitor *monitor)
 {
-	(void)monitor;
-	return NULL;
+	const char *start;
+	const char *end;
+	size_t len;
+	char *out;
+
+	if (!monitor->devices || !monitor->devices[monitor->pos])
+		return NULL;
+
+	start = monitor->devices + monitor->pos;
+	end = strchr(start, ':');
+	if (end) {
+		len = (size_t)(end - start);
+		monitor->pos += len + 1;
+	} else {
+		len = strlen(start);
+		monitor->pos += len;
+	}
+
+	out = malloc(len + 1);
+	if (!out)
+		return NULL;
+	memcpy(out, start, len);
+	out[len] = '\0';
+	return out;
 }
