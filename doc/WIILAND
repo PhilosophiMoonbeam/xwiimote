@@ -76,9 +76,9 @@ Required runtime permissions:
    game stacks today.
 
 4. Distribution integration
-   Automake installs the uinput udev rule, systemd user service, and sample
-   config from res/. Keep the legacy Xorg blacklist file for legacy Xorg
-   sessions only.
+   Automake installs the uinput udev rule, graphical-session-scoped systemd
+   user service, and sample config from res/. Keep the legacy Xorg blacklist
+   file for legacy Xorg sessions only.
 
 5. Test hardware matrix
    Completion requires direct reports for:

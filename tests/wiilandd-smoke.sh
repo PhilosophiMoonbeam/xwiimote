@@ -90,6 +90,13 @@ chmod +x "$fake_wiilandd"
 grep -F 'Usage:' "$build_dir/hardware-report-help" >/dev/null
 grep -F '<number-or-/sys/path>' "$build_dir/hardware-report-help" >/dev/null
 grep -F 'doctor, axis-map' "$build_dir/hardware-report-help" >/dev/null
+grep -F 'WantedBy=graphical-session.target' "$root/res/wiilandd.service" >/dev/null
+grep -F 'ExecStart=@bindir@/wiilandd' "$root/res/wiilandd.service.in" >/dev/null
+if command -v systemd-analyze >/dev/null 2>&1; then
+	sed -e 's|@bindir@/wiilandd|/bin/true|g' \
+		"$root/res/wiilandd.service.in" >"$build_dir/wiilandd.service"
+	systemd-analyze verify --man=no "$build_dir/wiilandd.service"
+fi
 (cd "$build_dir" && XDG_CURRENT_DESKTOP=TestDesktop SWAYSOCK=/tmp/sway.sock \
 	FAKE_DEVICE_SYSPATH=$stub_sys WIILANDD=$fake_wiilandd \
 	"$root/tools/wiilandd-hardware-report.sh" \

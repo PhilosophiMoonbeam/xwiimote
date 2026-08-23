@@ -198,7 +198,9 @@ udev rules for active-seat access to hid-wiimote event nodes and
 .BR /dev/uinput .
 .TP
 .B res/wiilandd.service
-systemd user service with
+systemd user service bound to
+.BR graphical-session.target ,
+with
 .B --check-config
 preflight before starting
 .BR wiilandd .

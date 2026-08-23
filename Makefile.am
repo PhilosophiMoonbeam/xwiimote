@@ -42,6 +42,8 @@ EXTRA_DIST = \
 	.github/workflows/ci.yml \
 	doc/WIILAND \
 	libxwiimote.sym
+EXTRA_DIST += res/wiilandd.service.in
+
 
 #
 # Build targets
@@ -69,12 +71,16 @@ dist_udevrules_DATA = \
 	res/70-wiiland-uinput.rules
 
 systemduserdir = $(prefix)/lib/systemd/user
-dist_systemduser_DATA = \
+nodist_systemduser_DATA = \
 	res/wiilandd.service
 
 wiilandexamplesdir = $(docdir)/examples
 dist_wiilandexamples_DATA = \
 	res/wiilandd.conf
+
+res/wiilandd.service: $(srcdir)/res/wiilandd.service.in Makefile
+	$(AM_V_GEN)sed -e 's|@bindir[@]|$(bindir)|g' \
+		$(srcdir)/res/wiilandd.service.in >$@
 
 #
 # Default c/l-flags
