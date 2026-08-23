@@ -168,6 +168,7 @@ static unsigned int profiles = PROFILE_GAMEPAD;
 static int pointer_speed = 16;
 static int ir_speed = 8;
 static int ir_deadzone;
+static int ir_smoothing;
 static struct device_rule device_rules[MAX_DEVICE_RULES];
 static unsigned int device_rule_count;
 static struct desktop_binding desktop_bindings[] = {
@@ -833,6 +834,15 @@ static int apply_ir_deadzone(int delta)
 	return delta;
 }
 
+static int32_t smooth_ir_axis(int32_t previous, int32_t current)
+{
+	if (!ir_smoothing)
+		return current;
+
+	return (int32_t)(((int64_t)previous * ir_smoothing +
+			  (int64_t)current * (100 - ir_smoothing)) / 100);
+}
+
 
 static const struct xwii_event_abs *first_valid_ir_source(
 					const struct xwii_event *event)
@@ -860,13 +870,19 @@ static void update_ir_pointer_state(struct bridge_device *dev,
 	}
 
 	if (dev->ir_active) {
-		*dx = apply_ir_deadzone(scaled_ir_delta(dev->ir_x, src->x));
-		*dy = apply_ir_deadzone(scaled_ir_delta(dev->ir_y, src->y));
+		int32_t x = smooth_ir_axis(dev->ir_x, src->x);
+		int32_t y = smooth_ir_axis(dev->ir_y, src->y);
+
+		*dx = apply_ir_deadzone(scaled_ir_delta(dev->ir_x, x));
+		*dy = apply_ir_deadzone(scaled_ir_delta(dev->ir_y, y));
+		dev->ir_x = x;
+		dev->ir_y = y;
+	} else {
+		dev->ir_x = src->x;
+		dev->ir_y = src->y;
 	}
 
 	dev->ir_active = true;
-	dev->ir_x = src->x;
-	dev->ir_y = src->y;
 }
 
 static int forward_desktop_ir_event(struct bridge_device *dev,
@@ -1445,6 +1461,7 @@ static void dump_config_state(FILE *out)
 	fprintf(out, "pointer-speed=%d\n", pointer_speed);
 	fprintf(out, "ir-speed=%d\n", ir_speed);
 	fprintf(out, "ir-deadzone=%d\n", ir_deadzone);
+	fprintf(out, "ir-smoothing=%d\n", ir_smoothing);
 
 	for (i = 0; i < ARRAY_SIZE(desktop_bindings); ++i)
 		fprintf(out, "desktop.%s=%s\n", desktop_bindings[i].name,
@@ -1507,6 +1524,11 @@ static int parse_ir_speed(const char *arg)
 static int parse_ir_deadzone(const char *arg)
 {
 	return parse_int_range(arg, 0, 127, &ir_deadzone);
+}
+
+static int parse_ir_smoothing(const char *arg)
+{
+	return parse_int_range(arg, 0, 95, &ir_smoothing);
 }
 
 static int parse_desktop_action(const char *arg, int *out)
@@ -1682,6 +1704,8 @@ static int apply_config_line(const char *path, unsigned int lineno, char *line)
 		ret = parse_ir_speed(value);
 	else if (!strcmp(key, "ir-deadzone"))
 		ret = parse_ir_deadzone(value);
+	else if (!strcmp(key, "ir-smoothing"))
+		ret = parse_ir_smoothing(value);
 	else if (!strcmp(key, "pointer-speed"))
 		ret = parse_pointer_speed(value);
 	else if (!strncmp(key, "desktop.", 8))
@@ -2050,8 +2074,18 @@ static int self_test_ir_pointer(void)
 	if (ret)
 		return ret;
 	ir_deadzone = 0;
-
-
+	ir_smoothing = 50;
+	event.v.abs[1].x = 440;
+	event.v.abs[1].y = 180;
+	src = first_valid_ir_source(&event);
+	update_ir_pointer_state(&dev, src, &dx, &dy);
+	ret = expect_int("ir-smoothing-x", dx, 5);
+	if (ret)
+		return ret;
+	ret = expect_int("ir-smoothing-y", dy, -2);
+	if (ret)
+		return ret;
+	ir_smoothing = 0;
 	update_ir_pointer_state(&dev, NULL, &dx, &dy);
 	ret = expect_int("ir-reset-active", dev.ir_active, 0);
 	if (ret)
@@ -2160,7 +2194,25 @@ static int self_test_config(void)
 		return ret;
 	ir_deadzone = 0;
 
+	ret = parse_ir_smoothing("0");
+	if (ret)
+		return ret;
+	ret = expect_int("ir-smoothing-min", ir_smoothing, 0);
+	if (ret)
+		return ret;
 
+	ret = parse_ir_smoothing("95");
+	if (ret)
+		return ret;
+	ret = expect_int("ir-smoothing-max", ir_smoothing, 95);
+	if (ret)
+		return ret;
+
+	ret = expect_int("ir-smoothing-invalid",
+			 parse_ir_smoothing("96"), -EINVAL);
+	if (ret)
+		return ret;
+	ir_smoothing = 0;
 	snprintf(line, sizeof(line), " profile = desktop # comment\n");
 	ret = apply_config_line("self-test", 1, line);
 	if (ret)
@@ -2204,7 +2256,13 @@ static int self_test_config(void)
 	ret = expect_int("config-ir-deadzone", ir_deadzone, 4);
 	if (ret)
 		return ret;
-
+	snprintf(line, sizeof(line), " ir-smoothing = 25\n");
+	ret = apply_config_line("self-test", 6, line);
+	if (ret)
+		return ret;
+	ret = expect_int("config-ir-smoothing", ir_smoothing, 25);
+	if (ret)
+		return ret;
 	snprintf(line, sizeof(line), " desktop.b = disabled\n");
 	ret = apply_config_line("self-test", 5, line);
 	if (ret)
@@ -2272,6 +2330,7 @@ static int self_test_config(void)
 	pointer_speed = 16;
 	ir_speed = 8;
 	ir_deadzone = 0;
+	ir_smoothing = 0;
 	clear_device_rules();
 	reset_desktop_bindings();
 	return 0;
@@ -2333,6 +2392,7 @@ static int run_self_test(void)
 	pointer_speed = 16;
 	ir_speed = 8;
 	ir_deadzone = 0;
+	ir_smoothing = 0;
 	clear_device_rules();
 	reset_desktop_bindings();
 
@@ -2386,6 +2446,7 @@ static void usage(FILE *out)
 		"\t-p, --profile    gamepad, desktop, or both (default: gamepad)\n"
 		"\t    --ir-speed <1-127>       IR pointer gain (default: 8)\n"
 		"\t    --ir-deadzone <0-127>   IR jitter deadzone (default: 0)\n"
+		"\t    --ir-smoothing <0-95>   IR smoothing percent (default: 0)\n"
 		"\t    --pointer-speed <1-127>  Desktop pointer step (default: 16)\n"
 		"\t-c, --config     Load key=value config file\n"
 		"\t    --no-config  Do not load the default config file\n"
@@ -2494,6 +2555,16 @@ int main(int argc, char **argv)
 			}
 		} else if (!strcmp(argv[i], "--ir-deadzone")) {
 			if (++i >= argc || parse_ir_deadzone(argv[i])) {
+				usage(stderr);
+				return EINVAL;
+			}
+		} else if (!strncmp(argv[i], "--ir-smoothing=", 15)) {
+			if (parse_ir_smoothing(argv[i] + 15)) {
+				usage(stderr);
+				return EINVAL;
+			}
+		} else if (!strcmp(argv[i], "--ir-smoothing")) {
+			if (++i >= argc || parse_ir_smoothing(argv[i])) {
 				usage(stderr);
 				return EINVAL;
 			}

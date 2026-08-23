@@ -33,7 +33,7 @@ wiilandd:
     the compositor overview key, and 1/2 send Page Down/Page Up;
   - supports key=value configuration for default profile, syspath and devtype
     profile overrides, desktop button actions, D-pad pointer speed, IR pointer
-    gain, and IR jitter deadzone
+    gain, IR jitter deadzone, and IR smoothing
     through /etc/wiiland/wiilandd.conf, ~/.config/wiiland/wiilandd.conf, or
     --config; res/wiilandd.conf is the distributable sample;
   - provides --self-test for deterministic profile, button-map, config, and

@@ -56,6 +56,10 @@ of the raw IR camera delta.
 Suppress desktop profile IR pointer deltas smaller than this value after gain
 scaling. The default is 0.
 .TP
+.BR --ir-smoothing " " 0-95
+Smooth desktop profile IR pointer coordinates by retaining this percentage of
+the previous filtered position. The default is 0.
+.TP
 .BR -c , " --config " path
 Load a key=value configuration file. Command-line options override loaded
 configuration.
@@ -123,6 +127,9 @@ Desktop profile IR pointer gain.
 .TP
 .B ir-deadzone=0-127
 Desktop profile IR jitter deadzone after gain scaling.
+.TP
+.B ir-smoothing=0-95
+Desktop profile IR smoothing percentage.
 .TP
 .B desktop.a|b|plus|minus|home|one|two=ACTION
 Override desktop button output. Actions are
