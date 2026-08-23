@@ -84,6 +84,9 @@ To tune desktop pointer speed persistently:
 	$ mkdir -p ~/.config/wiiland
 	$ printf 'profile=desktop\npointer-speed=24\n' > ~/.config/wiiland/wiilandd.conf
 
+Per-device rules can override that default by sysfs path substring:
+	$ printf 'profile=gamepad\ndevice.bluetooth.profile=desktop\n' > ~/.config/wiiland/wiilandd.conf
+
 For hardware-free diagnostics in packaging or CI, run:
 	$ wiilandd --self-test
 

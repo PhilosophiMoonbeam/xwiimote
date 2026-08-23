@@ -77,6 +77,7 @@
 #endif
 
 #define MAX_DEVICES 32
+#define MAX_DEVICE_RULES 32
 #define ARRAY_SIZE(_a) (sizeof(_a) / sizeof((_a)[0]))
 
 enum bridge_profile {
@@ -91,9 +92,15 @@ enum pointer_key {
 	POINTER_DOWN = 1 << 3,
 };
 
+struct device_rule {
+	char *match;
+	unsigned int profiles;
+};
+
 struct bridge_device {
 	struct xwii_iface *iface;
 	char *syspath;
+	unsigned int profiles;
 	int uinput_fd;
 	int desktop_fd;
 	unsigned int pointer_keys;
@@ -109,6 +116,9 @@ static bool verbose;
 static bool dry_run;
 static unsigned int profiles = PROFILE_GAMEPAD;
 static int pointer_speed = 16;
+static struct device_rule device_rules[MAX_DEVICE_RULES];
+static unsigned int device_rule_count;
+static unsigned int profiles_for_syspath(const char *syspath);
 
 static void on_signal(int signo)
 {
@@ -713,20 +723,20 @@ static int handle_xwii_event(struct bridge_device *dev,
 	case XWII_EVENT_GUITAR_KEY:
 	case XWII_EVENT_DRUMS_KEY:
 		ret = 0;
-		if (profiles & PROFILE_GAMEPAD)
+		if (dev->profiles & PROFILE_GAMEPAD)
 			ret = forward_key_event(dev, event);
-		if (!ret && (profiles & PROFILE_DESKTOP))
+		if (!ret && (dev->profiles & PROFILE_DESKTOP))
 			ret = forward_desktop_key_event(dev, event);
 		return ret;
 	case XWII_EVENT_NUNCHUK_MOVE:
 	case XWII_EVENT_CLASSIC_CONTROLLER_MOVE:
 	case XWII_EVENT_PRO_CONTROLLER_MOVE:
 	case XWII_EVENT_GUITAR_MOVE:
-		if (profiles & PROFILE_GAMEPAD)
+		if (dev->profiles & PROFILE_GAMEPAD)
 			return forward_move_event(dev, event);
 		return 0;
 	case XWII_EVENT_IR:
-		if (profiles & PROFILE_DESKTOP)
+		if (dev->profiles & PROFILE_DESKTOP)
 			return forward_desktop_ir_event(dev, event);
 		return 0;
 	default:
@@ -799,6 +809,7 @@ static int add_device(struct bridge_device *devices, const char *syspath)
 
 	dev->uinput_fd = -1;
 	dev->desktop_fd = -1;
+	dev->profiles = profiles_for_syspath(syspath);
 	dev->syspath = strdup(syspath);
 	if (!dev->syspath)
 		return -ENOMEM;
@@ -816,7 +827,7 @@ static int add_device(struct bridge_device *devices, const char *syspath)
 		fprintf(stderr, "wiilandd: cannot open all interfaces for %s: %d\n",
 			syspath, ret);
 
-	if (profiles & PROFILE_GAMEPAD) {
+	if (dev->profiles & PROFILE_GAMEPAD) {
 		dev->uinput_fd = create_virtual_controller(syspath);
 		if (!dry_run && dev->uinput_fd < 0) {
 			ret = dev->uinput_fd;
@@ -828,7 +839,7 @@ static int add_device(struct bridge_device *devices, const char *syspath)
 		}
 	}
 
-	if (profiles & PROFILE_DESKTOP) {
+	if (dev->profiles & PROFILE_DESKTOP) {
 		dev->desktop_fd = create_virtual_desktop(syspath);
 		if (!dry_run && dev->desktop_fd < 0) {
 			ret = dev->desktop_fd;
@@ -1067,22 +1078,27 @@ static int run_one(const char *arg)
 	return ret;
 }
 
-static int parse_profile(const char *arg)
+static int parse_profile_value(const char *arg, unsigned int *out)
 {
 	if (!strcmp(arg, "gamepad")) {
-		profiles = PROFILE_GAMEPAD;
+		*out = PROFILE_GAMEPAD;
 		return 0;
 	}
 	if (!strcmp(arg, "desktop")) {
-		profiles = PROFILE_DESKTOP;
+		*out = PROFILE_DESKTOP;
 		return 0;
 	}
 	if (!strcmp(arg, "both")) {
-		profiles = PROFILE_GAMEPAD | PROFILE_DESKTOP;
+		*out = PROFILE_GAMEPAD | PROFILE_DESKTOP;
 		return 0;
 	}
 
 	return -EINVAL;
+}
+
+static int parse_profile(const char *arg)
+{
+	return parse_profile_value(arg, &profiles);
 }
 
 static int parse_int_range(const char *arg, int min, int max, int *out)
@@ -1104,6 +1120,67 @@ static int parse_pointer_speed(const char *arg)
 	return parse_int_range(arg, 1, 127, &pointer_speed);
 }
 
+static bool has_suffix(const char *str, const char *suffix)
+{
+	size_t str_len = strlen(str);
+	size_t suffix_len = strlen(suffix);
+
+	return str_len >= suffix_len &&
+	       !strcmp(str + str_len - suffix_len, suffix);
+}
+
+static void clear_device_rules(void)
+{
+	unsigned int i;
+
+	for (i = 0; i < device_rule_count; ++i)
+		free(device_rules[i].match);
+
+	memset(device_rules, 0, sizeof(device_rules));
+	device_rule_count = 0;
+}
+
+static int set_device_profile_rule(const char *match, unsigned int profiles)
+{
+	unsigned int i;
+	char *copy;
+
+	if (!match[0])
+		return -EINVAL;
+
+	for (i = 0; i < device_rule_count; ++i) {
+		if (!strcmp(device_rules[i].match, match)) {
+			device_rules[i].profiles = profiles;
+			return 0;
+		}
+	}
+
+	if (device_rule_count >= MAX_DEVICE_RULES)
+		return -ENOSPC;
+
+	copy = strdup(match);
+	if (!copy)
+		return -ENOMEM;
+
+	device_rules[device_rule_count].match = copy;
+	device_rules[device_rule_count].profiles = profiles;
+	++device_rule_count;
+	return 0;
+}
+
+static unsigned int profiles_for_syspath(const char *syspath)
+{
+	unsigned int selected = profiles;
+	unsigned int i;
+
+	for (i = 0; i < device_rule_count; ++i) {
+		if (strstr(syspath, device_rules[i].match))
+			selected = device_rules[i].profiles;
+	}
+
+	return selected;
+}
+
 static char *trim(char *str)
 {
 	char *end;
@@ -1120,7 +1197,8 @@ static char *trim(char *str)
 
 static int apply_config_line(const char *path, unsigned int lineno, char *line)
 {
-	char *key, *value;
+	char *key, *value, *suffix;
+	unsigned int profile_value;
 	int ret;
 
 	line[strcspn(line, "#")] = 0;
@@ -1143,7 +1221,13 @@ static int apply_config_line(const char *path, unsigned int lineno, char *line)
 		ret = parse_profile(value);
 	else if (!strcmp(key, "pointer-speed"))
 		ret = parse_pointer_speed(value);
-	else {
+	else if (!strncmp(key, "device.", 7) && has_suffix(key, ".profile")) {
+		suffix = key + strlen(key) - strlen(".profile");
+		*suffix = 0;
+		ret = parse_profile_value(value, &profile_value);
+		if (!ret)
+			ret = set_device_profile_rule(key + 7, profile_value);
+	} else {
 		fprintf(stderr, "wiilandd: %s:%u: unknown key '%s'\n",
 			path, lineno, key);
 		return -EINVAL;
@@ -1452,6 +1536,33 @@ static int self_test_config(void)
 	if (ret)
 		return ret;
 
+	profiles = PROFILE_GAMEPAD;
+	clear_device_rules();
+	snprintf(line, sizeof(line), " device.blue.profile = desktop\n");
+	ret = apply_config_line("self-test", 3, line);
+	if (ret)
+		return ret;
+	ret = expect_int("device-profile-match",
+			 profiles_for_syspath("/sys/devices/blue/wiimote"),
+			 PROFILE_DESKTOP);
+	if (ret)
+		return ret;
+	ret = expect_int("device-profile-miss",
+			 profiles_for_syspath("/sys/devices/red/wiimote"),
+			 PROFILE_GAMEPAD);
+	if (ret)
+		return ret;
+
+	snprintf(line, sizeof(line), " device.blue.profile = both\n");
+	ret = apply_config_line("self-test", 4, line);
+	if (ret)
+		return ret;
+	ret = expect_int("device-profile-override",
+			 profiles_for_syspath("/sys/devices/blue/wiimote"),
+			 PROFILE_GAMEPAD | PROFILE_DESKTOP);
+	if (ret)
+		return ret;
+
 	snprintf(line, sizeof(line), " # empty comment\n");
 	ret = apply_config_line("self-test", 3, line);
 	if (ret)
@@ -1459,6 +1570,7 @@ static int self_test_config(void)
 
 	profiles = PROFILE_GAMEPAD;
 	pointer_speed = 16;
+	clear_device_rules();
 	return 0;
 }
 
@@ -1468,6 +1580,7 @@ static int run_self_test(void)
 
 	profiles = PROFILE_GAMEPAD;
 	pointer_speed = 16;
+	clear_device_rules();
 
 	ret = self_test_gamepad_map();
 	if (ret)

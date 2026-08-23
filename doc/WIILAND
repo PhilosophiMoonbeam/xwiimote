@@ -30,8 +30,9 @@ wiilandd:
   - maps Wii Remote core input in the desktop profile: D-pad repeat and valid
     IR events move the pointer, A/B click, +/- send Enter/Escape, Home sends
     the compositor overview key, and 1/2 send Page Down/Page Up;
-  - supports key=value configuration for default profile and desktop pointer
-    speed through ~/.config/wiiland/wiilandd.conf or --config;
+  - supports key=value configuration for default profile, per-device profile
+    overrides, and desktop pointer speed through
+    ~/.config/wiiland/wiilandd.conf or --config;
   - provides --self-test for deterministic profile, button-map, config, and
     pointer-motion validation without hardware;
   - handles hotplug and extension changes without Xorg configuration.
@@ -44,13 +45,13 @@ Required runtime permissions:
 == Roadmap ==
 
 1. Desktop profile
-   Shipped as --profile desktop and --profile both. Next refinements are IR
-   pointer support and configurable button mapping.
+   Shipped as --profile desktop and --profile both with D-pad and IR pointer
+   motion. Next refinement is configurable button mapping.
 
 2. Per-device policy
-   Global key=value configuration is shipped. Next refinement is per-device
-   matching by sysfs path or Bluetooth address once hardware reports define the
-   desired policy surface.
+   Shipped as device.<syspath-substring>.profile rules for choosing gamepad,
+   desktop, or both per controller path. Next refinement is Bluetooth-address
+   matching once hardware reports define a stable identifier surface.
 
 3. Optional libei backend
    Add --backend=libei when libei and compositor support are common enough.

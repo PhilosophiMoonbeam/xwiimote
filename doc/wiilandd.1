@@ -89,6 +89,10 @@ Default virtual input profile.
 .TP
 .B pointer-speed=1-127
 Desktop profile pointer step.
+.TP
+.B device.<syspath-substring>.profile=gamepad|desktop|both
+Override the profile for devices whose sysfs path contains the substring.
+Rules are evaluated in file order; later matching rules win.
 .SH BACKEND
 The default backend is Linux uinput because it is compositor-independent and is
 already consumed by Wayland compositors and game stacks. The gamepad profile is
