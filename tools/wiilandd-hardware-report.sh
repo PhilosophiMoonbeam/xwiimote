@@ -8,7 +8,8 @@ if [ "$#" -gt 0 ]; then
 	device=$1
 	shift
 fi
-repo_dir=${WIILAND_REPO_DIR:-$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)}
+default_repo_dir=$(CDPATH=; cd -- "$(dirname -- "$0")/.." && pwd)
+repo_dir=${WIILAND_REPO_DIR:-$default_repo_dir}
 module_dir=${HID_WIIMOTE_MODULE_DIR:-/sys/module/hid_wiimote}
 os_release=${OS_RELEASE_PATH:-/etc/os-release}
 list_file=${TMPDIR:-/tmp}/wiilandd-hardware-report-list.$$

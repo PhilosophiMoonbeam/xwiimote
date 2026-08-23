@@ -3,7 +3,7 @@
 set -eu
 
 cc=${CC:-gcc}
-root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+root=$(CDPATH=; cd -- "$(dirname -- "$0")/.." && pwd)
 build_dir=${TMPDIR:-/tmp}/wiilandd-smoke.$$
 trap 'rm -rf "$build_dir"' EXIT INT HUP TERM
 mkdir -p "$build_dir"
