@@ -218,15 +218,34 @@ right stick uses
 analog triggers use
 .BR ABS_Z / ABS_RZ .
 .TP
-.B Guitar, Drums, Balance Board
-Guitar whammy and fret board use
+.B Guitar
+Whammy and fret board use
 .BR ABS_WHAMMY_BAR
 and
 .BR ABS_FRET_BOARD .
-Drums and Balance Board use the documented axes from the validation trace;
-run
-.B --dry-run --trace-events=axes
-while exercising the hardware.
+.TP
+.B Drums
+Pad X/Y use
+.BR ABS_X / ABS_Y ;
+left/right cymbals use
+.BR ABS_RX / ABS_RY ;
+left/right/far-right toms use
+.BR ABS_Z ,
+.BR ABS_RZ ,
+and
+.BR ABS_WHAMMY_BAR ;
+bass and hi-hat pedals use
+.BR ABS_FRET_BOARD
+and
+.BR ABS_MISC .
+.TP
+.B Balance Board
+The four weight sensors use
+.BR ABS_PRESSURE ,
+.BR ABS_DISTANCE ,
+.BR ABS_TILT_X ,
+and
+.BR ABS_TILT_Y .
 .SH BACKEND
 The default backend is Linux uinput because it is compositor-independent and is
 already consumed by Wayland compositors and game stacks. The gamepad profile is
