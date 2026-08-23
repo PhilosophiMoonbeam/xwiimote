@@ -31,6 +31,17 @@ run_pkg_version() {
 	fi
 }
 
+run_wiilandd_probe() {
+	printf '$ %s' "$wiilandd"
+	printf ' %s' "$@"
+	printf '\n'
+	if ! "$wiilandd" "$@"; then
+		printf 'failed: %s' "$wiilandd"
+		printf ' %s' "$@"
+		printf '\n'
+	fi
+}
+
 
 section host
 run_optional uname -srmo
@@ -47,12 +58,12 @@ printf 'WAYLAND_DISPLAY=%s\n' "${WAYLAND_DISPLAY:-}"
 printf 'XDG_SESSION_TYPE=%s\n' "${XDG_SESSION_TYPE:-}"
 
 section wiilandd
-"$wiilandd" --version
-"$wiilandd" --check-config
-"$wiilandd" --dump-config
+run_wiilandd_probe --version
+run_wiilandd_probe --check-config
+run_wiilandd_probe --dump-config
 
 section devices
-"$wiilandd" --list
+run_wiilandd_probe --list
 
 if [ -z "$device" ]; then
 	cat <<EOF
