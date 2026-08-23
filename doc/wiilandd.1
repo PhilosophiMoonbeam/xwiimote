@@ -210,7 +210,7 @@ X/Y/Z use
 and
 .BR ABS_HAT0X .
 .TP
-.B Classic and Wii U Pro controllers
+.B Classic Controller
 Left stick uses
 .BR ABS_X / ABS_Y ;
 right stick uses
@@ -218,8 +218,19 @@ right stick uses
 analog triggers use
 .BR ABS_Z / ABS_RZ .
 .TP
+.B Wii U Pro Controller
+Left stick uses
+.BR ABS_X / ABS_Y ;
+right stick uses
+.BR ABS_RX / ABS_RY .
+ZL/ZR are reported as
+.BR BTN_TL2 / BTN_TR2
+button events.
+.TP
 .B Guitar
-Whammy and fret board use
+Stick X/Y use
+.BR ABS_X / ABS_Y ;
+whammy and fret board use
 .BR ABS_WHAMMY_BAR
 and
 .BR ABS_FRET_BOARD .
