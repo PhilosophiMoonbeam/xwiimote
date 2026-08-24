@@ -104,9 +104,50 @@ static int test_drums(void)
 	return 0;
 }
 
+static int test_iface_names(void)
+{
+	static const struct {
+		unsigned int iface;
+		const char *name;
+	} interfaces[] = {
+		{ XWII_IFACE_CORE, XWII_NAME_CORE },
+		{ XWII_IFACE_ACCEL, XWII_NAME_ACCEL },
+		{ XWII_IFACE_IR, XWII_NAME_IR },
+		{ XWII_IFACE_MOTION_PLUS, XWII_NAME_MOTION_PLUS },
+		{ XWII_IFACE_NUNCHUK, XWII_NAME_NUNCHUK },
+		{ XWII_IFACE_CLASSIC_CONTROLLER,
+		  XWII_NAME_CLASSIC_CONTROLLER },
+		{ XWII_IFACE_BALANCE_BOARD, XWII_NAME_BALANCE_BOARD },
+		{ XWII_IFACE_PRO_CONTROLLER, XWII_NAME_PRO_CONTROLLER },
+		{ XWII_IFACE_DRUMS, XWII_NAME_DRUMS },
+		{ XWII_IFACE_GUITAR, XWII_NAME_GUITAR },
+	};
+	const char *name;
+	size_t i;
+
+	for (i = 0; i < sizeof(interfaces) / sizeof(interfaces[0]); ++i) {
+		name = xwii_get_iface_name(interfaces[i].iface);
+		if (!name || strcmp(name, interfaces[i].name)) {
+			fprintf(stderr, "interface %#x decoded as %s, expected %s\n",
+				interfaces[i].iface, name ? name : "(null)",
+				interfaces[i].name);
+			return 1;
+		}
+	}
+
+	if (xwii_get_iface_name(0) ||
+	    xwii_get_iface_name(XWII_IFACE_CORE | XWII_IFACE_ACCEL) ||
+	    xwii_get_iface_name(XWII_IFACE_WRITABLE)) {
+		fprintf(stderr, "invalid interface flag has a name\n");
+		return 1;
+	}
+
+	return 0;
+}
+
 int main(void)
 {
-	if (test_guitar() || test_drums())
+	if (test_guitar() || test_drums() || test_iface_names())
 		return 1;
 
 	puts("libxwiimote extension decoder test: ok");

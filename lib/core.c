@@ -141,20 +141,34 @@ static unsigned int if_to_iface_table[] = {
 	[XWII_IF_NUM] = 0,
 };
 
-/* table to convert public interface to internal interface */
-static int iface_to_if_table[] = {
-	[0 ... XWII_IFACE_ALL] = -1,
-	[XWII_IFACE_CORE] = XWII_IF_CORE,
-	[XWII_IFACE_ACCEL] = XWII_IF_ACCEL,
-	[XWII_IFACE_IR] = XWII_IF_IR,
-	[XWII_IFACE_MOTION_PLUS] = XWII_IF_MOTION_PLUS,
-	[XWII_IFACE_NUNCHUK] = XWII_IF_NUNCHUK,
-	[XWII_IFACE_CLASSIC_CONTROLLER] = XWII_IF_CLASSIC_CONTROLLER,
-	[XWII_IFACE_BALANCE_BOARD] = XWII_IF_BALANCE_BOARD,
-	[XWII_IFACE_PRO_CONTROLLER] = XWII_IF_PRO_CONTROLLER,
-	[XWII_IFACE_DRUMS] = XWII_IF_DRUMS,
-	[XWII_IFACE_GUITAR] = XWII_IF_GUITAR,
-};
+/* convert a single public interface flag to its internal interface */
+static int iface_to_if(unsigned int iface)
+{
+	switch (iface) {
+	case XWII_IFACE_CORE:
+		return XWII_IF_CORE;
+	case XWII_IFACE_ACCEL:
+		return XWII_IF_ACCEL;
+	case XWII_IFACE_IR:
+		return XWII_IF_IR;
+	case XWII_IFACE_MOTION_PLUS:
+		return XWII_IF_MOTION_PLUS;
+	case XWII_IFACE_NUNCHUK:
+		return XWII_IF_NUNCHUK;
+	case XWII_IFACE_CLASSIC_CONTROLLER:
+		return XWII_IF_CLASSIC_CONTROLLER;
+	case XWII_IFACE_BALANCE_BOARD:
+		return XWII_IF_BALANCE_BOARD;
+	case XWII_IFACE_PRO_CONTROLLER:
+		return XWII_IF_PRO_CONTROLLER;
+	case XWII_IFACE_DRUMS:
+		return XWII_IF_DRUMS;
+	case XWII_IFACE_GUITAR:
+		return XWII_IF_GUITAR;
+	default:
+		return -1;
+	}
+}
 
 /* convert name to interface or -1 */
 static int if_to_iface(unsigned int ifs)
@@ -165,12 +179,13 @@ static int if_to_iface(unsigned int ifs)
 XWII__EXPORT
 const char *xwii_get_iface_name(unsigned int iface)
 {
-	if (iface > XWII_IFACE_ALL)
-		return NULL;
-	if (iface_to_if_table[iface] == -1)
+	int internal_iface;
+
+	internal_iface = iface_to_if(iface);
+	if (internal_iface < 0)
 		return NULL;
 
-	return if_to_name_table[iface_to_if_table[iface]];
+	return if_to_name_table[internal_iface];
 }
 
 /*
@@ -1710,9 +1725,9 @@ static int dispatch_event(struct xwii_iface *dev, struct epoll_event *ep,
 XWII__EXPORT
 int xwii_iface_poll(struct xwii_iface *dev, struct xwii_event *ev)
 {
-	struct epoll_event ep[32];
+	enum { EPOLL_BATCH_SIZE = 32 };
+	struct epoll_event ep[EPOLL_BATCH_SIZE];
 	int ret, i;
-	size_t siz;
 
 	if (!dev)
 		return -EFAULT;
@@ -1722,12 +1737,9 @@ int xwii_iface_poll(struct xwii_iface *dev, struct xwii_event *ev)
 	if (!ev)
 		return 0;
 
-	siz = sizeof(ep) / sizeof(*ep);
-	ret = epoll_wait(dev->efd, ep, siz, 0);
+	ret = epoll_wait(dev->efd, ep, EPOLL_BATCH_SIZE, 0);
 	if (ret < 0)
 		return -errno;
-	if (ret > siz)
-		ret = siz;
 
 	for (i = 0; i < ret; ++i) {
 		ret = dispatch_event(dev, &ep[i], ev);
@@ -1742,9 +1754,9 @@ XWII__EXPORT
 int xwii_iface_dispatch(struct xwii_iface *dev, struct xwii_event *u_ev,
 			size_t size)
 {
-	struct epoll_event ep[32];
+	enum { EPOLL_BATCH_SIZE = 32 };
+	struct epoll_event ep[EPOLL_BATCH_SIZE];
 	int ret, i;
-	size_t siz;
 	struct xwii_event ev;
 
 	if (!dev)
@@ -1757,12 +1769,9 @@ int xwii_iface_dispatch(struct xwii_iface *dev, struct xwii_event *u_ev,
 	if (size > sizeof(ev))
 		size = sizeof(ev);
 
-	siz = sizeof(ep) / sizeof(*ep);
-	ret = epoll_wait(dev->efd, ep, siz, 0);
+	ret = epoll_wait(dev->efd, ep, EPOLL_BATCH_SIZE, 0);
 	if (ret < 0)
 		return -errno;
-	if (ret > siz)
-		ret = siz;
 
 	for (i = 0; i < ret; ++i) {
 		ret = dispatch_event(dev, &ep[i], &ev);
@@ -1854,11 +1863,13 @@ static int write_string(const char *path, const char *line)
 static int read_led(const char *path, bool *state)
 {
 	int ret;
-	char *line;
+	char *line = NULL;
 
 	ret = read_line(path, &line);
 	if (ret)
 		return ret;
+	if (!line)
+		return -EIO;
 
 	*state = !!atoi(line);
 	free(line);
@@ -1897,11 +1908,13 @@ int xwii_iface_set_led(struct xwii_iface *dev, unsigned int led, bool state)
 static int read_battery(const char *path, uint8_t *capacity)
 {
 	int ret;
-	char *line;
+	char *line = NULL;
 
 	ret = read_line(path, &line);
 	if (ret)
 		return ret;
+	if (!line)
+		return -EIO;
 
 	*capacity = atoi(line);
 	free(line);
