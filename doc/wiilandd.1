@@ -166,6 +166,46 @@ Desktop profile IR jitter deadzone after gain scaling.
 .B ir-smoothing=0-95
 Desktop profile IR smoothing percentage.
 .TP
+.B aim-mode=off|mouse|right-stick
+Enable modern motion aiming. The default
+.B off
+keeps the login/session-safe gamepad unchanged.
+.B mouse
+converts the selected sensor to relative
+.BR REL_X / REL_Y
+pointer aim.
+.B right-stick
+converts it to
+.BR ABS_RX / ABS_RY
+camera aim for Steam, Proton/Wine, SDL, and native games that read a standard
+right stick.
+.TP
+.B aim-source=auto|ir|motion-plus|accelerometer
+Select the motion-aim sensor. The default
+.B auto
+prefers valid IR camera deltas, then MotionPlus gyro axes, then accelerometer
+tilt with automatic neutral calibration from the first accelerometer event.
+.TP
+.B aim-activation=always|b|z|c
+Choose whether motion aim is always active or gated by holding B, Nunchuk Z, or
+Nunchuk C. The default is
+.BR b .
+.TP
+.B aim-sensitivity=1-127
+Motion aim output gain. The default is 16.
+.TP
+.B aim-deadzone=0-32767
+Motion aim deadzone before gain. The default is 4.
+.TP
+.B aim-smoothing=0-95
+Motion aim smoothing percentage. The default is 25.
+.TP
+.B aim-invert-x=yes|no
+Invert motion aim X output. The default is no.
+.TP
+.B aim-invert-y=yes|no
+Invert motion aim Y output. The default is no.
+.TP
 .B desktop.a|b|plus|minus|home|one|two=ACTION
 Override desktop button output. Actions are
 .BR left-click ,
@@ -238,6 +278,18 @@ X/Y/Z use
 .BR ABS_BRAKE ,
 and
 .BR ABS_HAT0X .
+.TP
+.B Motion aiming
+When
+.B aim-mode=right-stick
+is enabled, IR, MotionPlus, or accelerometer aim is emitted on
+.BR ABS_RX / ABS_RY .
+When
+.B aim-mode=mouse
+is enabled, the same aim signal is emitted on
+.BR REL_X / REL_Y
+through a virtual desktop pointer device. This deliberately exposes generic
+Linux input instead of spoofing a DualSense, DualShock, or Steam Controller.
 .TP
 .B Classic Controller
 Left stick uses

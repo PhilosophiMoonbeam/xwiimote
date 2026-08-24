@@ -133,6 +133,27 @@ enum pointer_key {
 	POINTER_UP = 1 << 2,
 	POINTER_DOWN = 1 << 3,
 };
+enum aim_output {
+	AIM_OUTPUT_OFF,
+	AIM_OUTPUT_MOUSE,
+	AIM_OUTPUT_RIGHT_STICK,
+};
+
+enum aim_source {
+	AIM_SOURCE_AUTO,
+	AIM_SOURCE_IR,
+	AIM_SOURCE_MOTION_PLUS,
+	AIM_SOURCE_ACCELEROMETER,
+	AIM_SOURCE_NONE,
+};
+
+enum aim_activation {
+	AIM_ACTIVATION_ALWAYS,
+	AIM_ACTIVATION_B,
+	AIM_ACTIVATION_Z,
+	AIM_ACTIVATION_C,
+};
+
 
 enum device_rule_kind {
 	DEVICE_RULE_SYSPATH,
@@ -176,6 +197,16 @@ struct bridge_device {
 	bool ir_active;
 	int32_t ir_x;
 	int32_t ir_y;
+	bool aim_held;
+	enum aim_source active_aim_source;
+	bool aim_ir_active;
+	int32_t aim_ir_x;
+	int32_t aim_ir_y;
+	bool aim_accel_zeroed;
+	int32_t aim_accel_zero_x;
+	int32_t aim_accel_zero_y;
+	int aim_last_x;
+	int aim_last_y;
 };
 
 static volatile sig_atomic_t should_stop;
@@ -193,6 +224,14 @@ static int pointer_speed = 16;
 static int ir_speed = 8;
 static int ir_deadzone;
 static int ir_smoothing;
+static enum aim_output aim_output = AIM_OUTPUT_OFF;
+static enum aim_source aim_source = AIM_SOURCE_AUTO;
+static enum aim_activation aim_activation = AIM_ACTIVATION_B;
+static int aim_sensitivity = 16;
+static int aim_deadzone = 4;
+static int aim_smoothing = 25;
+static bool aim_invert_x;
+static bool aim_invert_y;
 static struct device_rule device_rules[MAX_DEVICE_RULES];
 static unsigned int device_rule_count;
 static struct desktop_binding desktop_bindings[] = {
@@ -206,6 +245,7 @@ static struct desktop_binding desktop_bindings[] = {
 };
 
 static unsigned int profiles_for_device(const char *syspath, const char *devtype);
+static bool is_key_event(unsigned int type);
 
 static void on_signal(int signo)
 {
@@ -326,6 +366,15 @@ static int emit_rel(int fd, int code, int32_t value)
 		return 0;
 
 	return emit_event(fd, EV_REL, (uint16_t)code, value);
+}
+
+static int clamp_axis_value(int value)
+{
+	if (value > 32767)
+		return 32767;
+	if (value < -32768)
+		return -32768;
+	return value;
 }
 
 static int map_key(unsigned int code)
@@ -844,6 +893,18 @@ static void reset_desktop_bindings(void)
 		desktop_bindings[i].code = desktop_bindings[i].default_code;
 }
 
+static void reset_aim_config(void)
+{
+	aim_output = AIM_OUTPUT_OFF;
+	aim_source = AIM_SOURCE_AUTO;
+	aim_activation = AIM_ACTIVATION_B;
+	aim_sensitivity = 16;
+	aim_deadzone = 4;
+	aim_smoothing = 25;
+	aim_invert_x = false;
+	aim_invert_y = false;
+}
+
 static int desktop_key_code(unsigned int code)
 {
 	size_t i;
@@ -986,6 +1047,283 @@ static int forward_desktop_ir_event(struct bridge_device *dev,
 		return ret;
 
 	return emit_syn(dev->desktop_fd);
+}
+
+static bool aim_enabled(void)
+{
+	return aim_output != AIM_OUTPUT_OFF;
+}
+
+static bool aim_uses_mouse(void)
+{
+	return aim_output == AIM_OUTPUT_MOUSE;
+}
+
+static bool aim_uses_right_stick(void)
+{
+	return aim_output == AIM_OUTPUT_RIGHT_STICK;
+}
+
+static bool device_needs_gamepad(unsigned int device_profiles)
+{
+	return (device_profiles & PROFILE_GAMEPAD) || aim_uses_right_stick();
+}
+
+static bool device_needs_desktop(unsigned int device_profiles)
+{
+	return (device_profiles & PROFILE_DESKTOP) || aim_uses_mouse();
+}
+
+static bool aim_is_active(const struct bridge_device *dev)
+{
+	return aim_enabled() &&
+	       (aim_activation == AIM_ACTIVATION_ALWAYS || dev->aim_held);
+}
+
+static int scale_aim_axis(int32_t value)
+{
+	int64_t magnitude = value < 0 ? -(int64_t)value : (int64_t)value;
+	int sign = value < 0 ? -1 : 1;
+	int64_t scaled;
+
+	if (magnitude <= aim_deadzone)
+		return 0;
+
+	magnitude -= aim_deadzone;
+	scaled = (magnitude * aim_sensitivity) / 16;
+	if (scaled > 32767)
+		scaled = 32767;
+	return (int)(scaled * sign);
+}
+
+static void smooth_aim_output(struct bridge_device *dev, int *x, int *y)
+{
+	if (!aim_smoothing) {
+		dev->aim_last_x = *x;
+		dev->aim_last_y = *y;
+		return;
+	}
+
+	*x = (int)(((int64_t)dev->aim_last_x * aim_smoothing +
+		    (int64_t)*x * (100 - aim_smoothing)) / 100);
+	*y = (int)(((int64_t)dev->aim_last_y * aim_smoothing +
+		    (int64_t)*y * (100 - aim_smoothing)) / 100);
+	dev->aim_last_x = *x;
+	dev->aim_last_y = *y;
+}
+
+static int reset_aim_output(struct bridge_device *dev)
+{
+	int ret;
+
+	dev->active_aim_source = AIM_SOURCE_NONE;
+	dev->aim_ir_active = false;
+	dev->aim_accel_zeroed = false;
+	dev->aim_last_x = 0;
+	dev->aim_last_y = 0;
+
+	if (!aim_uses_right_stick() || dev->uinput_fd < 0)
+		return 0;
+
+	ret = emit_abs(dev->uinput_fd, ABS_RX, 0);
+	if (ret)
+		return ret;
+	ret = emit_abs(dev->uinput_fd, ABS_RY, 0);
+	if (ret)
+		return ret;
+	return emit_syn(dev->uinput_fd);
+}
+
+static int emit_aim_output(struct bridge_device *dev, int x, int y)
+{
+	int ret;
+
+	if (!aim_is_active(dev))
+		return reset_aim_output(dev);
+
+	if (aim_invert_x)
+		x = -x;
+	if (aim_invert_y)
+		y = -y;
+	smooth_aim_output(dev, &x, &y);
+
+	if (aim_uses_mouse()) {
+		if (dev->desktop_fd < 0 || (!x && !y))
+			return 0;
+		ret = emit_rel(dev->desktop_fd, REL_X, x);
+		if (ret)
+			return ret;
+		ret = emit_rel(dev->desktop_fd, REL_Y, y);
+		if (ret)
+			return ret;
+		return emit_syn(dev->desktop_fd);
+	}
+
+	if (aim_uses_right_stick()) {
+		if (dev->uinput_fd < 0)
+			return 0;
+		ret = emit_abs(dev->uinput_fd, ABS_RX, clamp_axis_value(x));
+		if (ret)
+			return ret;
+		ret = emit_abs(dev->uinput_fd, ABS_RY, clamp_axis_value(y));
+		if (ret)
+			return ret;
+		return emit_syn(dev->uinput_fd);
+	}
+
+	return 0;
+}
+
+static bool aim_accepts_source(const struct bridge_device *dev,
+			       enum aim_source source)
+{
+	if (aim_source != AIM_SOURCE_AUTO)
+		return aim_source == source;
+
+	if (source == AIM_SOURCE_IR)
+		return true;
+	if (dev->active_aim_source == AIM_SOURCE_IR)
+		return false;
+	if (source == AIM_SOURCE_MOTION_PLUS)
+		return true;
+	if (dev->active_aim_source == AIM_SOURCE_MOTION_PLUS &&
+	    source == AIM_SOURCE_ACCELEROMETER)
+		return false;
+	return true;
+}
+
+static int update_aim_ir_state(struct bridge_device *dev,
+			       const struct xwii_event_abs *src, int *dx,
+			       int *dy)
+{
+	*dx = 0;
+	*dy = 0;
+
+	if (!src) {
+		if (dev->active_aim_source == AIM_SOURCE_IR)
+			return reset_aim_output(dev);
+		dev->aim_ir_active = false;
+		return 0;
+	}
+
+	if (!aim_accepts_source(dev, AIM_SOURCE_IR))
+		return 0;
+
+	if (dev->aim_ir_active) {
+		*dx = scale_aim_axis(src->x - dev->aim_ir_x);
+		*dy = scale_aim_axis(src->y - dev->aim_ir_y);
+	} else {
+		dev->aim_ir_active = true;
+	}
+	dev->aim_ir_x = src->x;
+	dev->aim_ir_y = src->y;
+	dev->active_aim_source = AIM_SOURCE_IR;
+	return emit_aim_output(dev, *dx, *dy);
+}
+
+static int forward_aim_ir_event(struct bridge_device *dev,
+				const struct xwii_event *event)
+{
+	const struct xwii_event_abs *src;
+	int dx, dy;
+
+	if (event->type != XWII_EVENT_IR)
+		return 0;
+
+	src = first_valid_ir_source(event);
+	return update_aim_ir_state(dev, src, &dx, &dy);
+}
+
+static int forward_aim_motion_plus_event(struct bridge_device *dev,
+					 const struct xwii_event *event)
+{
+	int x, y;
+
+	if (event->type != XWII_EVENT_MOTION_PLUS ||
+	    !aim_accepts_source(dev, AIM_SOURCE_MOTION_PLUS))
+		return 0;
+
+	dev->active_aim_source = AIM_SOURCE_MOTION_PLUS;
+	x = scale_aim_axis(event->v.abs[0].x);
+	y = scale_aim_axis(event->v.abs[0].y);
+	return emit_aim_output(dev, x, y);
+}
+
+static int forward_aim_accel_event(struct bridge_device *dev,
+				   const struct xwii_event *event)
+{
+	int x, y;
+
+	if (event->type != XWII_EVENT_ACCEL ||
+	    !aim_accepts_source(dev, AIM_SOURCE_ACCELEROMETER))
+		return 0;
+
+	if (!dev->aim_accel_zeroed) {
+		dev->aim_accel_zero_x = event->v.abs[0].x;
+		dev->aim_accel_zero_y = event->v.abs[0].y;
+		dev->aim_accel_zeroed = true;
+		dev->active_aim_source = AIM_SOURCE_ACCELEROMETER;
+		return 0;
+	}
+
+	dev->active_aim_source = AIM_SOURCE_ACCELEROMETER;
+	x = scale_aim_axis(event->v.abs[0].x - dev->aim_accel_zero_x);
+	y = scale_aim_axis(event->v.abs[0].y - dev->aim_accel_zero_y);
+	return emit_aim_output(dev, x, y);
+}
+
+static int forward_aim_event(struct bridge_device *dev,
+			     const struct xwii_event *event)
+{
+	if (!aim_enabled())
+		return 0;
+
+	switch (event->type) {
+	case XWII_EVENT_IR:
+		return forward_aim_ir_event(dev, event);
+	case XWII_EVENT_MOTION_PLUS:
+		return forward_aim_motion_plus_event(dev, event);
+	case XWII_EVENT_ACCEL:
+		return forward_aim_accel_event(dev, event);
+	default:
+		return 0;
+	}
+}
+
+static bool aim_activation_key(unsigned int code)
+{
+	switch (aim_activation) {
+	case AIM_ACTIVATION_B:
+		return code == XWII_KEY_B;
+	case AIM_ACTIVATION_Z:
+		return code == XWII_KEY_Z;
+	case AIM_ACTIVATION_C:
+		return code == XWII_KEY_C;
+	case AIM_ACTIVATION_ALWAYS:
+	default:
+		return false;
+	}
+}
+
+static int update_aim_activation(struct bridge_device *dev,
+				 const struct xwii_event *event)
+{
+	bool was_held;
+
+	if (!aim_enabled())
+		return 0;
+	if (aim_activation == AIM_ACTIVATION_ALWAYS) {
+		dev->aim_held = true;
+		return 0;
+	}
+	if (!is_key_event(event->type) || !aim_activation_key(event->v.key.code))
+		return 0;
+
+	was_held = dev->aim_held;
+	dev->aim_held = event->v.key.state != 0;
+	if (was_held && !dev->aim_held)
+		return reset_aim_output(dev);
+	return 0;
 }
 
 static int reopen_available_ifaces(struct bridge_device *dev)
@@ -1157,10 +1495,12 @@ static int handle_xwii_event(struct bridge_device *dev,
 	case XWII_EVENT_GUITAR_KEY:
 	case XWII_EVENT_DRUMS_KEY:
 		ret = 0;
-		if (dev->profiles & PROFILE_GAMEPAD)
+		if (device_needs_gamepad(dev->profiles))
 			ret = forward_key_event(dev, event);
 		if (!ret && (dev->profiles & PROFILE_DESKTOP))
 			ret = forward_desktop_key_event(dev, event);
+		if (!ret)
+			ret = update_aim_activation(dev, event);
 		return ret;
 	case XWII_EVENT_ACCEL:
 	case XWII_EVENT_MOTION_PLUS:
@@ -1170,13 +1510,19 @@ static int handle_xwii_event(struct bridge_device *dev,
 	case XWII_EVENT_GUITAR_MOVE:
 	case XWII_EVENT_DRUMS_MOVE:
 	case XWII_EVENT_BALANCE_BOARD:
-		if (dev->profiles & PROFILE_GAMEPAD)
-			return forward_move_event(dev, event);
-		return 0;
+		ret = 0;
+		if (device_needs_gamepad(dev->profiles))
+			ret = forward_move_event(dev, event);
+		if (!ret)
+			ret = forward_aim_event(dev, event);
+		return ret;
 	case XWII_EVENT_IR:
+		ret = 0;
 		if (dev->profiles & PROFILE_DESKTOP)
-			return forward_desktop_ir_event(dev, event);
-		return 0;
+			ret = forward_desktop_ir_event(dev, event);
+		if (!ret)
+			ret = forward_aim_event(dev, event);
+		return ret;
 	default:
 		return 0;
 	}
@@ -1277,7 +1623,7 @@ static int add_device(struct bridge_device *devices, const char *syspath)
 		goto err_iface;
 	}
 
-	if (dev->profiles & PROFILE_GAMEPAD) {
+	if (device_needs_gamepad(dev->profiles)) {
 		dev->uinput_fd = create_virtual_controller(syspath);
 		if (!dry_run && dev->uinput_fd < 0) {
 			ret = dev->uinput_fd;
@@ -1289,7 +1635,7 @@ static int add_device(struct bridge_device *devices, const char *syspath)
 		}
 	}
 
-	if (dev->profiles & PROFILE_DESKTOP) {
+	if (device_needs_desktop(dev->profiles)) {
 		dev->desktop_fd = create_virtual_desktop(syspath);
 		if (!dry_run && dev->desktop_fd < 0) {
 			ret = dev->desktop_fd;
@@ -1605,6 +1951,58 @@ static const char *backend_name(enum backend backend)
 	}
 }
 
+static const char *aim_output_name(enum aim_output output)
+{
+	switch (output) {
+	case AIM_OUTPUT_OFF:
+		return "off";
+	case AIM_OUTPUT_MOUSE:
+		return "mouse";
+	case AIM_OUTPUT_RIGHT_STICK:
+		return "right-stick";
+	default:
+		return "unknown";
+	}
+}
+
+static const char *aim_source_name(enum aim_source source)
+{
+	switch (source) {
+	case AIM_SOURCE_AUTO:
+		return "auto";
+	case AIM_SOURCE_IR:
+		return "ir";
+	case AIM_SOURCE_MOTION_PLUS:
+		return "motion-plus";
+	case AIM_SOURCE_ACCELEROMETER:
+		return "accelerometer";
+	case AIM_SOURCE_NONE:
+	default:
+		return "none";
+	}
+}
+
+static const char *aim_activation_name(enum aim_activation activation)
+{
+	switch (activation) {
+	case AIM_ACTIVATION_ALWAYS:
+		return "always";
+	case AIM_ACTIVATION_B:
+		return "b";
+	case AIM_ACTIVATION_Z:
+		return "z";
+	case AIM_ACTIVATION_C:
+		return "c";
+	default:
+		return "unknown";
+	}
+}
+
+static const char *bool_name(bool value)
+{
+	return value ? "yes" : "no";
+}
+
 static void dump_config_state(FILE *out)
 {
 	unsigned int i;
@@ -1615,6 +2013,14 @@ static void dump_config_state(FILE *out)
 	fprintf(out, "ir-speed=%d\n", ir_speed);
 	fprintf(out, "ir-deadzone=%d\n", ir_deadzone);
 	fprintf(out, "ir-smoothing=%d\n", ir_smoothing);
+	fprintf(out, "aim-mode=%s\n", aim_output_name(aim_output));
+	fprintf(out, "aim-source=%s\n", aim_source_name(aim_source));
+	fprintf(out, "aim-activation=%s\n", aim_activation_name(aim_activation));
+	fprintf(out, "aim-sensitivity=%d\n", aim_sensitivity);
+	fprintf(out, "aim-deadzone=%d\n", aim_deadzone);
+	fprintf(out, "aim-smoothing=%d\n", aim_smoothing);
+	fprintf(out, "aim-invert-x=%s\n", bool_name(aim_invert_x));
+	fprintf(out, "aim-invert-y=%s\n", bool_name(aim_invert_y));
 
 	for (i = 0; i < ARRAY_SIZE(desktop_bindings); ++i)
 		fprintf(out, "desktop.%s=%s\n", desktop_bindings[i].name,
@@ -1720,6 +2126,107 @@ static int parse_ir_deadzone(const char *arg)
 static int parse_ir_smoothing(const char *arg)
 {
 	return parse_int_range(arg, 0, 95, &ir_smoothing);
+}
+
+static int parse_aim_output(const char *arg)
+{
+	if (!strcmp(arg, "off")) {
+		aim_output = AIM_OUTPUT_OFF;
+		return 0;
+	}
+	if (!strcmp(arg, "mouse")) {
+		aim_output = AIM_OUTPUT_MOUSE;
+		return 0;
+	}
+	if (!strcmp(arg, "right-stick")) {
+		aim_output = AIM_OUTPUT_RIGHT_STICK;
+		return 0;
+	}
+
+	return -EINVAL;
+}
+
+static int parse_aim_source(const char *arg)
+{
+	if (!strcmp(arg, "auto")) {
+		aim_source = AIM_SOURCE_AUTO;
+		return 0;
+	}
+	if (!strcmp(arg, "ir")) {
+		aim_source = AIM_SOURCE_IR;
+		return 0;
+	}
+	if (!strcmp(arg, "motion-plus")) {
+		aim_source = AIM_SOURCE_MOTION_PLUS;
+		return 0;
+	}
+	if (!strcmp(arg, "accelerometer")) {
+		aim_source = AIM_SOURCE_ACCELEROMETER;
+		return 0;
+	}
+
+	return -EINVAL;
+}
+
+static int parse_aim_activation(const char *arg)
+{
+	if (!strcmp(arg, "always")) {
+		aim_activation = AIM_ACTIVATION_ALWAYS;
+		return 0;
+	}
+	if (!strcmp(arg, "b")) {
+		aim_activation = AIM_ACTIVATION_B;
+		return 0;
+	}
+	if (!strcmp(arg, "z")) {
+		aim_activation = AIM_ACTIVATION_Z;
+		return 0;
+	}
+	if (!strcmp(arg, "c")) {
+		aim_activation = AIM_ACTIVATION_C;
+		return 0;
+	}
+
+	return -EINVAL;
+}
+
+static int parse_aim_sensitivity(const char *arg)
+{
+	return parse_int_range(arg, 1, 127, &aim_sensitivity);
+}
+
+static int parse_aim_deadzone(const char *arg)
+{
+	return parse_int_range(arg, 0, 32767, &aim_deadzone);
+}
+
+static int parse_aim_smoothing(const char *arg)
+{
+	return parse_int_range(arg, 0, 95, &aim_smoothing);
+}
+
+static int parse_bool(const char *arg, bool *out)
+{
+	if (!strcmp(arg, "yes") || !strcmp(arg, "true") || !strcmp(arg, "1")) {
+		*out = true;
+		return 0;
+	}
+	if (!strcmp(arg, "no") || !strcmp(arg, "false") || !strcmp(arg, "0")) {
+		*out = false;
+		return 0;
+	}
+
+	return -EINVAL;
+}
+
+static int parse_aim_invert_x(const char *arg)
+{
+	return parse_bool(arg, &aim_invert_x);
+}
+
+static int parse_aim_invert_y(const char *arg)
+{
+	return parse_bool(arg, &aim_invert_y);
 }
 
 static int parse_desktop_action(const char *arg, int *out)
@@ -1901,6 +2408,22 @@ static int apply_config_line(const char *path, unsigned int lineno, char *line)
 		ret = parse_ir_smoothing(value);
 	else if (!strcmp(key, "pointer-speed"))
 		ret = parse_pointer_speed(value);
+	else if (!strcmp(key, "aim-mode"))
+		ret = parse_aim_output(value);
+	else if (!strcmp(key, "aim-source"))
+		ret = parse_aim_source(value);
+	else if (!strcmp(key, "aim-activation"))
+		ret = parse_aim_activation(value);
+	else if (!strcmp(key, "aim-sensitivity"))
+		ret = parse_aim_sensitivity(value);
+	else if (!strcmp(key, "aim-deadzone"))
+		ret = parse_aim_deadzone(value);
+	else if (!strcmp(key, "aim-smoothing"))
+		ret = parse_aim_smoothing(value);
+	else if (!strcmp(key, "aim-invert-x"))
+		ret = parse_aim_invert_x(value);
+	else if (!strcmp(key, "aim-invert-y"))
+		ret = parse_aim_invert_y(value);
 	else if (!strncmp(key, "desktop.", 8))
 		ret = set_desktop_binding(key + 8, value);
 	else if (!strncmp(key, "device.", 7) && has_suffix(key, ".profile")) {
@@ -2348,6 +2871,72 @@ static int self_test_ir_pointer(void)
 	return expect_int("ir-after-reset-dy", dy, 0);
 }
 
+static int self_test_motion_aim(void)
+{
+	struct bridge_device dev;
+	struct xwii_event event;
+	bool old_dry_run = dry_run;
+	int ret;
+
+	memset(&dev, 0, sizeof(dev));
+	memset(&event, 0, sizeof(event));
+	dev.uinput_fd = 0;
+	dev.desktop_fd = -1;
+	dev.aim_held = true;
+
+	reset_aim_config();
+	aim_output = AIM_OUTPUT_RIGHT_STICK;
+	aim_source = AIM_SOURCE_MOTION_PLUS;
+	aim_activation = AIM_ACTIVATION_ALWAYS;
+	aim_sensitivity = 16;
+	aim_deadzone = 4;
+	aim_smoothing = 0;
+
+	memset(captured_abs_seen, 0, sizeof(captured_abs_seen));
+	memset(captured_abs_value, 0, sizeof(captured_abs_value));
+	capture_abs_events = true;
+	dry_run = true;
+	event.type = XWII_EVENT_MOTION_PLUS;
+	event.v.abs[0].x = 20;
+	event.v.abs[0].y = -12;
+	ret = forward_aim_event(&dev, &event);
+	capture_abs_events = false;
+	dry_run = old_dry_run;
+	if (ret)
+		return ret;
+	ret = expect_abs_capture("aim-motion-plus-x", ABS_RX, 16);
+	if (ret)
+		return ret;
+	ret = expect_abs_capture("aim-motion-plus-y", ABS_RY, -8);
+	if (ret)
+		return ret;
+
+	reset_aim_config();
+	aim_output = AIM_OUTPUT_RIGHT_STICK;
+	aim_activation = AIM_ACTIVATION_B;
+	dev.aim_held = false;
+	memset(&event, 0, sizeof(event));
+	event.type = XWII_EVENT_KEY;
+	event.v.key.code = XWII_KEY_B;
+	event.v.key.state = 1;
+	ret = update_aim_activation(&dev, &event);
+	if (ret)
+		return ret;
+	ret = expect_int("aim-b-activation", dev.aim_held, 1);
+	if (ret)
+		return ret;
+	event.v.key.state = 0;
+	ret = update_aim_activation(&dev, &event);
+	if (ret)
+		return ret;
+	ret = expect_int("aim-b-release", dev.aim_held, 0);
+	if (ret)
+		return ret;
+
+	reset_aim_config();
+	return 0;
+}
+
 static int self_test_profiles(void)
 {
 	int ret;
@@ -2523,6 +3112,57 @@ static int self_test_config(void)
 	ret = expect_int("config-ir-smoothing", ir_smoothing, 25);
 	if (ret)
 		return ret;
+	snprintf(line, sizeof(line), " aim-mode = right-stick\n");
+	ret = apply_config_line("self-test", 7, line);
+	if (ret)
+		return ret;
+	ret = expect_int("config-aim-mode", aim_output, AIM_OUTPUT_RIGHT_STICK);
+	if (ret)
+		return ret;
+	snprintf(line, sizeof(line), " aim-source = motion-plus\n");
+	ret = apply_config_line("self-test", 8, line);
+	if (ret)
+		return ret;
+	ret = expect_int("config-aim-source", aim_source, AIM_SOURCE_MOTION_PLUS);
+	if (ret)
+		return ret;
+	snprintf(line, sizeof(line), " aim-activation = z\n");
+	ret = apply_config_line("self-test", 9, line);
+	if (ret)
+		return ret;
+	ret = expect_int("config-aim-activation", aim_activation,
+			 AIM_ACTIVATION_Z);
+	if (ret)
+		return ret;
+	snprintf(line, sizeof(line), " aim-sensitivity = 24\n");
+	ret = apply_config_line("self-test", 10, line);
+	if (ret)
+		return ret;
+	ret = expect_int("config-aim-sensitivity", aim_sensitivity, 24);
+	if (ret)
+		return ret;
+	snprintf(line, sizeof(line), " aim-deadzone = 12\n");
+	ret = apply_config_line("self-test", 11, line);
+	if (ret)
+		return ret;
+	ret = expect_int("config-aim-deadzone", aim_deadzone, 12);
+	if (ret)
+		return ret;
+	snprintf(line, sizeof(line), " aim-smoothing = 40\n");
+	ret = apply_config_line("self-test", 12, line);
+	if (ret)
+		return ret;
+	ret = expect_int("config-aim-smoothing", aim_smoothing, 40);
+	if (ret)
+		return ret;
+	snprintf(line, sizeof(line), " aim-invert-y = yes\n");
+	ret = apply_config_line("self-test", 13, line);
+	if (ret)
+		return ret;
+	ret = expect_int("config-aim-invert-y", aim_invert_y, 1);
+	if (ret)
+		return ret;
+	reset_aim_config();
 	snprintf(line, sizeof(line), " desktop.b = disabled\n");
 	ret = apply_config_line("self-test", 5, line);
 	if (ret)
@@ -2605,6 +3245,7 @@ static int self_test_config(void)
 	ir_smoothing = 0;
 	clear_device_rules();
 	reset_desktop_bindings();
+	reset_aim_config();
 	return 0;
 }
 
@@ -2628,6 +3269,21 @@ static int self_test_dump_format(void)
 		return ret;
 	ret = expect_int("dump-action-enter",
 			 strcmp(desktop_action_name(KEY_ENTER), "enter"), 0);
+	if (ret)
+		return ret;
+	ret = expect_int("dump-aim-output",
+			 strcmp(aim_output_name(AIM_OUTPUT_RIGHT_STICK),
+				"right-stick"), 0);
+	if (ret)
+		return ret;
+	ret = expect_int("dump-aim-source",
+			 strcmp(aim_source_name(AIM_SOURCE_MOTION_PLUS),
+				"motion-plus"), 0);
+	if (ret)
+		return ret;
+	ret = expect_int("dump-aim-activation",
+			 strcmp(aim_activation_name(AIM_ACTIVATION_B), "b"),
+			 0);
 	if (ret)
 		return ret;
 	ret = expect_int("dump-device-prefix",
@@ -2712,6 +3368,7 @@ static int run_self_test(void)
 	ir_smoothing = 0;
 	clear_device_rules();
 	reset_desktop_bindings();
+	reset_aim_config();
 
 	ret = self_test_gamepad_map();
 	if (ret)
@@ -2732,6 +3389,9 @@ static int run_self_test(void)
 	if (ret)
 		return ret;
 	ret = self_test_ir_pointer();
+	if (ret)
+		return ret;
+	ret = self_test_motion_aim();
 	if (ret)
 		return ret;
 	ret = self_test_profiles();
@@ -2779,6 +3439,10 @@ static void print_axis_map(void)
 	puts("motion-plus.z=ABS_HAT0X");
 	puts("classic.left-stick.x=ABS_X");
 	puts("classic.left-stick.y=ABS_Y");
+	puts("aim.right-stick.x=ABS_RX");
+	puts("aim.right-stick.y=ABS_RY");
+	puts("aim.mouse.x=REL_X");
+	puts("aim.mouse.y=REL_Y");
 	puts("classic.right-stick.x=ABS_RX");
 	puts("classic.right-stick.y=ABS_RY");
 	puts("classic.trigger.left=ABS_Z");
@@ -2877,6 +3541,10 @@ static void print_validation_checklist(void)
 	puts("wayland.sdl=required");
 	puts("wayland.wine-proton=required");
 	puts("wayland.desktop-profile=required");
+	puts("steam.motion-aim-right-stick=required");
+	puts("steam.motion-aim-mouse=required");
+	puts("nonsteam.motion-aim-right-stick=required");
+	puts("nonsteam.motion-aim-mouse=required");
 }
 
 static const char *path_exists(const char *path)
@@ -2962,6 +3630,9 @@ static void print_doctor(void)
 	printf("dev.uinput.writable=%s\n", path_writable("/dev/uinput"));
 	printf("backend=%s\n", backend_name(backend));
 	printf("profile=%s\n", profile_name(profiles));
+	printf("aim.mode=%s\n", aim_output_name(aim_output));
+	printf("aim.source=%s\n", aim_source_name(aim_source));
+	printf("aim.activation=%s\n", aim_activation_name(aim_activation));
 }
 
 
@@ -2985,6 +3656,17 @@ static void usage(FILE *out)
 		"\t    --ir-deadzone <0-127>   IR jitter deadzone (default: 0)\n"
 		"\t    --ir-smoothing <0-95>   IR smoothing percent (default: 0)\n"
 		"\t    --pointer-speed <1-127>  Desktop pointer step (default: 16)\n"
+		"\t    --aim-mode <off|mouse|right-stick>\n"
+		"\t                  Motion aim output for Steam/non-Steam games\n"
+		"\t    --aim-source <auto|ir|motion-plus|accelerometer>\n"
+		"\t                  Motion aim sensor preference (default: auto)\n"
+		"\t    --aim-activation <always|b|z|c>\n"
+		"\t                  Hold-to-aim button (default: b)\n"
+		"\t    --aim-sensitivity <1-127>\n"
+		"\t    --aim-deadzone <0-32767>\n"
+		"\t    --aim-smoothing <0-95>\n"
+		"\t    --aim-invert-x <yes|no>\n"
+		"\t    --aim-invert-y <yes|no>\n"
 		"\t-c, --config     Load key=value config file\n"
 		"\t    --no-config  Do not load the default config file\n"
 		"\t-n, --dry-run    Do not create /dev/uinput devices or emit input\n"
@@ -3130,6 +3812,86 @@ int main(int argc, char **argv)
 			}
 		} else if (!strcmp(argv[i], "--ir-smoothing")) {
 			if (++i >= argc || parse_ir_smoothing(argv[i])) {
+				usage(stderr);
+				return EINVAL;
+			}
+		} else if (!strncmp(argv[i], "--aim-mode=", 11)) {
+			if (parse_aim_output(argv[i] + 11)) {
+				usage(stderr);
+				return EINVAL;
+			}
+		} else if (!strcmp(argv[i], "--aim-mode")) {
+			if (++i >= argc || parse_aim_output(argv[i])) {
+				usage(stderr);
+				return EINVAL;
+			}
+		} else if (!strncmp(argv[i], "--aim-source=", 13)) {
+			if (parse_aim_source(argv[i] + 13)) {
+				usage(stderr);
+				return EINVAL;
+			}
+		} else if (!strcmp(argv[i], "--aim-source")) {
+			if (++i >= argc || parse_aim_source(argv[i])) {
+				usage(stderr);
+				return EINVAL;
+			}
+		} else if (!strncmp(argv[i], "--aim-activation=", 17)) {
+			if (parse_aim_activation(argv[i] + 17)) {
+				usage(stderr);
+				return EINVAL;
+			}
+		} else if (!strcmp(argv[i], "--aim-activation")) {
+			if (++i >= argc || parse_aim_activation(argv[i])) {
+				usage(stderr);
+				return EINVAL;
+			}
+		} else if (!strncmp(argv[i], "--aim-sensitivity=", 18)) {
+			if (parse_aim_sensitivity(argv[i] + 18)) {
+				usage(stderr);
+				return EINVAL;
+			}
+		} else if (!strcmp(argv[i], "--aim-sensitivity")) {
+			if (++i >= argc || parse_aim_sensitivity(argv[i])) {
+				usage(stderr);
+				return EINVAL;
+			}
+		} else if (!strncmp(argv[i], "--aim-deadzone=", 15)) {
+			if (parse_aim_deadzone(argv[i] + 15)) {
+				usage(stderr);
+				return EINVAL;
+			}
+		} else if (!strcmp(argv[i], "--aim-deadzone")) {
+			if (++i >= argc || parse_aim_deadzone(argv[i])) {
+				usage(stderr);
+				return EINVAL;
+			}
+		} else if (!strncmp(argv[i], "--aim-smoothing=", 16)) {
+			if (parse_aim_smoothing(argv[i] + 16)) {
+				usage(stderr);
+				return EINVAL;
+			}
+		} else if (!strcmp(argv[i], "--aim-smoothing")) {
+			if (++i >= argc || parse_aim_smoothing(argv[i])) {
+				usage(stderr);
+				return EINVAL;
+			}
+		} else if (!strncmp(argv[i], "--aim-invert-x=", 15)) {
+			if (parse_aim_invert_x(argv[i] + 15)) {
+				usage(stderr);
+				return EINVAL;
+			}
+		} else if (!strcmp(argv[i], "--aim-invert-x")) {
+			if (++i >= argc || parse_aim_invert_x(argv[i])) {
+				usage(stderr);
+				return EINVAL;
+			}
+		} else if (!strncmp(argv[i], "--aim-invert-y=", 15)) {
+			if (parse_aim_invert_y(argv[i] + 15)) {
+				usage(stderr);
+				return EINVAL;
+			}
+		} else if (!strcmp(argv[i], "--aim-invert-y")) {
+			if (++i >= argc || parse_aim_invert_y(argv[i])) {
 				usage(stderr);
 				return EINVAL;
 			}

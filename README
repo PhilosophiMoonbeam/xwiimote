@@ -88,6 +88,11 @@ To tune desktop pointer speed and IR gain persistently:
 	$ mkdir -p ~/.config/wiiland
 	$ printf 'profile=desktop\npointer-speed=24\nir-speed=10\n' > ~/.config/wiiland/wiilandd.conf
 
+For Steam-style or non-Steam motion aiming, keep the normal gamepad profile and
+add a WiiLand aim output. `right-stick` feeds camera aim through ABS_RX/ABS_RY;
+`mouse` feeds a virtual relative pointer for games that accept mouse aim:
+	$ printf 'profile=gamepad\naim-mode=right-stick\naim-source=auto\naim-activation=b\n' > ~/.config/wiiland/wiilandd.conf
+
 System-wide defaults can use `/etc/wiiland/wiilandd.conf`; user config files
 override system defaults.
 

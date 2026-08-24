@@ -50,9 +50,12 @@ grep -F 'classic.zl=BTN_TL2' "$build_dir/axis-map" >/dev/null
 grep -F 'guitar.fret.mid=BTN_FRET_MID' "$build_dir/axis-map" >/dev/null
 grep -F 'guitar.home=BTN_MODE' "$build_dir/axis-map" >/dev/null
 grep -F 'drums.minus=BTN_SELECT' "$build_dir/axis-map" >/dev/null
+grep -F 'aim.right-stick.x=ABS_RX' "$build_dir/axis-map" >/dev/null
+grep -F 'aim.mouse.x=REL_X' "$build_dir/axis-map" >/dev/null
 "$bin" --validation-checklist >"$build_dir/validation-checklist"
 grep -F 'motion-plus-external.hotplug=required' "$build_dir/validation-checklist" >/dev/null
 grep -F 'wayland.wine-proton=required' "$build_dir/validation-checklist" >/dev/null
+grep -F 'steam.motion-aim-right-stick=required' "$build_dir/validation-checklist" >/dev/null
 cat >"$build_dir/doctor.conf" <<'EOF'
 backend=uinput
 profile=desktop
@@ -67,8 +70,19 @@ grep -F 'wayland.socket.exists=yes' "$build_dir/doctor" >/dev/null
 grep -F 'dev.uinput.writable=' "$build_dir/doctor" >/dev/null
 grep -F 'backend=uinput' "$build_dir/doctor" >/dev/null
 grep -F 'profile=desktop' "$build_dir/doctor" >/dev/null
+grep -F 'aim.mode=off' "$build_dir/doctor" >/dev/null
 "$bin" --no-config --trace-events=ir --dump-config >/dev/null
 "$bin" --no-config --trace-events=motion-plus --dump-config >/dev/null
+"$bin" --no-config --aim-mode=right-stick --aim-source=motion-plus \
+	--aim-activation=z --aim-sensitivity=24 --aim-deadzone=12 \
+	--aim-smoothing=40 --aim-invert-y=yes --dump-config >"$build_dir/aim-dump"
+grep -F 'aim-mode=right-stick' "$build_dir/aim-dump" >/dev/null
+grep -F 'aim-source=motion-plus' "$build_dir/aim-dump" >/dev/null
+grep -F 'aim-activation=z' "$build_dir/aim-dump" >/dev/null
+grep -F 'aim-sensitivity=24' "$build_dir/aim-dump" >/dev/null
+grep -F 'aim-deadzone=12' "$build_dir/aim-dump" >/dev/null
+grep -F 'aim-smoothing=40' "$build_dir/aim-dump" >/dev/null
+grep -F 'aim-invert-y=yes' "$build_dir/aim-dump" >/dev/null
 if "$bin" --no-config --trace-events=bad --dump-config >/dev/null 2>&1; then
 	printf '%s\n' 'wiilandd accepted invalid trace event filter' >&2
 	exit 1
@@ -117,14 +131,17 @@ cat >"$fake_wiilandd" <<'EOF'
 case "$1" in
 --axis-map)
 	printf '%s\n' 'nunchuk.accel.x=ABS_HAT1X'
+	printf '%s\n' 'aim.right-stick.x=ABS_RX'
 	exit 0
 	;;
 --validation-checklist)
 	printf '%s\n' 'wayland.wine-proton=required'
+	printf '%s\n' 'steam.motion-aim-right-stick=required'
 	exit 0
 	;;
 --doctor)
 	printf '%s\n' 'dev.uinput.writable=no'
+	printf '%s\n' 'aim.mode=right-stick'
 	exit 0
 	;;
 --list)
@@ -169,13 +186,19 @@ grep -F 'SWAYSOCK=/tmp/sway.sock' "$build_dir/hardware-report" >/dev/null
 grep -F 'manual.sdl=TODO:' "$build_dir/hardware-report" >/dev/null
 grep -F 'manual.wine-proton=TODO:' "$build_dir/hardware-report" >/dev/null
 grep -F 'manual.native-wayland-desktop=TODO:' "$build_dir/hardware-report" >/dev/null
+grep -F 'manual.steam-motion-aim=TODO:' "$build_dir/hardware-report" >/dev/null
+grep -F 'manual.nonsteam-motion-aim=TODO:' "$build_dir/hardware-report" >/dev/null
+grep -F 'manual.mouse-motion-aim=TODO:' "$build_dir/hardware-report" >/dev/null
 grep -F '$ '"$fake_wiilandd"' --axis-map' "$build_dir/hardware-report" >/dev/null
 grep -F 'device.1.uevent.HID_NAME=Nintendo Wii Remote' "$build_dir/hardware-report" >/dev/null
 grep -F 'nunchuk.accel.x=ABS_HAT1X' "$build_dir/hardware-report" >/dev/null
+grep -F 'aim.right-stick.x=ABS_RX' "$build_dir/hardware-report" >/dev/null
 grep -F '$ '"$fake_wiilandd"' --validation-checklist' "$build_dir/hardware-report" >/dev/null
 grep -F 'wayland.wine-proton=required' "$build_dir/hardware-report" >/dev/null
+grep -F 'steam.motion-aim-right-stick=required' "$build_dir/hardware-report" >/dev/null
 grep -F '$ '"$fake_wiilandd"' --doctor' "$build_dir/hardware-report" >/dev/null
 grep -F 'dev.uinput.writable=no' "$build_dir/hardware-report" >/dev/null
+grep -F 'aim.mode=right-stick' "$build_dir/hardware-report" >/dev/null
 (cd "$build_dir" && WIILANDD=$fake_wiilandd \
 	"$root/tools/wiilandd-hardware-report.sh") >"$build_dir/hardware-report-no-device"
 grep -F -- '--trace-events=ir' "$build_dir/hardware-report-no-device" >/dev/null
@@ -194,6 +217,9 @@ grep -F 'QTabWidget' "$root/tools/wiiland-config.cpp" >/dev/null
 grep -F 'qOverload<int, QProcess::ExitStatus>(&QProcess::finished)' "$root/tools/wiiland-config.cpp" >/dev/null
 grep -F 'process->start(program, arguments);' "$root/tools/wiiland-config.cpp" >/dev/null
 grep -F 'desktopBindingNames()' "$root/tools/wiiland-config.cpp" >/dev/null
+grep -F 'aim-mode=right-stick' "$root/res/wiilandd.conf" >/dev/null
+grep -F 'aim-mode=right-stick' "$root/doc/wiilandd.1" >/dev/null
+grep -F 'aimMode->addItems' "$root/tools/wiiland-config.cpp" >/dev/null
 
 
 

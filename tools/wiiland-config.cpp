@@ -205,6 +205,28 @@ private:
         profileForm->addRow(QStringLiteral("IR jitter deadzone"), irDeadzone);
         profileForm->addRow(QStringLiteral("IR smoothing %"), irSmoothing);
 
+        auto *aimBox = new QGroupBox(QStringLiteral("Modern motion aiming"), tab);
+        auto *aimForm = new QFormLayout(aimBox);
+        aimMode = new QComboBox(aimBox);
+        aimMode->addItems({QStringLiteral("off"), QStringLiteral("right-stick"), QStringLiteral("mouse")});
+        aimSource = new QComboBox(aimBox);
+        aimSource->addItems({QStringLiteral("auto"), QStringLiteral("ir"), QStringLiteral("motion-plus"), QStringLiteral("accelerometer")});
+        aimActivation = new QComboBox(aimBox);
+        aimActivation->addItems({QStringLiteral("b"), QStringLiteral("always"), QStringLiteral("z"), QStringLiteral("c")});
+        aimSensitivity = spinBox(1, 127, 16, aimBox);
+        aimDeadzone = spinBox(0, 32767, 4, aimBox);
+        aimSmoothing = spinBox(0, 95, 25, aimBox);
+        aimInvertX = new QCheckBox(aimBox);
+        aimInvertY = new QCheckBox(aimBox);
+        aimForm->addRow(QStringLiteral("Output"), aimMode);
+        aimForm->addRow(QStringLiteral("Best available sensor"), aimSource);
+        aimForm->addRow(QStringLiteral("Activation"), aimActivation);
+        aimForm->addRow(QStringLiteral("Sensitivity"), aimSensitivity);
+        aimForm->addRow(QStringLiteral("Deadzone"), aimDeadzone);
+        aimForm->addRow(QStringLiteral("Smoothing %"), aimSmoothing);
+        aimForm->addRow(QStringLiteral("Invert X"), aimInvertX);
+        aimForm->addRow(QStringLiteral("Invert Y"), aimInvertY);
+
         auto *bindingsBox = new QGroupBox(QStringLiteral("Desktop button bindings"), tab);
         auto *bindingsForm = new QFormLayout(bindingsBox);
         for (const QString &name : desktopBindingNames()) {
@@ -240,6 +262,7 @@ private:
 
         auto *left = new QVBoxLayout;
         left->addWidget(profileBox);
+        left->addWidget(aimBox);
         left->addWidget(bindingsBox);
         left->addStretch(1);
         layout->addLayout(left, 1);
@@ -436,6 +459,22 @@ private:
             irDeadzone->setValue(value.toInt());
         else if (key == QStringLiteral("ir-smoothing"))
             irSmoothing->setValue(value.toInt());
+        else if (key == QStringLiteral("aim-mode"))
+            setComboText(aimMode, value);
+        else if (key == QStringLiteral("aim-source"))
+            setComboText(aimSource, value);
+        else if (key == QStringLiteral("aim-activation"))
+            setComboText(aimActivation, value);
+        else if (key == QStringLiteral("aim-sensitivity"))
+            aimSensitivity->setValue(value.toInt());
+        else if (key == QStringLiteral("aim-deadzone"))
+            aimDeadzone->setValue(value.toInt());
+        else if (key == QStringLiteral("aim-smoothing"))
+            aimSmoothing->setValue(value.toInt());
+        else if (key == QStringLiteral("aim-invert-x"))
+            aimInvertX->setChecked(value == QStringLiteral("yes") || value == QStringLiteral("true") || value == QStringLiteral("1"));
+        else if (key == QStringLiteral("aim-invert-y"))
+            aimInvertY->setChecked(value == QStringLiteral("yes") || value == QStringLiteral("true") || value == QStringLiteral("1"));
         else if (key.startsWith(QStringLiteral("desktop.")))
             setComboText(desktopActions.value(key.mid(8)), value);
         else if (key.startsWith(QStringLiteral("device.")) && key.endsWith(QStringLiteral(".profile")))
@@ -465,6 +504,14 @@ private:
         out << "ir-speed=" << irSpeed->value() << "\n";
         out << "ir-deadzone=" << irDeadzone->value() << "\n";
         out << "ir-smoothing=" << irSmoothing->value() << "\n";
+        out << "aim-mode=" << aimMode->currentText() << "\n";
+        out << "aim-source=" << aimSource->currentText() << "\n";
+        out << "aim-activation=" << aimActivation->currentText() << "\n";
+        out << "aim-sensitivity=" << aimSensitivity->value() << "\n";
+        out << "aim-deadzone=" << aimDeadzone->value() << "\n";
+        out << "aim-smoothing=" << aimSmoothing->value() << "\n";
+        out << "aim-invert-x=" << (aimInvertX->isChecked() ? "yes" : "no") << "\n";
+        out << "aim-invert-y=" << (aimInvertY->isChecked() ? "yes" : "no") << "\n";
         for (const QString &name : desktopBindingNames())
             out << "desktop." << name << '=' << desktopActions.value(name)->currentText() << "\n";
         for (int row = 0; row < rules->rowCount(); ++row) {
@@ -489,6 +536,14 @@ private:
     QSpinBox *irSpeed = nullptr;
     QSpinBox *irDeadzone = nullptr;
     QSpinBox *irSmoothing = nullptr;
+    QComboBox *aimMode = nullptr;
+    QComboBox *aimSource = nullptr;
+    QComboBox *aimActivation = nullptr;
+    QSpinBox *aimSensitivity = nullptr;
+    QSpinBox *aimDeadzone = nullptr;
+    QSpinBox *aimSmoothing = nullptr;
+    QCheckBox *aimInvertX = nullptr;
+    QCheckBox *aimInvertY = nullptr;
     QHash<QString, QComboBox *> desktopActions;
     QTableWidget *rules = nullptr;
     QPlainTextEdit *output = nullptr;

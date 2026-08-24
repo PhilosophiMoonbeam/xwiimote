@@ -34,9 +34,13 @@ wiilandd:
     the compositor overview key, and 1/2 send Page Down/Page Up;
   - supports key=value configuration for default profile, syspath and devtype
     profile overrides, desktop button actions, D-pad pointer speed, IR pointer
-    gain, IR jitter deadzone, and IR smoothing
+    gain, IR jitter deadzone, IR smoothing, and modern motion-aim output
     through /etc/wiiland/wiilandd.conf, ~/.config/wiiland/wiilandd.conf, or
     --config; res/wiilandd.conf is the distributable sample;
+  - exposes first-class motion aiming for Steam and non-Steam games:
+    aim-mode=right-stick maps the selected sensor to ABS_RX/ABS_RY camera aim,
+    aim-mode=mouse maps it to REL_X/REL_Y pointer aim, and aim-source=auto
+    prefers IR when visible, then MotionPlus, then accelerometer tilt;
   - provides --self-test for deterministic profile, button-map, config, and
     pointer-motion validation without hardware;
   - provides --axis-map, --validation-checklist, and --doctor for
@@ -59,30 +63,38 @@ Required runtime permissions:
 
 == Roadmap ==
 
-1. Desktop profile
+1. Modern motion aiming
+   Shipped as aim-mode=right-stick or aim-mode=mouse with aim-source=auto
+   fallback from IR to MotionPlus to accelerometer, configurable hold-to-aim
+   activation, sensitivity, deadzone, smoothing, and axis inversion. This makes
+   Wii Remote hardware useful as a modern Linux game controller in Steam,
+   Proton/Wine, SDL, XWayland games, and native Wayland games without spoofing a
+   DualSense/DualShock device identity.
+
+2. Desktop profile
    Shipped as --profile desktop and --profile both with D-pad motion,
    configurable IR pointer motion, jitter deadzone, smoothing, and configurable
    desktop button actions.
 
-2. Per-device policy
+3. Per-device policy
    Shipped as device.<syspath-substring>.profile and
    device-type.<devtype-substring>.profile rules for choosing gamepad, desktop,
    or both per controller path/type. Bluetooth-address matching remains a future
    refinement if hardware reports show a stable identifier surface worth
    standardizing.
 
-3. Optional libei backend
+4. Optional libei backend
    Add --backend=libei when libei and compositor support are common enough.
    libei gives user-mediated emulated input through a compositor EIS endpoint;
    uinput remains the fallback because it works across compositors and native
    game stacks today.
 
-4. Distribution integration
+5. Distribution integration
    Automake installs the uinput udev rule, graphical-session-scoped systemd
    user service, and sample config from res/. Keep the legacy Xorg blacklist
    file for legacy Xorg sessions only.
 
-5. Test hardware matrix
+6. Test hardware matrix
    Completion requires direct reports for:
    - original Wii Remote: core buttons, accelerometer, IR desktop pointer;
    - original Wii Remote plus external MotionPlus addon: hotplug detection and
@@ -122,7 +134,8 @@ Required runtime permissions:
    --list or a sysfs path.
 
    After dry-run traces show expected events, repeat without --dry-run and
-   validate the virtual gamepad in an SDL input tester, one Wine/Proton game,
-   and the desktop pointer/buttons under a native Wayland compositor. Do not
-   mark the Wayland migration complete until this matrix has real hardware
-   evidence.
+   validate the virtual gamepad in an SDL input tester, one Steam Input game,
+   one non-Steam native or XWayland game, one Wine/Proton game, aim-mode=mouse,
+   aim-mode=right-stick, and the desktop pointer/buttons under a native Wayland
+   compositor. Do not mark the Wayland migration complete until this matrix has
+   real hardware evidence.
