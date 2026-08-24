@@ -205,8 +205,10 @@ wiiland_config_LDFLAGS = \
 	$(AM_LDFLAGS)
 endif
 
-check_PROGRAMS = libxwiimote-decode-test
-TESTS = libxwiimote-decode-test
+check_PROGRAMS = \
+	libxwiimote-decode-test \
+	wiilandd-uinput-test
+TESTS = $(check_PROGRAMS)
 libxwiimote_decode_test_SOURCES = \
 	tests/libxwiimote-decode.c
 libxwiimote_decode_test_CPPFLAGS = \
@@ -215,6 +217,14 @@ libxwiimote_decode_test_CPPFLAGS = \
 libxwiimote_decode_test_LDADD = \
 	$(UDEV_LIBS)
 libxwiimote_decode_test_LDFLAGS = \
+	$(AM_LDFLAGS)
+wiilandd_uinput_test_SOURCES = \
+	tests/wiilandd-uinput.c
+wiilandd_uinput_test_CPPFLAGS = \
+	$(AM_CPPFLAGS)
+wiilandd_uinput_test_LDADD = \
+	libxwiimote.la
+wiilandd_uinput_test_LDFLAGS = \
 	$(AM_LDFLAGS)
 
 check-local: wiilandd
