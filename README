@@ -29,8 +29,10 @@ Dependencies:
 	- ncurses: Used for UI of xwiishow
 	- Linux uinput: Used by wiilandd to expose Wayland-native virtual
 		input devices
-	- Qt 6 Widgets: Optional; used only when building wiiland-config with
+	- Qt 6 Widgets: Optional; used when building wiiland-config with
 		--enable-qt-ui
+	- Qt 6 Wayland platform plugin: Runtime requirement for the frontend's
+		native Wayland backend (often packaged as qt6-wayland)
 
 This software packages contains:
 	libxwiimote.so: A userspace library which helps accessing connected Wii
@@ -113,6 +115,11 @@ Per-device rules can override that default by sysfs path substring:
 
 For the optional Qt 6 frontend, configure with `--enable-qt-ui` and run:
 	$ wiiland-config
+Qt 6 prefers its native Wayland QPA plugin when `WAYLAND_DISPLAY` is set or
+`XDG_SESSION_TYPE=wayland`; the status bar reports the active display backend.
+`QT_QPA_PLATFORM=wayland wiiland-config` explicitly requires native Wayland and
+is useful for packaging checks. The xcb plugin remains a deliberate fallback
+for X11 sessions rather than an application dependency.
 
 For hardware-free diagnostics in packaging or CI, run:
 	$ wiilandd --check-config --config res/wiilandd.conf

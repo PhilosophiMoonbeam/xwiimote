@@ -16,6 +16,7 @@
 #include <QtCore/QTimer>
 #include <QtCore/QStringList>
 #include <QtGui/QFont>
+#include <QtGui/QGuiApplication>
 #include <QtGui/QTextCursor>
 #include <QtWidgets/QApplication>
 #include <QtWidgets/QCheckBox>
@@ -144,7 +145,12 @@ public:
         rootLayout->addWidget(outputBox, 2);
 
         setCentralWidget(root);
-        statusBar()->showMessage(QStringLiteral("Ready"));
+        const QString platformName = QGuiApplication::platformName();
+        const QString displayBackend = platformName.startsWith(QStringLiteral("wayland"))
+                                           ? QStringLiteral("native Wayland")
+                                           : platformName;
+        statusBar()->showMessage(
+            QStringLiteral("Ready — display backend: %1").arg(displayBackend));
         loadConfigFromPath(defaultConfigPath(), false);
     }
 

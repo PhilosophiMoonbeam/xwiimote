@@ -71,6 +71,13 @@ wiilandd:
     creating virtual input devices;
   - handles hotplug and extension changes without Xorg configuration.
 
+wiiland-config:
+  - uses Qt 6 Widgets through the Qt Platform Abstraction rather than X11 APIs;
+  - selects the native Wayland platform plugin in a Wayland session and reports
+    the active display backend in its status bar;
+  - requires the Qt Wayland platform plugin at runtime for native operation,
+    while retaining Qt's xcb fallback for deliberate X11 sessions.
+
 Required runtime permissions:
   - normal input read access for hid-wiimote evdev nodes;
   - write access to /dev/uinput, normally via a distribution udev rule or a
