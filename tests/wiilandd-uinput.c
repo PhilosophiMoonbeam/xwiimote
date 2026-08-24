@@ -120,8 +120,8 @@ static int kernel_expect_events(int fd, struct expected_event *expected,
 				    events[i].value != expected[j].value)
 					continue;
 				expected[j].seen = true;
-			--remaining;
-			break;
+				--remaining;
+				break;
 			}
 		}
 	}
@@ -129,12 +129,75 @@ static int kernel_expect_events(int fd, struct expected_event *expected,
 	return remaining ? -ETIMEDOUT : 0;
 }
 
+static int kernel_check_identity(int fd, const char *expected_name)
+{
+	struct input_id id;
+	char name[UINPUT_MAX_NAME_SIZE];
+
+	memset(&id, 0, sizeof(id));
+	memset(name, 0, sizeof(name));
+	if (ioctl(fd, EVIOCGID, &id) < 0 ||
+	    ioctl(fd, EVIOCGNAME(sizeof(name)), name) < 0)
+		return -errno;
+	if (strcmp(name, expected_name) ||
+	    id.bustype != BUS_BLUETOOTH ||
+	    id.vendor != 0x057e ||
+	    id.product != 0x0337 ||
+	    id.version != 1)
+		return -ENODEV;
+
+	return 0;
+}
+
 static int kernel_check_controller_caps(int fd)
 {
+	static const unsigned int keys[] = {
+		BTN_DPAD_LEFT, BTN_DPAD_RIGHT, BTN_DPAD_UP, BTN_DPAD_DOWN,
+		BTN_SOUTH, BTN_EAST, BTN_NORTH, BTN_WEST,
+		BTN_START, BTN_SELECT, BTN_MODE, BTN_1, BTN_2,
+		BTN_TL, BTN_TR, BTN_TL2, BTN_TR2, BTN_THUMBL, BTN_THUMBR,
+		BTN_C, BTN_Z, BTN_STRUM_BAR_UP, BTN_STRUM_BAR_DOWN,
+		BTN_FRET_FAR_UP, BTN_FRET_UP, BTN_FRET_MID,
+		BTN_FRET_LOW, BTN_FRET_FAR_LOW,
+	};
+	static const struct {
+		unsigned int code;
+		int minimum;
+		int maximum;
+	} axes[] = {
+		{ ABS_X, VIRTUAL_AXIS_MIN, VIRTUAL_AXIS_MAX },
+		{ ABS_Y, VIRTUAL_AXIS_MIN, VIRTUAL_AXIS_MAX },
+		{ ABS_RX, VIRTUAL_AXIS_MIN, VIRTUAL_AXIS_MAX },
+		{ ABS_RY, VIRTUAL_AXIS_MIN, VIRTUAL_AXIS_MAX },
+		{ ABS_Z, 0, VIRTUAL_TRIGGER_MAX },
+		{ ABS_RZ, 0, VIRTUAL_TRIGGER_MAX },
+		{ ABS_HAT3X, VIRTUAL_AXIS_MIN, VIRTUAL_AXIS_MAX },
+		{ ABS_HAT3Y, 0, VIRTUAL_TRIGGER_MAX },
+		{ ABS_MISC, 0, VIRTUAL_TRIGGER_MAX },
+		{ ABS_PRESSURE, 0, 65535 },
+		{ ABS_DISTANCE, 0, 65535 },
+		{ ABS_TILT_X, 0, 65535 },
+		{ ABS_TILT_Y, 0, 65535 },
+		{ ABS_THROTTLE, VIRTUAL_AXIS_MIN, VIRTUAL_AXIS_MAX },
+		{ ABS_RUDDER, VIRTUAL_AXIS_MIN, VIRTUAL_AXIS_MAX },
+		{ ABS_WHEEL, VIRTUAL_AXIS_MIN, VIRTUAL_AXIS_MAX },
+		{ ABS_GAS, VIRTUAL_AXIS_MIN, VIRTUAL_AXIS_MAX },
+		{ ABS_BRAKE, VIRTUAL_AXIS_MIN, VIRTUAL_AXIS_MAX },
+		{ ABS_HAT0X, VIRTUAL_AXIS_MIN, VIRTUAL_AXIS_MAX },
+		{ ABS_HAT1X, VIRTUAL_AXIS_MIN, VIRTUAL_AXIS_MAX },
+		{ ABS_HAT1Y, VIRTUAL_AXIS_MIN, VIRTUAL_AXIS_MAX },
+		{ ABS_HAT2X, VIRTUAL_AXIS_MIN, VIRTUAL_AXIS_MAX },
+	};
 	unsigned long ev_bits[TEST_BIT_ARRAY(EV_MAX)];
 	unsigned long key_bits[TEST_BIT_ARRAY(KEY_MAX)];
 	unsigned long abs_bits[TEST_BIT_ARRAY(ABS_MAX)];
 	struct input_absinfo abs;
+	size_t i;
+	int ret;
+
+	ret = kernel_check_identity(fd, "WiiLand Wayland Controller");
+	if (ret)
+		return ret;
 
 	memset(ev_bits, 0, sizeof(ev_bits));
 	memset(key_bits, 0, sizeof(key_bits));
@@ -143,28 +206,23 @@ static int kernel_check_controller_caps(int fd)
 	    ioctl(fd, EVIOCGBIT(EV_KEY, sizeof(key_bits)), key_bits) < 0 ||
 	    ioctl(fd, EVIOCGBIT(EV_ABS, sizeof(abs_bits)), abs_bits) < 0)
 		return -errno;
-
 	if (!kernel_has_bit(ev_bits, EV_KEY) ||
-	    !kernel_has_bit(ev_bits, EV_ABS) ||
-	    !kernel_has_bit(key_bits, BTN_SOUTH) ||
-	    !kernel_has_bit(key_bits, BTN_FRET_FAR_LOW) ||
-	    !kernel_has_bit(abs_bits, ABS_X) ||
-	    !kernel_has_bit(abs_bits, ABS_PRESSURE) ||
-	    !kernel_has_bit(abs_bits, ABS_HAT2X))
+	    !kernel_has_bit(ev_bits, EV_ABS))
 		return -ENOTSUP;
 
-	if (ioctl(fd, EVIOCGABS(ABS_X), &abs) < 0)
-		return -errno;
-	if (abs.minimum != VIRTUAL_AXIS_MIN || abs.maximum != VIRTUAL_AXIS_MAX)
-		return -ERANGE;
-	if (ioctl(fd, EVIOCGABS(ABS_Z), &abs) < 0)
-		return -errno;
-	if (abs.minimum != 0 || abs.maximum != VIRTUAL_TRIGGER_MAX)
-		return -ERANGE;
-	if (ioctl(fd, EVIOCGABS(ABS_PRESSURE), &abs) < 0)
-		return -errno;
-	if (abs.minimum != 0 || abs.maximum != 65535)
-		return -ERANGE;
+	for (i = 0; i < ARRAY_SIZE(keys); ++i)
+		if (!kernel_has_bit(key_bits, keys[i]))
+			return -ENOTSUP;
+
+	for (i = 0; i < ARRAY_SIZE(axes); ++i) {
+		if (!kernel_has_bit(abs_bits, axes[i].code))
+			return -ENOTSUP;
+		if (ioctl(fd, EVIOCGABS(axes[i].code), &abs) < 0)
+			return -errno;
+		if (abs.minimum != axes[i].minimum ||
+		    abs.maximum != axes[i].maximum)
+			return -ERANGE;
+	}
 
 	return 0;
 }
@@ -207,6 +265,11 @@ static int kernel_test_controller(int *uinput_out, int *event_out)
 
 static int kernel_test_desktop(int *uinput_out, int *event_out)
 {
+	static const unsigned int keys[] = {
+		BTN_LEFT, BTN_RIGHT, KEY_ENTER, KEY_ESC, KEY_LEFTMETA,
+		KEY_PAGEUP, KEY_PAGEDOWN,
+	};
+	static const unsigned int rels[] = { REL_X, REL_Y };
 	struct expected_event expected[] = {
 		{ EV_KEY, BTN_LEFT, 1, false },
 		{ EV_REL, REL_X, 17, false },
@@ -216,6 +279,7 @@ static int kernel_test_desktop(int *uinput_out, int *event_out)
 	unsigned long key_bits[TEST_BIT_ARRAY(KEY_MAX)];
 	unsigned long rel_bits[TEST_BIT_ARRAY(REL_MAX)];
 	char event_path[PATH_MAX];
+	size_t i;
 	int ret;
 
 	*uinput_out = create_virtual_desktop("kernel-integration-test");
@@ -226,6 +290,10 @@ static int kernel_test_desktop(int *uinput_out, int *event_out)
 	if (*event_out < 0)
 		return *event_out;
 
+	ret = kernel_check_identity(*event_out, "WiiLand Wayland Desktop");
+	if (ret)
+		return ret;
+
 	memset(ev_bits, 0, sizeof(ev_bits));
 	memset(key_bits, 0, sizeof(key_bits));
 	memset(rel_bits, 0, sizeof(rel_bits));
@@ -234,11 +302,14 @@ static int kernel_test_desktop(int *uinput_out, int *event_out)
 	    ioctl(*event_out, EVIOCGBIT(EV_REL, sizeof(rel_bits)), rel_bits) < 0)
 		return -errno;
 	if (!kernel_has_bit(ev_bits, EV_KEY) ||
-	    !kernel_has_bit(ev_bits, EV_REL) ||
-	    !kernel_has_bit(key_bits, BTN_LEFT) ||
-	    !kernel_has_bit(rel_bits, REL_X) ||
-	    !kernel_has_bit(rel_bits, REL_Y))
+	    !kernel_has_bit(ev_bits, EV_REL))
 		return -ENOTSUP;
+	for (i = 0; i < ARRAY_SIZE(keys); ++i)
+		if (!kernel_has_bit(key_bits, keys[i]))
+			return -ENOTSUP;
+	for (i = 0; i < ARRAY_SIZE(rels); ++i)
+		if (!kernel_has_bit(rel_bits, rels[i]))
+			return -ENOTSUP;
 
 	ret = emit_key(*uinput_out, BTN_LEFT, 1);
 	if (!ret)
