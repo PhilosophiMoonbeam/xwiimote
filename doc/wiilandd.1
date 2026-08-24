@@ -212,10 +212,11 @@ needs no display setup and remains best for camera aim.
 .TP
 .B ir-screen-left|right|top|bottom=0-32767
 Optional screen bounds used only when
-.B ir-aim-mapping=absolute
-and all four bounds describe a non-empty rectangle. These values let users dial
-in TV size, aspect ratio, overscan, and sensor-bar placement without making
-absolute pointing mandatory.
+.B ir-aim-mapping=absolute .
+Right must exceed left and bottom must exceed top; invalid rectangles are
+rejected during configuration validation. These values let users dial in TV
+size, aspect ratio, overscan, and sensor-bar placement without making absolute
+pointing mandatory.
 .TP
 .B aim-mode=off|mouse|right-stick
 Enable modern motion aiming. The default
@@ -234,8 +235,8 @@ right stick.
 .B aim-source=auto|ir|motion-plus|accelerometer
 Select the motion-aim sensor. The default
 .B auto
-prefers valid IR camera deltas, then calibrated MotionPlus gyro axes, then
-calibrated accelerometer tilt. Without
+prefers valid IR camera deltas, then MotionPlus gyro axes, then accelerometer
+tilt. Calibration offsets are applied when configured. Without
 .B aim-accel-zero-*
 keys, accelerometer aim keeps the compatibility fallback of taking the first
 accelerometer event as neutral.
@@ -312,11 +313,12 @@ udev rules for active-seat access to hid-wiimote event nodes and
 .TP
 .B res/wiilandd.service
 systemd user service bound to
-.BR graphical-session.target ,
-with
+.BR graphical-session.target .
+It uses
 .B --check-config
-preflight before starting
-.BR wiilandd .
+as an
+.B ExecCondition
+before starting, so invalid configuration does not enter a restart loop.
 After installation, enable it with
 .BR "systemctl --user enable wiilandd.service" ;
 start it immediately with
@@ -422,10 +424,10 @@ button events.
 .B Guitar
 Stick X/Y use
 .BR ABS_X / ABS_Y ;
-whammy and fret board use
-.BR ABS_WHAMMY_BAR
+whammy and fret board use the valid generic uinput axes
+.BR ABS_HAT3X
 and
-.BR ABS_FRET_BOARD ;
+.BR ABS_HAT3Y ;
 strum/fret buttons use dedicated guitar button events, and +/Home use
 .BR BTN_START / BTN_MODE .
 .TP
@@ -438,9 +440,9 @@ left/right/far-right toms use
 .BR ABS_Z ,
 .BR ABS_RZ ,
 and
-.BR ABS_WHAMMY_BAR ;
+.BR ABS_HAT3X ;
 bass and hi-hat pedals use
-.BR ABS_FRET_BOARD
+.BR ABS_HAT3Y
 and
 .BR ABS_MISC ;
 +/- use
@@ -455,8 +457,11 @@ and
 .BR ABS_TILT_Y .
 .SH BACKEND
 The default backend is Linux uinput because it is compositor-independent and is
-already consumed by Wayland compositors and game stacks. The gamepad profile is
-safe as a login default; use
+already consumed by Wayland compositors and game stacks. WiiLand opens only the
+hid-wiimote interfaces needed by the selected profile and aim source. Optional
+extension-open failures do not discard an otherwise usable remote, and bounded
+event draining keeps desktop pointer repeat responsive during continuous sensor
+traffic. The gamepad profile is safe as a login default; use
 .B --profile=desktop
 or
 .B --profile=both

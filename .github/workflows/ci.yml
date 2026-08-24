@@ -22,4 +22,4 @@ jobs:
           make -j"$(nproc)"
           make check
           make DESTDIR="$PWD/stage" install
-          tests/wiilandd-install-smoke.sh "$PWD/stage" /usr
+          tests/wiilandd-install-smoke.sh "$PWD/stage" /usr yes

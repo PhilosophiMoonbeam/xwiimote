@@ -9,10 +9,14 @@
 #include <QtCore/QHash>
 #include <QtCore/QIODevice>
 #include <QtCore/QProcess>
+#include <QtCore/QSaveFile>
+#include <QtCore/QSharedPointer>
 #include <QtCore/QStandardPaths>
 #include <QtCore/QTextStream>
+#include <QtCore/QTimer>
 #include <QtCore/QStringList>
 #include <QtGui/QFont>
+#include <QtGui/QTextCursor>
 #include <QtWidgets/QApplication>
 #include <QtWidgets/QCheckBox>
 #include <QtWidgets/QComboBox>
@@ -31,6 +35,7 @@
 #include <QtWidgets/QSpinBox>
 #include <QtWidgets/QStatusBar>
 #include <QtWidgets/QTableWidget>
+#include <QtWidgets/QScrollArea>
 #include <QtWidgets/QTableWidgetItem>
 #include <QtWidgets/QTabWidget>
 #include <QtWidgets/QVBoxLayout>
@@ -123,10 +128,20 @@ public:
         rootLayout->addWidget(subtitle);
 
         auto *tabs = new QTabWidget(root);
+        tabs->setAccessibleName(QStringLiteral("WiiLand settings"));
         tabs->addTab(buildOverviewTab(tabs), QStringLiteral("Overview"));
         tabs->addTab(buildConfigTab(tabs), QStringLiteral("Configuration"));
         tabs->addTab(buildValidationTab(tabs), QStringLiteral("Validation"));
-        rootLayout->addWidget(tabs, 1);
+        rootLayout->addWidget(tabs, 3);
+
+        auto *outputBox = new QGroupBox(QStringLiteral("Command output"), root);
+        auto *outputLayout = new QVBoxLayout(outputBox);
+        output = new QPlainTextEdit(outputBox);
+        output->setAccessibleName(QStringLiteral("Command output"));
+        output->setReadOnly(true);
+        output->setLineWrapMode(QPlainTextEdit::NoWrap);
+        outputLayout->addWidget(output);
+        rootLayout->addWidget(outputBox, 2);
 
         setCentralWidget(root);
         statusBar()->showMessage(QStringLiteral("Ready"));
@@ -143,6 +158,9 @@ private:
         auto *form = new QFormLayout(paths);
         wiilanddPath = new QLineEdit(QStringLiteral("wiilandd"), paths);
         configPath = new QLineEdit(defaultConfigPath(), paths);
+        wiilanddPath->setAccessibleName(QStringLiteral("wiilandd executable"));
+        wiilanddPath->setPlaceholderText(QStringLiteral("wiilandd or an absolute path"));
+        configPath->setAccessibleName(QStringLiteral("Configuration file"));
         auto *browse = new QPushButton(QStringLiteral("Browse..."), paths);
         auto *configRow = new QWidget(paths);
         auto *configRowLayout = new QHBoxLayout(configRow);
@@ -178,10 +196,7 @@ private:
         addButton(QStringLiteral("Validation checklist"), {QStringLiteral("--validation-checklist")}, 1, 2);
         layout->addWidget(quick);
 
-        output = new QPlainTextEdit(tab);
-        output->setReadOnly(true);
-        output->setLineWrapMode(QPlainTextEdit::NoWrap);
-        layout->addWidget(output, 1);
+        layout->addStretch(1);
 
         return tab;
     }
@@ -189,8 +204,14 @@ private:
     QWidget *buildConfigTab(QWidget *parent)
     {
         auto *tab = new QWidget(parent);
-        auto *layout = new QHBoxLayout(tab);
+        auto *tabLayout = new QVBoxLayout(tab);
+        auto *scroll = new QScrollArea(tab);
+        auto *content = new QWidget(scroll);
+        auto *layout = new QHBoxLayout(content);
 
+        scroll->setWidgetResizable(true);
+        scroll->setWidget(content);
+        tabLayout->addWidget(scroll);
         auto *profileBox = new QGroupBox(QStringLiteral("Profiles and pointer feel"), tab);
         auto *profileForm = new QFormLayout(profileBox);
         profile = new QComboBox(profileBox);
@@ -298,6 +319,9 @@ private:
         auto *deviceBox = new QGroupBox(QStringLiteral("Per-device profile rules"), tab);
         auto *deviceLayout = new QVBoxLayout(deviceBox);
         rules = new QTableWidget(0, 3, deviceBox);
+        rules->setAccessibleName(QStringLiteral("Per-device profile rules"));
+        rules->setSelectionBehavior(QAbstractItemView::SelectRows);
+        rules->setSelectionMode(QAbstractItemView::SingleSelection);
         rules->setHorizontalHeaderLabels({QStringLiteral("Kind"), QStringLiteral("Match substring"), QStringLiteral("Profile")});
         rules->horizontalHeader()->setStretchLastSection(true);
         rules->verticalHeader()->hide();
@@ -310,7 +334,11 @@ private:
         ruleButtons->addStretch(1);
         deviceLayout->addLayout(ruleButtons);
         connect(addRule, &QPushButton::clicked, this, [this]() { appendRule(QStringLiteral("device-type"), QString(), QStringLiteral("gamepad")); });
-        connect(removeRule, &QPushButton::clicked, this, [this]() { rules->removeRow(rules->currentRow()); });
+        connect(removeRule, &QPushButton::clicked, this, [this]() {
+            const int row = rules->currentRow();
+            if (row >= 0)
+                rules->removeRow(row);
+        });
 
         auto *left = new QVBoxLayout;
         left->addWidget(profileBox);
@@ -336,6 +364,7 @@ private:
                 runCommand({QStringLiteral("--config"), configPath->text(), QStringLiteral("--check-config")});
         });
 
+        content->setMinimumSize(content->minimumSizeHint());
         return tab;
     }
 
@@ -347,6 +376,8 @@ private:
         auto *matrix = new QGroupBox(QStringLiteral("Hardware validation capture"), tab);
         auto *matrixLayout = new QFormLayout(matrix);
         deviceSelector = new QLineEdit(matrix);
+        deviceSelector->setAccessibleName(QStringLiteral("Device number or sysfs path"));
+        deviceSelector->setPlaceholderText(QStringLiteral("1 or /sys/devices/..."));
         traceFilter = new QComboBox(matrix);
         traceFilter->addItems({QStringLiteral("all"), QStringLiteral("keys"), QStringLiteral("axes"), QStringLiteral("ir"), QStringLiteral("motion-plus")});
         matrixLayout->addRow(QStringLiteral("Device number or /sys path"), deviceSelector);
@@ -390,9 +421,19 @@ private:
 
     void appendOutput(const QString &text)
     {
-        if (!output)
+        if (!output || text.isEmpty())
             return;
-        output->appendPlainText(text.trimmed());
+
+        QTextCursor cursor = output->textCursor();
+        cursor.movePosition(QTextCursor::End);
+        cursor.insertText(text);
+        output->setTextCursor(cursor);
+        output->ensureCursorVisible();
+    }
+
+    void appendOutputLine(const QString &text)
+    {
+        appendOutput(text + QLatin1Char('\n'));
     }
 
     void runCommand(const QStringList &arguments)
@@ -402,17 +443,23 @@ private:
         const QString program = wiilanddPath->text().trimmed().isEmpty()
             ? QStringLiteral("wiilandd")
             : wiilanddPath->text().trimmed();
-        appendOutput(QStringLiteral("$ ") + quoteCommand(program, arguments));
+        appendOutputLine(QStringLiteral("$ ") + quoteCommand(program, arguments));
         connect(process, &QProcess::readyReadStandardOutput, this, [this, process]() {
             appendOutput(QString::fromLocal8Bit(process->readAllStandardOutput()));
         });
-        connect(process, &QProcess::errorOccurred, this, [this, process](QProcess::ProcessError) {
-            appendOutput(QStringLiteral("process error: ") + process->errorString());
+        connect(process, &QProcess::errorOccurred, this,
+                [this, process](QProcess::ProcessError error) {
+            appendOutputLine(QStringLiteral("process error: ") + process->errorString());
+            if (error == QProcess::FailedToStart) {
+                process->deleteLater();
+                statusBar()->showMessage(QStringLiteral("Command failed to start"), 4000);
+            }
         });
-        connect(process, qOverload<int, QProcess::ExitStatus>(&QProcess::finished), this, [this, process](int code, QProcess::ExitStatus status) {
+        connect(process, qOverload<int, QProcess::ExitStatus>(&QProcess::finished),
+                this, [this, process](int code, QProcess::ExitStatus status) {
             appendOutput(QString::fromLocal8Bit(process->readAllStandardOutput()));
             if (status != QProcess::NormalExit || code != 0)
-                appendOutput(QStringLiteral("exit status: %1").arg(code));
+                appendOutputLine(QStringLiteral("exit status: %1").arg(code));
             process->deleteLater();
             statusBar()->showMessage(QStringLiteral("Command finished"), 4000);
         });
@@ -422,16 +469,36 @@ private:
 
     void startTrace()
     {
-        stopTrace();
-        traceProcess = new QProcess(this);
-        traceProcess->setProcessChannelMode(QProcess::MergedChannels);
-        connect(traceProcess, &QProcess::readyReadStandardOutput, this, [this]() {
-            appendOutput(QString::fromLocal8Bit(traceProcess->readAllStandardOutput()));
+        if (traceProcess) {
+            statusBar()->showMessage(QStringLiteral("A trace is already running or stopping"), 4000);
+            return;
+        }
+        auto *process = new QProcess(this);
+        traceProcess = process;
+        process->setProcessChannelMode(QProcess::MergedChannels);
+        connect(process, &QProcess::readyReadStandardOutput, this, [this, process]() {
+            appendOutput(QString::fromLocal8Bit(process->readAllStandardOutput()));
         });
-        connect(traceProcess, qOverload<int, QProcess::ExitStatus>(&QProcess::finished), this, [this](int code, QProcess::ExitStatus status) {
-            appendOutput(QStringLiteral("trace stopped: exit=%1 status=%2").arg(code).arg(status));
-            traceProcess->deleteLater();
-            traceProcess = nullptr;
+        connect(process, &QProcess::errorOccurred, this,
+                [this, process](QProcess::ProcessError error) {
+            appendOutputLine(QStringLiteral("trace error: ") + process->errorString());
+            if (error == QProcess::FailedToStart) {
+                if (traceProcess == process)
+                    traceProcess = nullptr;
+                process->deleteLater();
+                statusBar()->showMessage(QStringLiteral("Trace failed to start"), 4000);
+            }
+        });
+        connect(process, qOverload<int, QProcess::ExitStatus>(&QProcess::finished),
+                this, [this, process](int code, QProcess::ExitStatus status) {
+            appendOutput(QString::fromLocal8Bit(process->readAllStandardOutput()));
+            appendOutputLine(QStringLiteral("trace stopped: exit=%1 status=%2")
+                                 .arg(code)
+                                 .arg(status));
+            if (traceProcess == process)
+                traceProcess = nullptr;
+            process->deleteLater();
+            statusBar()->showMessage(QStringLiteral("Trace stopped"), 4000);
         });
 
         QStringList args{QStringLiteral("--dry-run"), QStringLiteral("--trace-events=") + traceFilter->currentText(),
@@ -442,22 +509,35 @@ private:
         const QString program = wiilanddPath->text().trimmed().isEmpty()
             ? QStringLiteral("wiilandd")
             : wiilanddPath->text().trimmed();
-        appendOutput(QStringLiteral("$ ") + quoteCommand(program, args));
-        traceProcess->start(program, args);
+        appendOutputLine(QStringLiteral("$ ") + quoteCommand(program, args));
+        process->start(program, args);
         statusBar()->showMessage(QStringLiteral("Trace running"));
     }
 
     void stopTrace()
     {
-        if (!traceProcess)
+        QProcess *process = traceProcess;
+
+        if (!process)
             return;
-        traceProcess->terminate();
-        if (!traceProcess->waitForFinished(1500))
-            traceProcess->kill();
+        process->terminate();
+        QTimer::singleShot(1500, process, [process]() {
+            if (process->state() != QProcess::NotRunning)
+                process->kill();
+        });
+        statusBar()->showMessage(QStringLiteral("Stopping trace"));
     }
 
     void calibrateAim()
     {
+        if (traceProcess) {
+            QMessageBox::information(
+                this,
+                QStringLiteral("Trace is active"),
+                QStringLiteral("Stop the dry-run trace before capturing calibration."));
+            return;
+        }
+
         QStringList args{
             QStringLiteral("--calibrate-aim"),
             QStringLiteral("--aim-calibration-duration"),
@@ -468,19 +548,24 @@ private:
             args << QStringLiteral("--device") << device;
 
         auto *process = new QProcess(this);
-        auto *captured = new QString;
+        auto captured = QSharedPointer<QString>::create();
         process->setProcessChannelMode(QProcess::MergedChannels);
         const QString program = wiilanddPath->text().trimmed().isEmpty()
             ? QStringLiteral("wiilandd")
             : wiilanddPath->text().trimmed();
-        appendOutput(QStringLiteral("$ ") + quoteCommand(program, args));
+        appendOutputLine(QStringLiteral("$ ") + quoteCommand(program, args));
         connect(process, &QProcess::readyReadStandardOutput, this, [this, process, captured]() {
             const QString chunk = QString::fromLocal8Bit(process->readAllStandardOutput());
             *captured += chunk;
             appendOutput(chunk);
         });
-        connect(process, &QProcess::errorOccurred, this, [this, process](QProcess::ProcessError) {
-            appendOutput(QStringLiteral("process error: ") + process->errorString());
+        connect(process, &QProcess::errorOccurred, this,
+                [this, process](QProcess::ProcessError error) {
+            appendOutputLine(QStringLiteral("process error: ") + process->errorString());
+            if (error == QProcess::FailedToStart) {
+                process->deleteLater();
+                statusBar()->showMessage(QStringLiteral("Calibration failed to start"), 4000);
+            }
         });
         connect(process, qOverload<int, QProcess::ExitStatus>(&QProcess::finished),
                 this, [this, process, captured](int code, QProcess::ExitStatus status) {
@@ -490,8 +575,7 @@ private:
             if (status == QProcess::NormalExit && code == 0)
                 applyCalibrationOutput(*captured);
             else
-                appendOutput(QStringLiteral("exit status: %1").arg(code));
-            delete captured;
+                appendOutputLine(QStringLiteral("exit status: %1").arg(code));
             process->deleteLater();
             statusBar()->showMessage(QStringLiteral("Calibration command finished"), 4000);
         });
@@ -523,7 +607,7 @@ private:
         if (applied)
             statusBar()->showMessage(QStringLiteral("Calibration values applied to the form; save the config to persist them"), 6000);
         else
-            appendOutput(QStringLiteral("No calibration key=value lines were captured."));
+            appendOutputLine(QStringLiteral("No calibration key=value lines were captured."));
     }
 
     void appendRule(const QString &kind, const QString &match, const QString &ruleProfile)
@@ -542,6 +626,46 @@ private:
         rules->setCellWidget(row, 2, profileCombo);
     }
 
+    void resetConfigForm()
+    {
+        setComboText(profile, QStringLiteral("gamepad"));
+        pointerSpeed->setValue(16);
+        irSpeed->setValue(8);
+        irDeadzone->setValue(0);
+        irSmoothing->setValue(0);
+        setComboText(irTracking, QStringLiteral("dual"));
+        setComboText(irAimMapping, QStringLiteral("relative"));
+        irScreenCalibrationEnabled->setChecked(false);
+        irScreenLeft->setValue(0);
+        irScreenRight->setValue(1023);
+        irScreenTop->setValue(0);
+        irScreenBottom->setValue(767);
+        setComboText(aimMode, QStringLiteral("off"));
+        setComboText(aimSource, QStringLiteral("auto"));
+        setComboText(aimActivation, QStringLiteral("b"));
+        aimSensitivity->setValue(16);
+        aimDeadzone->setValue(4);
+        aimSmoothing->setValue(25);
+        aimInvertX->setChecked(false);
+        aimInvertY->setChecked(false);
+        aimCalibrationEnabled->setChecked(false);
+        aimCalibrationDuration->setValue(8);
+        aimAccelZeroX->setValue(0);
+        aimAccelZeroY->setValue(0);
+        aimAccelZeroZ->setValue(0);
+        aimMotionPlusBiasX->setValue(0);
+        aimMotionPlusBiasY->setValue(0);
+        aimMotionPlusBiasZ->setValue(0);
+        setComboText(desktopActions.value(QStringLiteral("a")), QStringLiteral("left-click"));
+        setComboText(desktopActions.value(QStringLiteral("b")), QStringLiteral("right-click"));
+        setComboText(desktopActions.value(QStringLiteral("plus")), QStringLiteral("enter"));
+        setComboText(desktopActions.value(QStringLiteral("minus")), QStringLiteral("escape"));
+        setComboText(desktopActions.value(QStringLiteral("home")), QStringLiteral("overview"));
+        setComboText(desktopActions.value(QStringLiteral("one")), QStringLiteral("page-down"));
+        setComboText(desktopActions.value(QStringLiteral("two")), QStringLiteral("page-up"));
+        rules->setRowCount(0);
+    }
+
     void loadConfigFromPath(const QString &path, bool reportErrors)
     {
         QFile file(path);
@@ -556,11 +680,15 @@ private:
             return;
         }
 
-        rules->setRowCount(0);
+        resetConfigForm();
         QTextStream in(&file);
         while (!in.atEnd()) {
-            QString line = in.readLine().trimmed();
-            if (line.isEmpty() || line.startsWith(QLatin1Char('#')))
+            QString line = in.readLine();
+            const int comment = line.indexOf(QLatin1Char('#'));
+            if (comment >= 0)
+                line.truncate(comment);
+            line = line.trimmed();
+            if (line.isEmpty())
                 continue;
             const int equal = line.indexOf(QLatin1Char('='));
             if (equal <= 0)
@@ -647,14 +775,39 @@ private:
 
     bool saveConfig()
     {
+        if (irScreenCalibrationEnabled->isChecked() &&
+            (irScreenRight->value() <= irScreenLeft->value() ||
+             irScreenBottom->value() <= irScreenTop->value())) {
+            QMessageBox::warning(
+                this,
+                QStringLiteral("Invalid IR screen calibration"),
+                QStringLiteral("IR screen right must exceed left, and bottom must exceed top."));
+            return false;
+        }
+
+        for (int row = 0; row < rules->rowCount(); ++row) {
+            auto *matchItem = rules->item(row, 1);
+            if (!matchItem)
+                continue;
+            const QString match = matchItem->text().trimmed();
+            if (match.contains(QLatin1Char('#')) || match.contains(QLatin1Char('=')) ||
+                match.contains(QLatin1Char('\n')) || match.contains(QLatin1Char('\r'))) {
+                QMessageBox::warning(
+                    this,
+                    QStringLiteral("Invalid device rule"),
+                    QStringLiteral("Rule match text cannot contain #, =, or line breaks."));
+                return false;
+            }
+        }
+
         QFileInfo info(configPath->text());
         QDir dir = info.dir();
         if (!dir.exists() && !dir.mkpath(QStringLiteral("."))) {
             QMessageBox::warning(this, QStringLiteral("Cannot create directory"), dir.path());
             return false;
         }
-        QFile file(info.filePath());
-        if (!file.open(QIODevice::WriteOnly | QIODevice::Text | QIODevice::Truncate)) {
+        QSaveFile file(info.filePath());
+        if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
             QMessageBox::warning(this, QStringLiteral("Cannot write config"), file.errorString());
             return false;
         }
@@ -701,6 +854,16 @@ private:
                 continue;
             out << kindCombo->currentText() << '.' << matchItem->text().trimmed()
                 << ".profile=" << profileCombo->currentText() << "\n";
+        }
+        out.flush();
+        if (out.status() != QTextStream::Ok) {
+            file.cancelWriting();
+            QMessageBox::warning(this, QStringLiteral("Cannot write config"), file.errorString());
+            return false;
+        }
+        if (!file.commit()) {
+            QMessageBox::warning(this, QStringLiteral("Cannot replace config"), file.errorString());
+            return false;
         }
         statusBar()->showMessage(QStringLiteral("Saved %1").arg(info.filePath()), 4000);
         return true;

@@ -14,7 +14,7 @@
 #include "xwiimote.h"
 
 struct xwii_iface {
-	int unused;
+	unsigned int opened;
 };
 
 struct xwii_monitor {
@@ -41,6 +41,7 @@ int xwii_iface_new(struct xwii_iface **dev, const char *syspath)
 
 	(void)syspath;
 	if (getenv("XWII_STUB_IFACE_NEW_OK")) {
+		iface.opened = 0;
 		*dev = &iface;
 		return 0;
 	}
@@ -78,9 +79,14 @@ int xwii_iface_watch(struct xwii_iface *dev, bool watch)
 
 int xwii_iface_open(struct xwii_iface *dev, unsigned int ifaces)
 {
-	(void)dev;
-	(void)ifaces;
-	return env_ret("XWII_STUB_OPEN_RET", 0);
+	const char *opened = getenv("XWII_STUB_OPENED");
+	int ret = env_ret("XWII_STUB_OPEN_RET", 0);
+
+	if (opened)
+		dev->opened = (unsigned int)strtoul(opened, NULL, 0);
+	else if (!ret)
+		dev->opened |= ifaces;
+	return ret;
 }
 
 void xwii_iface_close(struct xwii_iface *dev, unsigned int ifaces)
@@ -91,14 +97,14 @@ void xwii_iface_close(struct xwii_iface *dev, unsigned int ifaces)
 
 unsigned int xwii_iface_opened(struct xwii_iface *dev)
 {
-	(void)dev;
-	return 0;
+	return dev->opened;
 }
 
 unsigned int xwii_iface_available(struct xwii_iface *dev)
 {
 	(void)dev;
-	return 0;
+	return (unsigned int)env_ret("XWII_STUB_AVAILABLE",
+				     XWII_IFACE_ALL);
 }
 
 int xwii_iface_poll(struct xwii_iface *dev, struct xwii_event *ev)

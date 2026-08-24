@@ -89,6 +89,11 @@ res/wiilandd.service: $(srcdir)/res/wiilandd.service.in Makefile
 	$(AM_V_at)$(MKDIR_P) res
 	$(AM_V_GEN)sed -e 's|@bindir[@]|$(bindir)|g' \
 		$(srcdir)/res/wiilandd.service.in >$@
+distclean-local:
+	$(AM_V_at)if test "$(abs_builddir)" != "$(abs_srcdir)"; then \
+		rm -f res/wiilandd.service; \
+	fi
+
 
 #
 # Default c/l-flags
@@ -101,6 +106,15 @@ AM_CFLAGS = \
 	-ffast-math \
 	-fdiagnostics-show-option \
 	-fno-strict-aliasing \
+	-fvisibility=hidden \
+	-ffunction-sections \
+	-fdata-sections \
+	-fstack-protector
+AM_CXXFLAGS = \
+	-Wall \
+	-Wextra \
+	-pipe \
+	-fno-common \
 	-fvisibility=hidden \
 	-ffunction-sections \
 	-fdata-sections \
@@ -118,8 +132,10 @@ AM_LDFLAGS = \
 
 if DEBUG
 AM_CFLAGS += -O0 -g
+AM_CXXFLAGS += -O0 -g
 else
 AM_CFLAGS += -O2
+AM_CXXFLAGS += -O2
 endif
 
 #

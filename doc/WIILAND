@@ -55,6 +55,13 @@ wiilandd:
     --dump-config, --axis-map, --validation-checklist, and --doctor;
     CI also builds the Autotools package and validates the staged udev,
     systemd-user, example-config, and wiilandd binary install paths;
+  - opens only the hid-wiimote interfaces required by each device profile and
+    aim source, preserving battery and event-loop capacity in desktop-only and
+    non-IR configurations;
+  - keeps an otherwise usable remote connected when an optional extension
+    interface fails to open, bounds each event-drain batch, and schedules D-pad
+    pointer repeat against a monotonic deadline so sensor traffic cannot starve
+    desktop motion;
   - provides --dry-run --trace-events for hardware validation reports without
     creating virtual input devices;
   - handles hotplug and extension changes without Xorg configuration.
@@ -63,7 +70,8 @@ Required runtime permissions:
   - normal input read access for hid-wiimote evdev nodes;
   - write access to /dev/uinput, normally via a distribution udev rule or a
     service running with the input/uinput capability policy. The sample service
-    validates configuration with --check-config before starting.
+    uses --check-config as an ExecCondition, so invalid configuration suppresses
+    startup without entering the runtime restart policy.
 
 == Roadmap ==
 

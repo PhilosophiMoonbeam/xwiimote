@@ -124,16 +124,21 @@ For hardware-free diagnostics in packaging or CI, run:
 	$ wiilandd --dry-run --trace-events --verbose
 
 `wiilandd --help` and `wiilandd --list` intentionally bypass configuration so
-diagnostics still work when a local config file is broken.
+diagnostics still work when a local config file is broken. At runtime the daemon
+opens only the hid-wiimote interfaces needed by the selected profile and aim
+source. A failed optional extension open no longer disconnects an otherwise
+usable remote, and bounded event draining keeps D-pad pointer repeat responsive
+under continuous sensor input.
 
 The Wayland bridge needs read access to hid-wiimote `/dev/input/event*` nodes and
 write access to `/dev/uinput`. See ./doc/WIILAND for the migration plan, backend
 rationale, the sample config in ./res/wiilandd.conf, the installable udev access
 rule in ./res/70-wiiland-uinput.rules, and the example user service in
-./res/wiilandd.service.in. The service runs `wiilandd --check-config` before
-starting so broken configuration fails fast. The installed unit is generated with
-the configured `bindir`, so `/usr` and `/usr/local` prefix builds use the
-matching `wiilandd` binary path.
+./res/wiilandd.service.in. The service uses `wiilandd --check-config` as a
+systemd condition before starting, so broken configuration is reported without
+entering a restart loop. The installed unit is generated with the configured
+`bindir`, so `/usr` and `/usr/local` prefix builds use the matching `wiilandd`
+binary path.
 
 To run the packaged user service in graphical sessions:
 	$ systemctl --user daemon-reload
@@ -196,9 +201,8 @@ infrastructure it wants.
 Contact
 =======
 
-Website:
+Website, issue tracker, and current maintainer contact:
   https://github.com/PhilosophiMoonbeam/wiiland
 
-For email contact please see ./COPYING for a list of contributors or
-write an email to the current maintainer at:
-  dh.herrmann@gmail.com
+WiiLand is forked from xwiimote by David Herrmann. See ./COPYING for authorship
+and contributor credits.

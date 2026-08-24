@@ -32,10 +32,11 @@ default_repo_dir=$(CDPATH=; cd -- "$(dirname -- "$0")/.." && pwd)
 repo_dir=${WIILAND_REPO_DIR:-$default_repo_dir}
 module_dir=${HID_WIIMOTE_MODULE_DIR:-/sys/module/hid_wiimote}
 os_release=${OS_RELEASE_PATH:-/etc/os-release}
-list_file=${TMPDIR:-/tmp}/wiilandd-hardware-report-list.$$
-bt_file=${TMPDIR:-/tmp}/wiilandd-hardware-report-bt.$$
-git_status_file=${TMPDIR:-/tmp}/wiilandd-hardware-report-git.$$
-trap 'rm -f "$list_file" "$bt_file" "$git_status_file"' EXIT INT HUP TERM
+tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/wiilandd-hardware-report.XXXXXX")
+list_file=$tmp_dir/device-list
+bt_file=$tmp_dir/bluetooth-controllers
+git_status_file=$tmp_dir/git-status
+trap 'rm -rf "$tmp_dir"' EXIT INT HUP TERM
 
 section() {
 	printf '\n== %s ==\n' "$1"
@@ -55,7 +56,7 @@ run_optional() {
 run_pkg_version() {
 	printf '%s pkg-config version: ' "$1"
 	if command -v pkg-config >/dev/null 2>&1; then
-		if ! pkg-config --modversion "$1"; then
+		if ! pkg-config --modversion "$1" 2>/dev/null; then
 			printf 'unavailable\n'
 		fi
 	else

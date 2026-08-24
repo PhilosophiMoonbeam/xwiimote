@@ -41,11 +41,27 @@ cp "$root/doc/wiiland.7" "$root/doc/libxwiimote.7" \
 "$bin" --self-test
 "$bin" --config "$root/res/wiilandd.conf" --check-config
 "$bin" --config "$root/res/wiilandd.conf" --dump-config >/dev/null
+cat >"$build_dir/invalid-screen.conf" <<'EOF'
+ir-aim-mapping=absolute
+ir-screen-left=900
+ir-screen-right=100
+EOF
+if "$bin" --config "$build_dir/invalid-screen.conf" --check-config \
+	>"$build_dir/invalid-screen-out" 2>"$build_dir/invalid-screen-err"; then
+	printf '%s\n' 'wiilandd accepted inverted IR screen calibration' >&2
+	exit 1
+fi
+grep -F 'IR screen calibration requires right > left and bottom > top' \
+	"$build_dir/invalid-screen-err" >/dev/null
 "$bin" --axis-map >"$build_dir/axis-map"
 grep -F 'nunchuk.accel.x=ABS_HAT1X' "$build_dir/axis-map" >/dev/null
 grep -F 'wiimote.a=BTN_SOUTH' "$build_dir/axis-map" >/dev/null
 grep -F 'pro.zl=BTN_TL2' "$build_dir/axis-map" >/dev/null
 grep -F 'guitar.stick.x=ABS_X' "$build_dir/axis-map" >/dev/null
+grep -F 'guitar.whammy=ABS_HAT3X' "$build_dir/axis-map" >/dev/null
+grep -F 'guitar.fret-board=ABS_HAT3Y' "$build_dir/axis-map" >/dev/null
+grep -F 'drums.tom.far-right=ABS_HAT3X' "$build_dir/axis-map" >/dev/null
+grep -F 'drums.bass=ABS_HAT3Y' "$build_dir/axis-map" >/dev/null
 grep -F 'classic.zl=BTN_TL2' "$build_dir/axis-map" >/dev/null
 grep -F 'guitar.fret.mid=BTN_FRET_MID' "$build_dir/axis-map" >/dev/null
 grep -F 'guitar.home=BTN_MODE' "$build_dir/axis-map" >/dev/null
@@ -119,12 +135,17 @@ fi
 if XWII_STUB_DEVICES=/sys/fake XWII_STUB_IFACE_NEW_OK=1 XWII_STUB_OPEN_RET=-6 \
 	"$bin" --no-config --dry-run >"$build_dir/open-fail-out" \
 	2>"$build_dir/open-fail-err"; then
-	grep -F 'wiilandd: cannot open all interfaces for /sys/fake: -6' "$build_dir/open-fail-err" >/dev/null
+	grep -F 'wiilandd: cannot open required interfaces for /sys/fake: -6' "$build_dir/open-fail-err" >/dev/null
 	grep -F 'wiilandd: cannot add /sys/fake: -6' "$build_dir/open-fail-err" >/dev/null
 else
-	printf '%s\n' 'wiilandd failed open-failure smoke' >&2
+	printf '%s\n' 'wiilandd failed required-interface open-failure smoke' >&2
 	exit 1
 fi
+XWII_STUB_DEVICES=/sys/fake XWII_STUB_IFACE_NEW_OK=1 XWII_STUB_OPEN_RET=-6 \
+	XWII_STUB_OPENED=1 "$bin" --no-config --dry-run \
+	>"$build_dir/open-partial-out" 2>"$build_dir/open-partial-err"
+grep -F 'wiilandd: cannot open some interfaces for /sys/fake: -6' \
+	"$build_dir/open-partial-err" >/dev/null
 test "$(sed -n '2p' "$build_dir/list")" = "	devtype=wiimote"
 test "$(sed -n '3p' "$build_dir/list")" = "	extension=nunchuk"
 test "$(sed -n '4p' "$build_dir/list")" = "2	$stub_sys_missing"
@@ -166,7 +187,8 @@ chmod +x "$fake_wiilandd"
 grep -F 'Usage:' "$build_dir/hardware-report-help" >/dev/null
 grep -F '<number-or-/sys/path>' "$build_dir/hardware-report-help" >/dev/null
 grep -F 'doctor, axis-map' "$build_dir/hardware-report-help" >/dev/null
-grep -F 'WantedBy=graphical-session.target' "$root/res/wiilandd.service" >/dev/null
+grep -F 'WantedBy=graphical-session.target' \
+	"$install_stage/usr/lib/systemd/user/wiilandd.service" >/dev/null
 grep -F 'ExecStart=@bindir@/wiilandd' "$root/res/wiilandd.service.in" >/dev/null
 if command -v systemd-analyze >/dev/null 2>&1; then
 	sed -e 's|@bindir@/wiilandd|/bin/true|g' \

@@ -78,11 +78,11 @@
 #ifndef BTN_STRUM_BAR_DOWN
 #define BTN_STRUM_BAR_DOWN 0x22a
 #endif
-#ifndef ABS_WHAMMY_BAR
-#define ABS_WHAMMY_BAR 0x4b
+#ifndef ABS_HAT3X
+#define ABS_HAT3X 0x16
 #endif
-#ifndef ABS_FRET_BOARD
-#define ABS_FRET_BOARD 0x4a
+#ifndef ABS_HAT3Y
+#define ABS_HAT3Y 0x17
 #endif
 #ifndef ABS_PRESSURE
 #define ABS_PRESSURE 0x18
@@ -125,6 +125,8 @@
 #define AIM_CALIBRATION_MAX_SECONDS 30
 #define AIM_CALIBRATION_MIN_SAMPLES 16
 #define AIM_CALIBRATION_MAX_JITTER 512
+#define POINTER_TICK_INTERVAL_US 16000
+#define MAX_EVENTS_PER_DRAIN 256
 #define ARRAY_SIZE(_a) (sizeof(_a) / sizeof((_a)[0]))
 
 enum bridge_profile {
@@ -547,7 +549,7 @@ static int enable_abs_bits(int fd, struct uinput_user_dev *udev)
 {
 	static const int axes[] = {
 		ABS_X, ABS_Y, ABS_RX, ABS_RY, ABS_Z, ABS_RZ,
-		ABS_WHAMMY_BAR, ABS_FRET_BOARD, ABS_MISC,
+		ABS_HAT3X, ABS_HAT3Y, ABS_MISC,
 		ABS_PRESSURE, ABS_DISTANCE, ABS_TILT_X, ABS_TILT_Y,
 		ABS_THROTTLE, ABS_RUDDER, ABS_WHEEL,
 		ABS_GAS, ABS_BRAKE, ABS_HAT0X,
@@ -569,8 +571,8 @@ static int enable_abs_bits(int fd, struct uinput_user_dev *udev)
 
 	setup_abs_axis(udev, ABS_Z, 0, 1023, 0, 4);
 	setup_abs_axis(udev, ABS_RZ, 0, 1023, 0, 4);
-	setup_abs_axis(udev, ABS_WHAMMY_BAR, 0, 1023, 0, 4);
-	setup_abs_axis(udev, ABS_FRET_BOARD, 0, 1023, 0, 4);
+	setup_abs_axis(udev, ABS_HAT3X, 0, 1023, 0, 4);
+	setup_abs_axis(udev, ABS_HAT3Y, 0, 1023, 0, 4);
 	setup_abs_axis(udev, ABS_PRESSURE, 0, 65535, 0, 4);
 	setup_abs_axis(udev, ABS_DISTANCE, 0, 65535, 0, 4);
 	setup_abs_axis(udev, ABS_TILT_X, 0, 65535, 0, 4);
@@ -832,8 +834,8 @@ static int drums_abs_code(unsigned int index)
 		[XWII_DRUMS_ABS_CYMBAL_RIGHT] = ABS_RY,
 		[XWII_DRUMS_ABS_TOM_LEFT] = ABS_Z,
 		[XWII_DRUMS_ABS_TOM_RIGHT] = ABS_RZ,
-		[XWII_DRUMS_ABS_TOM_FAR_RIGHT] = ABS_WHAMMY_BAR,
-		[XWII_DRUMS_ABS_BASS] = ABS_FRET_BOARD,
+		[XWII_DRUMS_ABS_TOM_FAR_RIGHT] = ABS_HAT3X,
+		[XWII_DRUMS_ABS_BASS] = ABS_HAT3Y,
 		[XWII_DRUMS_ABS_HI_HAT] = ABS_MISC,
 	};
 
@@ -898,10 +900,10 @@ static int forward_move_event(struct bridge_device *dev,
 	case XWII_EVENT_GUITAR_MOVE:
 		ret = forward_abs_pair(dev, ABS_X, ABS_Y, &event->v.abs[0]);
 		if (!ret)
-			ret = emit_abs(dev->uinput_fd, ABS_WHAMMY_BAR,
+			ret = emit_abs(dev->uinput_fd, ABS_HAT3X,
 				       event->v.abs[1].x);
 		if (!ret)
-			ret = emit_abs(dev->uinput_fd, ABS_FRET_BOARD,
+			ret = emit_abs(dev->uinput_fd, ABS_HAT3Y,
 				       event->v.abs[2].x);
 		break;
 	case XWII_EVENT_BALANCE_BOARD:
@@ -1211,6 +1213,42 @@ static bool device_needs_desktop(unsigned int device_profiles)
 {
 	return (device_profiles & PROFILE_DESKTOP) || aim_uses_mouse();
 }
+static unsigned int input_ifaces_for_profiles(unsigned int device_profiles)
+{
+	unsigned int ifaces = 0;
+
+	if (device_profiles & PROFILE_GAMEPAD)
+		ifaces = XWII_IFACE_ALL & ~XWII_IFACE_IR;
+	if (device_profiles & PROFILE_DESKTOP)
+		ifaces |= XWII_IFACE_CORE | XWII_IFACE_IR;
+
+	if (aim_enabled()) {
+		switch (aim_source) {
+		case AIM_SOURCE_IR:
+			ifaces |= XWII_IFACE_IR;
+			break;
+		case AIM_SOURCE_MOTION_PLUS:
+			ifaces |= XWII_IFACE_MOTION_PLUS;
+			break;
+		case AIM_SOURCE_ACCELEROMETER:
+			ifaces |= XWII_IFACE_ACCEL;
+			break;
+		case AIM_SOURCE_AUTO:
+		default:
+			ifaces |= XWII_IFACE_IR | XWII_IFACE_MOTION_PLUS |
+				  XWII_IFACE_ACCEL;
+			break;
+		}
+
+		if (aim_activation == AIM_ACTIVATION_B)
+			ifaces |= XWII_IFACE_CORE;
+		else if (aim_activation == AIM_ACTIVATION_Z ||
+			 aim_activation == AIM_ACTIVATION_C)
+			ifaces |= XWII_IFACE_NUNCHUK;
+	}
+
+	return ifaces;
+}
 
 static bool aim_is_active(const struct bridge_device *dev)
 {
@@ -1511,19 +1549,24 @@ static int update_aim_activation(struct bridge_device *dev,
 
 static int reopen_available_ifaces(struct bridge_device *dev)
 {
-	unsigned int todo;
+	unsigned int opened, requested, todo;
 	int ret;
 
-	todo = xwii_iface_available(dev->iface) & ~xwii_iface_opened(dev->iface);
+	requested = input_ifaces_for_profiles(dev->profiles);
+	opened = xwii_iface_opened(dev->iface);
+	todo = xwii_iface_available(dev->iface) & requested & ~opened;
 	if (!todo)
-		return 0;
+		return opened & requested ? 0 : -ENODEV;
 
 	ret = xwii_iface_open(dev->iface, todo);
 	if (ret)
-		fprintf(stderr, "wiilandd: cannot open new interfaces for %s: %d\n",
+		fprintf(stderr,
+			"wiilandd: cannot open some interfaces for %s: %d\n",
 			dev->syspath, ret);
 
-	return ret;
+	if (xwii_iface_opened(dev->iface) & requested)
+		return 0;
+	return ret ? ret : -ENODEV;
 }
 
 static const char *event_type_name(unsigned int type)
@@ -1619,7 +1662,7 @@ static bool trace_event_matches(const struct xwii_event *event)
 	}
 }
 
-static int64_t trace_time_us(void)
+static int64_t monotonic_time_us(void)
 {
 	struct timespec ts;
 
@@ -1640,7 +1683,7 @@ static void trace_xwii_event(const struct bridge_device *dev,
 		return;
 
 	seq = ++trace_sequence;
-	now_us = trace_time_us();
+	now_us = monotonic_time_us();
 	if (now_us >= 0)
 		printf("time=%lld.%06lld ", (long long)(now_us / 1000000),
 		       (long long)(now_us % 1000000));
@@ -1714,9 +1757,10 @@ static int handle_xwii_event(struct bridge_device *dev,
 static int drain_device(struct bridge_device *dev)
 {
 	struct xwii_event event;
+	unsigned int count;
 	int ret;
 
-	while (true) {
+	for (count = 0; count < MAX_EVENTS_PER_DRAIN; ++count) {
 		ret = xwii_iface_dispatch(dev->iface, &event, sizeof(event));
 		if (ret == -EAGAIN)
 			return 0;
@@ -1728,6 +1772,8 @@ static int drain_device(struct bridge_device *dev)
 		if (ret)
 			return ret;
 	}
+
+	return 0;
 }
 
 static void remove_device(struct bridge_device *dev)
@@ -1799,9 +1845,10 @@ static int add_device(struct bridge_device *devices, const char *syspath)
 		goto err_iface;
 	}
 
-	ret = xwii_iface_open(dev->iface, xwii_iface_available(dev->iface));
+	ret = reopen_available_ifaces(dev);
 	if (ret) {
-		fprintf(stderr, "wiilandd: cannot open all interfaces for %s: %d\n",
+		fprintf(stderr,
+			"wiilandd: cannot open required interfaces for %s: %d\n",
 			syspath, ret);
 		goto err_iface;
 	}
@@ -1882,6 +1929,54 @@ static int tick_pointers(struct bridge_device *devices)
 
 	return 0;
 }
+static int prepare_pointer_poll(struct bridge_device *devices,
+				int64_t *next_tick_us, int *timeout)
+{
+	int64_t now_us, wait_us;
+
+	if (!any_pointer_motion(devices)) {
+		*next_tick_us = 0;
+		*timeout = -1;
+		return 0;
+	}
+
+	now_us = monotonic_time_us();
+	if (now_us < 0)
+		return -errno;
+	if (!*next_tick_us)
+		*next_tick_us = now_us + POINTER_TICK_INTERVAL_US;
+
+	wait_us = *next_tick_us - now_us;
+	*timeout = wait_us <= 0 ? 0 : (int)((wait_us + 999) / 1000);
+	return 0;
+}
+
+static int tick_pointers_if_due(struct bridge_device *devices,
+				int64_t *next_tick_us)
+{
+	int64_t now_us;
+	int ret;
+
+	if (!*next_tick_us)
+		return 0;
+
+	now_us = monotonic_time_us();
+	if (now_us < 0)
+		return -errno;
+	if (now_us < *next_tick_us)
+		return 0;
+
+	ret = tick_pointers(devices);
+	if (ret)
+		return ret;
+
+	do {
+		*next_tick_us += POINTER_TICK_INTERVAL_US;
+	} while (*next_tick_us <= now_us);
+	if (!any_pointer_motion(devices))
+		*next_tick_us = 0;
+	return 0;
+}
 
 static int poll_devices(struct bridge_device *devices, struct xwii_monitor *mon)
 {
@@ -1889,7 +1984,8 @@ static int poll_devices(struct bridge_device *devices, struct xwii_monitor *mon)
 	int owners[MAX_DEVICES + 1];
 	char *syspath;
 	unsigned int i, nfds;
-	int ret, mon_fd, timeout;
+	int64_t next_tick_us = 0;
+	int device_fd, ret, mon_fd, timeout = -1;
 
 	while (!should_stop) {
 		nfds = 0;
@@ -1904,7 +2000,10 @@ static int poll_devices(struct bridge_device *devices, struct xwii_monitor *mon)
 		for (i = 0; i < MAX_DEVICES; ++i) {
 			if (!devices[i].iface)
 				continue;
-			fds[nfds].fd = xwii_iface_get_fd(devices[i].iface);
+			device_fd = xwii_iface_get_fd(devices[i].iface);
+			if (device_fd < 0)
+				continue;
+			fds[nfds].fd = device_fd;
 			fds[nfds].events = POLLIN;
 			fds[nfds].revents = 0;
 			owners[nfds++] = (int)i;
@@ -1913,7 +2012,9 @@ static int poll_devices(struct bridge_device *devices, struct xwii_monitor *mon)
 		if (nfds == 0)
 			return 0;
 
-		timeout = any_pointer_motion(devices) ? 16 : -1;
+		ret = prepare_pointer_poll(devices, &next_tick_us, &timeout);
+		if (ret)
+			return ret;
 		ret = poll(fds, nfds, timeout);
 		if (ret < 0) {
 			if (errno == EINTR)
@@ -1921,38 +2022,37 @@ static int poll_devices(struct bridge_device *devices, struct xwii_monitor *mon)
 
 			return -errno;
 		}
-		if (!ret) {
 
-			ret = tick_pointers(devices);
-			if (ret)
-				return ret;
-			continue;
-		}
+		if (ret > 0) {
+			for (i = 0; i < nfds; ++i) {
+				if (!fds[i].revents)
+					continue;
 
-		for (i = 0; i < nfds; ++i) {
-			if (!fds[i].revents)
-				continue;
-
-			if (owners[i] == -1) {
-				while ((syspath = xwii_monitor_poll(mon))) {
-					ret = add_device(devices, syspath);
-					if (ret)
-						fprintf(stderr,
-							"wiilandd: cannot add %s: %d\n",
-							syspath, ret);
-					free(syspath);
-				}
-			} else {
-				ret = drain_device(&devices[owners[i]]);
-				if (ret) {
-					if (ret != 1)
-						fprintf(stderr,
-							"wiilandd: event dispatch failed for %s: %d\n",
-							devices[owners[i]].syspath, ret);
-					remove_device(&devices[owners[i]]);
+				if (owners[i] == -1) {
+					while ((syspath = xwii_monitor_poll(mon))) {
+						ret = add_device(devices, syspath);
+						if (ret)
+							fprintf(stderr,
+								"wiilandd: cannot add %s: %d\n",
+								syspath, ret);
+						free(syspath);
+					}
+				} else {
+					ret = drain_device(&devices[owners[i]]);
+					if (ret) {
+						if (ret != 1)
+							fprintf(stderr,
+								"wiilandd: event dispatch failed for %s: %d\n",
+								devices[owners[i]].syspath, ret);
+						remove_device(&devices[owners[i]]);
+					}
 				}
 			}
 		}
+
+		ret = tick_pointers_if_due(devices, &next_tick_us);
+		if (ret)
+			return ret;
 	}
 
 	return 0;
@@ -2028,7 +2128,7 @@ static char *resolve_device_arg(const char *arg)
 
 	errno = 0;
 	number = strtoul(arg, &end, 10);
-	if (errno || !number || *end)
+	if (errno || !number || number > UINT_MAX || *end)
 		return NULL;
 
 	return device_by_number((unsigned int)number);
@@ -2142,15 +2242,6 @@ static bool calibration_stats_finish(const struct calibration_stats *stats,
 	return true;
 }
 
-static int64_t monotonic_time_us(void)
-{
-	struct timespec ts;
-
-	if (clock_gettime(CLOCK_MONOTONIC, &ts) < 0)
-		return -1;
-
-	return (int64_t)ts.tv_sec * 1000000 + ts.tv_nsec / 1000;
-}
 
 static int print_calibration_report(const struct calibration_stats *accel,
 				    const struct calibration_stats *motion)
@@ -3067,6 +3158,16 @@ static int load_default_config_files(void)
 
 	return load_config_file(user_path, false);
 }
+static int validate_config_state(void)
+{
+	if (ir_screen_calibration.valid && !ir_screen_calibration_ready()) {
+		fprintf(stderr,
+			"wiilandd: IR screen calibration requires right > left and bottom > top\n");
+		return -EINVAL;
+	}
+
+	return 0;
+}
 
 static int expect_int(const char *name, int got, int want)
 {
@@ -3253,9 +3354,9 @@ static int self_test_drums_map(void)
 		{ XWII_DRUMS_ABS_CYMBAL_RIGHT, ABS_RY, "drums-cymbal-right" },
 		{ XWII_DRUMS_ABS_TOM_LEFT, ABS_Z, "drums-tom-left" },
 		{ XWII_DRUMS_ABS_TOM_RIGHT, ABS_RZ, "drums-tom-right" },
-		{ XWII_DRUMS_ABS_TOM_FAR_RIGHT, ABS_WHAMMY_BAR,
+		{ XWII_DRUMS_ABS_TOM_FAR_RIGHT, ABS_HAT3X,
 		  "drums-tom-far-right" },
-		{ XWII_DRUMS_ABS_BASS, ABS_FRET_BOARD, "drums-bass" },
+		{ XWII_DRUMS_ABS_BASS, ABS_HAT3Y, "drums-bass" },
 		{ XWII_DRUMS_ABS_HI_HAT, ABS_MISC, "drums-hi-hat" },
 	};
 	size_t i;
@@ -4057,7 +4158,7 @@ static int self_test_event_trace(void)
 			 strcmp(event_type_name(XWII_EVENT_IR), "ir"), 0);
 	if (ret)
 		return ret;
-	ret = expect_int("trace-time", trace_time_us() >= 0, 1);
+	ret = expect_int("trace-time", monotonic_time_us() >= 0, 1);
 	if (ret)
 		return ret;
 	ret = parse_trace_events("motion-plus");
@@ -4105,6 +4206,35 @@ static int self_test_event_trace(void)
 			  strcmp(event_type_name(XWII_EVENT_NUM), "unknown"), 0);
 }
 
+static int self_test_input_ifaces(void)
+{
+	unsigned int got, want;
+	int ret;
+
+	reset_aim_config();
+	got = input_ifaces_for_profiles(PROFILE_GAMEPAD);
+	want = XWII_IFACE_ALL & ~XWII_IFACE_IR;
+	ret = expect_int("gamepad-input-ifaces", (int)got, (int)want);
+	if (ret)
+		return ret;
+
+	got = input_ifaces_for_profiles(PROFILE_DESKTOP);
+	want = XWII_IFACE_CORE | XWII_IFACE_IR;
+	ret = expect_int("desktop-input-ifaces", (int)got, (int)want);
+	if (ret)
+		return ret;
+
+	aim_output = AIM_OUTPUT_RIGHT_STICK;
+	aim_source = AIM_SOURCE_MOTION_PLUS;
+	aim_activation = AIM_ACTIVATION_Z;
+	got = input_ifaces_for_profiles(PROFILE_DESKTOP);
+	want = XWII_IFACE_CORE | XWII_IFACE_IR | XWII_IFACE_MOTION_PLUS |
+	       XWII_IFACE_NUNCHUK;
+	ret = expect_int("motion-aim-input-ifaces", (int)got, (int)want);
+	reset_aim_config();
+	return ret;
+}
+
 static int run_self_test(void)
 {
 	int ret;
@@ -4118,6 +4248,10 @@ static int run_self_test(void)
 	clear_device_rules();
 	reset_desktop_bindings();
 	reset_aim_config();
+	ret = self_test_input_ifaces();
+	if (ret)
+		return ret;
+
 
 	ret = self_test_gamepad_map();
 	if (ret)
@@ -4234,8 +4368,8 @@ static void print_axis_map(void)
 	puts("pro.thumbr=BTN_THUMBR");
 	puts("guitar.stick.x=ABS_X");
 	puts("guitar.stick.y=ABS_Y");
-	puts("guitar.whammy=ABS_WHAMMY_BAR");
-	puts("guitar.fret-board=ABS_FRET_BOARD");
+	puts("guitar.whammy=ABS_HAT3X");
+	puts("guitar.fret-board=ABS_HAT3Y");
 	puts("guitar.strum.up=BTN_STRUM_BAR_UP");
 	puts("guitar.strum.down=BTN_STRUM_BAR_DOWN");
 	puts("guitar.plus=BTN_START");
@@ -4251,8 +4385,8 @@ static void print_axis_map(void)
 	puts("drums.cymbal.right=ABS_RY");
 	puts("drums.tom.left=ABS_Z");
 	puts("drums.tom.right=ABS_RZ");
-	puts("drums.tom.far-right=ABS_WHAMMY_BAR");
-	puts("drums.bass=ABS_FRET_BOARD");
+	puts("drums.tom.far-right=ABS_HAT3X");
+	puts("drums.bass=ABS_HAT3Y");
 	puts("drums.hi-hat=ABS_MISC");
 	puts("drums.plus=BTN_START");
 	puts("drums.minus=BTN_SELECT");
@@ -4717,6 +4851,10 @@ int main(int argc, char **argv)
 			return EINVAL;
 		}
 	}
+	ret = validate_config_state();
+	if (ret)
+		return abs(ret);
+
 
 	if (dump_config) {
 		dump_config_state(stdout);
