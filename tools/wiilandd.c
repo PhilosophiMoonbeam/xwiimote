@@ -159,6 +159,32 @@ enum aim_activation {
 	AIM_ACTIVATION_C,
 };
 
+enum ir_tracking {
+	IR_TRACKING_FIRST,
+	IR_TRACKING_CENTROID,
+	IR_TRACKING_DUAL,
+};
+
+enum ir_aim_mapping {
+	IR_AIM_MAPPING_RELATIVE,
+	IR_AIM_MAPPING_ABSOLUTE,
+};
+
+struct ir_point {
+	bool valid;
+	int32_t x;
+	int32_t y;
+	unsigned int sources;
+};
+
+struct ir_screen_calibration {
+	bool valid;
+	int32_t left;
+	int32_t right;
+	int32_t top;
+	int32_t bottom;
+};
+
 struct sensor_calibration {
 	bool valid;
 	int32_t x;
@@ -251,6 +277,14 @@ static int pointer_speed = 16;
 static int ir_speed = 8;
 static int ir_deadzone;
 static int ir_smoothing;
+static enum ir_tracking ir_tracking = IR_TRACKING_DUAL;
+static enum ir_aim_mapping ir_aim_mapping = IR_AIM_MAPPING_RELATIVE;
+static struct ir_screen_calibration ir_screen_calibration = {
+	.left = 0,
+	.right = 1023,
+	.top = 0,
+	.bottom = 767,
+};
 static enum aim_output aim_output = AIM_OUTPUT_OFF;
 static enum aim_source aim_source = AIM_SOURCE_AUTO;
 static enum aim_activation aim_activation = AIM_ACTIVATION_B;
@@ -935,6 +969,13 @@ static void reset_aim_config(void)
 	aim_smoothing = 25;
 	aim_invert_x = false;
 	aim_invert_y = false;
+	ir_tracking = IR_TRACKING_DUAL;
+	ir_aim_mapping = IR_AIM_MAPPING_RELATIVE;
+	memset(&ir_screen_calibration, 0, sizeof(ir_screen_calibration));
+	ir_screen_calibration.left = 0;
+	ir_screen_calibration.right = 1023;
+	ir_screen_calibration.top = 0;
+	ir_screen_calibration.bottom = 767;
 	aim_calibration_duration = AIM_CALIBRATION_DEFAULT_SECONDS;
 	memset(&aim_accel_calibration, 0, sizeof(aim_accel_calibration));
 	memset(&aim_motion_plus_calibration, 0,
@@ -987,13 +1028,17 @@ static int tick_pointer(struct bridge_device *dev)
 	if (!has_pointer_motion(dev))
 		return 0;
 
-	ret = emit_rel(dev->desktop_fd, REL_X, dev->pointer_dx);
-	if (ret)
-		return ret;
+	if (dev->pointer_dx) {
+		ret = emit_rel(dev->desktop_fd, REL_X, dev->pointer_dx);
+		if (ret)
+			return ret;
+	}
 
-	ret = emit_rel(dev->desktop_fd, REL_Y, dev->pointer_dy);
-	if (ret)
-		return ret;
+	if (dev->pointer_dy) {
+		ret = emit_rel(dev->desktop_fd, REL_Y, dev->pointer_dy);
+		if (ret)
+			return ret;
+	}
 
 	return emit_syn(dev->desktop_fd);
 }
@@ -1002,6 +1047,7 @@ static int scaled_ir_delta(int32_t from, int32_t to)
 {
 	return (int)(((int64_t)(to - from) * ir_speed) / 64);
 }
+
 static int apply_ir_deadzone(int delta)
 {
 	if (ir_deadzone && abs(delta) < ir_deadzone)
@@ -1018,43 +1064,97 @@ static int32_t smooth_ir_axis(int32_t previous, int32_t current)
 			  (int64_t)current * (100 - ir_smoothing)) / 100);
 }
 
-
-static const struct xwii_event_abs *first_valid_ir_source(
-					const struct xwii_event *event)
+static void get_ir_points(const struct xwii_event *event,
+			  const struct xwii_event_abs **points,
+			  unsigned int *count)
 {
 	size_t i;
 
+	*count = 0;
 	for (i = 0; i < 4; ++i) {
 		if (xwii_event_ir_is_valid(&event->v.abs[i]))
-			return &event->v.abs[i];
+			points[(*count)++] = &event->v.abs[i];
 	}
+}
 
-	return NULL;
+static bool select_ir_point(const struct xwii_event *event, struct ir_point *point)
+{
+	const struct xwii_event_abs *points[4];
+	unsigned int count, i, j;
+	int best_a = 0, best_b = 0;
+	int64_t best_distance = -1;
+	int64_t sum_x = 0, sum_y = 0;
+
+	memset(point, 0, sizeof(*point));
+	get_ir_points(event, points, &count);
+	if (!count)
+		return false;
+
+	point->valid = true;
+	point->sources = count;
+
+	switch (ir_tracking) {
+	case IR_TRACKING_FIRST:
+		point->x = points[0]->x;
+		point->y = points[0]->y;
+		return true;
+	case IR_TRACKING_CENTROID:
+		for (i = 0; i < count; ++i) {
+			sum_x += points[i]->x;
+			sum_y += points[i]->y;
+		}
+		point->x = (int32_t)(sum_x / count);
+		point->y = (int32_t)(sum_y / count);
+		return true;
+	case IR_TRACKING_DUAL:
+	default:
+		if (count == 1) {
+			point->x = points[0]->x;
+			point->y = points[0]->y;
+			return true;
+		}
+		for (i = 0; i < count; ++i) {
+			for (j = i + 1; j < count; ++j) {
+				int64_t dx = points[i]->x - points[j]->x;
+				int64_t dy = points[i]->y - points[j]->y;
+				int64_t distance = dx * dx + dy * dy;
+
+				if (distance > best_distance) {
+					best_distance = distance;
+					best_a = (int)i;
+					best_b = (int)j;
+				}
+			}
+		}
+		point->x = (points[best_a]->x + points[best_b]->x) / 2;
+		point->y = (points[best_a]->y + points[best_b]->y) / 2;
+		return true;
+	}
 }
 
 static void update_ir_pointer_state(struct bridge_device *dev,
-				    const struct xwii_event_abs *src,
+				    const struct ir_point *point,
 				    int *dx, int *dy)
 {
 	*dx = 0;
 	*dy = 0;
 
-	if (!src) {
+	if (!point || !point->valid) {
 		dev->ir_active = false;
 		return;
 	}
 
 	if (dev->ir_active) {
-		int32_t x = smooth_ir_axis(dev->ir_x, src->x);
-		int32_t y = smooth_ir_axis(dev->ir_y, src->y);
+		int32_t x = smooth_ir_axis(dev->ir_x, point->x);
+		int32_t y = smooth_ir_axis(dev->ir_y, point->y);
 
 		*dx = apply_ir_deadzone(scaled_ir_delta(dev->ir_x, x));
 		*dy = apply_ir_deadzone(scaled_ir_delta(dev->ir_y, y));
 		dev->ir_x = x;
 		dev->ir_y = y;
 	} else {
-		dev->ir_x = src->x;
-		dev->ir_y = src->y;
+		dev->ir_x = point->x;
+		dev->ir_y = point->y;
 	}
 
 	dev->ir_active = true;
@@ -1063,14 +1163,16 @@ static void update_ir_pointer_state(struct bridge_device *dev,
 static int forward_desktop_ir_event(struct bridge_device *dev,
 				    const struct xwii_event *event)
 {
-	const struct xwii_event_abs *src;
+	struct ir_point point;
 	int dx, dy, ret;
 
 	if (event->type != XWII_EVENT_IR)
 		return 0;
 
-	src = first_valid_ir_source(event);
-	update_ir_pointer_state(dev, src, &dx, &dy);
+	if (select_ir_point(event, &point))
+		update_ir_pointer_state(dev, &point, &dx, &dy);
+	else
+		update_ir_pointer_state(dev, NULL, &dx, &dy);
 	if (!dx && !dy)
 		return 0;
 
@@ -1228,14 +1330,37 @@ static bool aim_accepts_source(const struct bridge_device *dev,
 	return true;
 }
 
+static bool ir_screen_calibration_ready(void)
+{
+	return ir_screen_calibration.valid &&
+	       ir_screen_calibration.right > ir_screen_calibration.left &&
+	       ir_screen_calibration.bottom > ir_screen_calibration.top;
+}
+
+static int scale_ir_absolute_axis(int32_t value, int32_t min, int32_t max)
+{
+	int64_t center = ((int64_t)min + max) / 2;
+	int64_t half_range = ((int64_t)max - min) / 2;
+	int64_t scaled;
+
+	if (half_range <= 0)
+		return 0;
+
+	scaled = ((int64_t)value - center) * 32767 / half_range;
+	if (scaled > 32767)
+		scaled = 32767;
+	else if (scaled < -32767)
+		scaled = -32767;
+	return scale_aim_axis((int32_t)scaled);
+}
+
 static int update_aim_ir_state(struct bridge_device *dev,
-			       const struct xwii_event_abs *src, int *dx,
-			       int *dy)
+			       const struct ir_point *point, int *dx, int *dy)
 {
 	*dx = 0;
 	*dy = 0;
 
-	if (!src) {
+	if (!point || !point->valid) {
 		if (dev->active_aim_source == AIM_SOURCE_IR)
 			return reset_aim_output(dev);
 		dev->aim_ir_active = false;
@@ -1245,14 +1370,21 @@ static int update_aim_ir_state(struct bridge_device *dev,
 	if (!aim_accepts_source(dev, AIM_SOURCE_IR))
 		return 0;
 
-	if (dev->aim_ir_active) {
-		*dx = scale_aim_axis(src->x - dev->aim_ir_x);
-		*dy = scale_aim_axis(src->y - dev->aim_ir_y);
+	if (ir_aim_mapping == IR_AIM_MAPPING_ABSOLUTE &&
+	    ir_screen_calibration_ready()) {
+		*dx = scale_ir_absolute_axis(point->x, ir_screen_calibration.left,
+					     ir_screen_calibration.right);
+		*dy = scale_ir_absolute_axis(point->y, ir_screen_calibration.top,
+					     ir_screen_calibration.bottom);
+		dev->aim_ir_active = true;
+	} else if (dev->aim_ir_active) {
+		*dx = scale_aim_axis(point->x - dev->aim_ir_x);
+		*dy = scale_aim_axis(point->y - dev->aim_ir_y);
 	} else {
 		dev->aim_ir_active = true;
 	}
-	dev->aim_ir_x = src->x;
-	dev->aim_ir_y = src->y;
+	dev->aim_ir_x = point->x;
+	dev->aim_ir_y = point->y;
 	dev->active_aim_source = AIM_SOURCE_IR;
 	return emit_aim_output(dev, *dx, *dy);
 }
@@ -1260,14 +1392,15 @@ static int update_aim_ir_state(struct bridge_device *dev,
 static int forward_aim_ir_event(struct bridge_device *dev,
 				const struct xwii_event *event)
 {
-	const struct xwii_event_abs *src;
+	struct ir_point point;
 	int dx, dy;
 
 	if (event->type != XWII_EVENT_IR)
 		return 0;
 
-	src = first_valid_ir_source(event);
-	return update_aim_ir_state(dev, src, &dx, &dy);
+	if (select_ir_point(event, &point))
+		return update_aim_ir_state(dev, &point, &dx, &dy);
+	return update_aim_ir_state(dev, NULL, &dx, &dy);
 }
 
 static int forward_aim_motion_plus_event(struct bridge_device *dev,
@@ -2199,6 +2332,32 @@ static const char *backend_name(enum backend backend)
 	}
 }
 
+static const char *ir_tracking_name(enum ir_tracking value)
+{
+	switch (value) {
+	case IR_TRACKING_FIRST:
+		return "first";
+	case IR_TRACKING_CENTROID:
+		return "centroid";
+	case IR_TRACKING_DUAL:
+		return "dual";
+	default:
+		return "unknown";
+	}
+}
+
+static const char *ir_aim_mapping_name(enum ir_aim_mapping value)
+{
+	switch (value) {
+	case IR_AIM_MAPPING_RELATIVE:
+		return "relative";
+	case IR_AIM_MAPPING_ABSOLUTE:
+		return "absolute";
+	default:
+		return "unknown";
+	}
+}
+
 static const char *aim_output_name(enum aim_output output)
 {
 	switch (output) {
@@ -2272,6 +2431,16 @@ static void dump_config_state(FILE *out)
 	fprintf(out, "ir-speed=%d\n", ir_speed);
 	fprintf(out, "ir-deadzone=%d\n", ir_deadzone);
 	fprintf(out, "ir-smoothing=%d\n", ir_smoothing);
+	fprintf(out, "ir-tracking=%s\n", ir_tracking_name(ir_tracking));
+	fprintf(out, "ir-aim-mapping=%s\n",
+		ir_aim_mapping_name(ir_aim_mapping));
+	if (ir_screen_calibration.valid) {
+		fprintf(out, "ir-screen-left=%d\n", ir_screen_calibration.left);
+		fprintf(out, "ir-screen-right=%d\n", ir_screen_calibration.right);
+		fprintf(out, "ir-screen-top=%d\n", ir_screen_calibration.top);
+		fprintf(out, "ir-screen-bottom=%d\n",
+			ir_screen_calibration.bottom);
+	}
 	fprintf(out, "aim-mode=%s\n", aim_output_name(aim_output));
 	fprintf(out, "aim-source=%s\n", aim_source_name(aim_source));
 	fprintf(out, "aim-activation=%s\n", aim_activation_name(aim_activation));
@@ -2389,6 +2558,50 @@ static int parse_ir_deadzone(const char *arg)
 static int parse_ir_smoothing(const char *arg)
 {
 	return parse_int_range(arg, 0, 95, &ir_smoothing);
+}
+
+static int parse_ir_tracking(const char *arg)
+{
+	if (!strcmp(arg, "first")) {
+		ir_tracking = IR_TRACKING_FIRST;
+		return 0;
+	}
+	if (!strcmp(arg, "centroid")) {
+		ir_tracking = IR_TRACKING_CENTROID;
+		return 0;
+	}
+	if (!strcmp(arg, "dual")) {
+		ir_tracking = IR_TRACKING_DUAL;
+		return 0;
+	}
+
+	return -EINVAL;
+}
+
+static int parse_ir_aim_mapping(const char *arg)
+{
+	if (!strcmp(arg, "relative")) {
+		ir_aim_mapping = IR_AIM_MAPPING_RELATIVE;
+		return 0;
+	}
+	if (!strcmp(arg, "absolute")) {
+		ir_aim_mapping = IR_AIM_MAPPING_ABSOLUTE;
+		return 0;
+	}
+
+	return -EINVAL;
+}
+
+static int parse_ir_screen_axis(const char *arg, int32_t *out)
+{
+	int value, ret;
+
+	ret = parse_int_range(arg, 0, 32767, &value);
+	if (ret)
+		return ret;
+	*out = value;
+	ir_screen_calibration.valid = true;
+	return 0;
 }
 
 static int parse_aim_output(const char *arg)
@@ -2702,6 +2915,18 @@ static int apply_config_line(const char *path, unsigned int lineno, char *line)
 		ret = parse_ir_deadzone(value);
 	else if (!strcmp(key, "ir-smoothing"))
 		ret = parse_ir_smoothing(value);
+	else if (!strcmp(key, "ir-tracking"))
+		ret = parse_ir_tracking(value);
+	else if (!strcmp(key, "ir-aim-mapping"))
+		ret = parse_ir_aim_mapping(value);
+	else if (!strcmp(key, "ir-screen-left"))
+		ret = parse_ir_screen_axis(value, &ir_screen_calibration.left);
+	else if (!strcmp(key, "ir-screen-right"))
+		ret = parse_ir_screen_axis(value, &ir_screen_calibration.right);
+	else if (!strcmp(key, "ir-screen-top"))
+		ret = parse_ir_screen_axis(value, &ir_screen_calibration.top);
+	else if (!strcmp(key, "ir-screen-bottom"))
+		ret = parse_ir_screen_axis(value, &ir_screen_calibration.bottom);
 	else if (!strcmp(key, "pointer-speed"))
 		ret = parse_pointer_speed(value);
 	else if (!strcmp(key, "aim-mode"))
@@ -3108,26 +3333,28 @@ static int self_test_ir_pointer(void)
 {
 	struct xwii_event event;
 	struct bridge_device dev;
-	const struct xwii_event_abs *src;
+	struct ir_point point;
 	int dx, dy, ret;
 
 	memset(&event, 0, sizeof(event));
 	memset(&dev, 0, sizeof(dev));
+	reset_aim_config();
+	ir_tracking = IR_TRACKING_FIRST;
 	event.type = XWII_EVENT_IR;
 	event.v.abs[0].x = 1023;
 	event.v.abs[0].y = 1023;
 	event.v.abs[1].x = 200;
 	event.v.abs[1].y = 300;
 
-	src = first_valid_ir_source(&event);
-	ret = expect_int("ir-source-x", src ? src->x : -1, 200);
+	select_ir_point(&event, &point);
+	ret = expect_int("ir-source-x", point.valid ? point.x : -1, 200);
 	if (ret)
 		return ret;
-	ret = expect_int("ir-source-y", src ? src->y : -1, 300);
+	ret = expect_int("ir-source-y", point.valid ? point.y : -1, 300);
 	if (ret)
 		return ret;
 
-	update_ir_pointer_state(&dev, src, &dx, &dy);
+	update_ir_pointer_state(&dev, &point, &dx, &dy);
 	ret = expect_int("ir-first-dx", dx, 0);
 	if (ret)
 		return ret;
@@ -3137,8 +3364,8 @@ static int self_test_ir_pointer(void)
 
 	event.v.abs[1].x = 280;
 	event.v.abs[1].y = 260;
-	src = first_valid_ir_source(&event);
-	update_ir_pointer_state(&dev, src, &dx, &dy);
+	select_ir_point(&event, &point);
+	update_ir_pointer_state(&dev, &point, &dx, &dy);
 	ret = expect_int("ir-delta-x", dx, 10);
 	if (ret)
 		return ret;
@@ -3148,8 +3375,8 @@ static int self_test_ir_pointer(void)
 	ir_deadzone = 6;
 	event.v.abs[1].x = 360;
 	event.v.abs[1].y = 220;
-	src = first_valid_ir_source(&event);
-	update_ir_pointer_state(&dev, src, &dx, &dy);
+	select_ir_point(&event, &point);
+	update_ir_pointer_state(&dev, &point, &dx, &dy);
 	ret = expect_int("ir-deadzone-x", dx, 10);
 	if (ret)
 		return ret;
@@ -3160,8 +3387,8 @@ static int self_test_ir_pointer(void)
 	ir_smoothing = 50;
 	event.v.abs[1].x = 440;
 	event.v.abs[1].y = 180;
-	src = first_valid_ir_source(&event);
-	update_ir_pointer_state(&dev, src, &dx, &dy);
+	select_ir_point(&event, &point);
+	update_ir_pointer_state(&dev, &point, &dx, &dy);
 	ret = expect_int("ir-smoothing-x", dx, 5);
 	if (ret)
 		return ret;
@@ -3174,11 +3401,49 @@ static int self_test_ir_pointer(void)
 	if (ret)
 		return ret;
 
-	update_ir_pointer_state(&dev, src, &dx, &dy);
+	update_ir_pointer_state(&dev, &point, &dx, &dy);
 	ret = expect_int("ir-after-reset-dx", dx, 0);
 	if (ret)
 		return ret;
-	return expect_int("ir-after-reset-dy", dy, 0);
+	ret = expect_int("ir-after-reset-dy", dy, 0);
+	if (ret)
+		return ret;
+
+	memset(&dev, 0, sizeof(dev));
+	ir_tracking = IR_TRACKING_DUAL;
+	event.v.abs[0].x = 100;
+	event.v.abs[0].y = 300;
+	event.v.abs[1].x = 500;
+	event.v.abs[1].y = 300;
+	event.v.abs[2].x = 260;
+	event.v.abs[2].y = 340;
+	event.v.abs[3].x = 1023;
+	event.v.abs[3].y = 1023;
+	select_ir_point(&event, &point);
+	ret = expect_int("ir-dual-midpoint-x", point.x, 300);
+	if (ret)
+		return ret;
+	ret = expect_int("ir-dual-midpoint-y", point.y, 300);
+	if (ret)
+		return ret;
+	update_ir_pointer_state(&dev, &point, &dx, &dy);
+	event.v.abs[0].x = 520;
+	event.v.abs[0].y = 300;
+	event.v.abs[1].x = 120;
+	event.v.abs[1].y = 300;
+	event.v.abs[2].x = 280;
+	event.v.abs[2].y = 340;
+	select_ir_point(&event, &point);
+	update_ir_pointer_state(&dev, &point, &dx, &dy);
+	ret = expect_int("ir-dual-source-swap-dx", dx, 2);
+	if (ret)
+		return ret;
+	ret = expect_int("ir-dual-source-swap-dy", dy, 0);
+	if (ret)
+		return ret;
+
+	reset_aim_config();
+	return 0;
 }
 
 static int self_test_motion_aim(void)
@@ -3268,6 +3533,43 @@ static int self_test_motion_aim(void)
 	if (ret)
 		return ret;
 	ret = expect_abs_capture("aim-accel-calibrated-y", ABS_RY, -8);
+	if (ret)
+		return ret;
+
+	reset_aim_config();
+	dev.active_aim_source = AIM_SOURCE_NONE;
+	dev.aim_ir_active = false;
+	dev.uinput_fd = 0;
+	aim_output = AIM_OUTPUT_RIGHT_STICK;
+	aim_source = AIM_SOURCE_IR;
+	aim_activation = AIM_ACTIVATION_ALWAYS;
+	aim_sensitivity = 16;
+	aim_deadzone = 0;
+	aim_smoothing = 0;
+	ir_tracking = IR_TRACKING_FIRST;
+	ir_aim_mapping = IR_AIM_MAPPING_ABSOLUTE;
+	ir_screen_calibration.valid = true;
+	ir_screen_calibration.left = 100;
+	ir_screen_calibration.right = 900;
+	ir_screen_calibration.top = 100;
+	ir_screen_calibration.bottom = 700;
+	memset(&event, 0, sizeof(event));
+	event.type = XWII_EVENT_IR;
+	event.v.abs[0].x = 900;
+	event.v.abs[0].y = 400;
+	memset(captured_abs_seen, 0, sizeof(captured_abs_seen));
+	memset(captured_abs_value, 0, sizeof(captured_abs_value));
+	capture_abs_events = true;
+	dry_run = true;
+	ret = forward_aim_event(&dev, &event);
+	capture_abs_events = false;
+	dry_run = old_dry_run;
+	if (ret)
+		return ret;
+	ret = expect_abs_capture("aim-ir-absolute-x", ABS_RX, 32767);
+	if (ret)
+		return ret;
+	ret = expect_abs_capture("aim-ir-absolute-y", ABS_RY, 0);
 	if (ret)
 		return ret;
 
@@ -3414,6 +3716,36 @@ static int self_test_config(void)
 	if (ret)
 		return ret;
 	ir_smoothing = 0;
+	ret = parse_ir_tracking("first");
+	if (ret)
+		return ret;
+	ret = expect_int("ir-tracking-first", ir_tracking, IR_TRACKING_FIRST);
+	if (ret)
+		return ret;
+	ret = parse_ir_tracking("dual");
+	if (ret)
+		return ret;
+	ret = expect_int("ir-tracking-dual", ir_tracking, IR_TRACKING_DUAL);
+	if (ret)
+		return ret;
+	ret = expect_int("ir-tracking-invalid",
+			 parse_ir_tracking("bad"), -EINVAL);
+	if (ret)
+		return ret;
+	ret = parse_ir_aim_mapping("absolute");
+	if (ret)
+		return ret;
+	ret = expect_int("ir-aim-mapping-absolute", ir_aim_mapping,
+			 IR_AIM_MAPPING_ABSOLUTE);
+	if (ret)
+		return ret;
+	ret = parse_ir_aim_mapping("relative");
+	if (ret)
+		return ret;
+	ret = expect_int("ir-aim-mapping-relative", ir_aim_mapping,
+			 IR_AIM_MAPPING_RELATIVE);
+	if (ret)
+		return ret;
 	snprintf(line, sizeof(line), " profile = desktop # comment\n");
 	ret = apply_config_line("self-test", 1, line);
 	if (ret)
@@ -3447,6 +3779,34 @@ static int self_test_config(void)
 	if (ret)
 		return ret;
 	ret = expect_int("ir-config-scale", scaled_ir_delta(200, 280), 20);
+	if (ret)
+		return ret;
+	snprintf(line, sizeof(line), " ir-tracking = centroid\n");
+	ret = apply_config_line("self-test", 3, line);
+	if (ret)
+		return ret;
+	ret = expect_int("config-ir-tracking", ir_tracking,
+			 IR_TRACKING_CENTROID);
+	if (ret)
+		return ret;
+	snprintf(line, sizeof(line), " ir-aim-mapping = absolute\n");
+	ret = apply_config_line("self-test", 3, line);
+	if (ret)
+		return ret;
+	ret = expect_int("config-ir-aim-mapping", ir_aim_mapping,
+			 IR_AIM_MAPPING_ABSOLUTE);
+	if (ret)
+		return ret;
+	snprintf(line, sizeof(line), " ir-screen-left = 12\n");
+	ret = apply_config_line("self-test", 3, line);
+	if (ret)
+		return ret;
+	ret = expect_int("config-ir-screen-left",
+			 ir_screen_calibration.left, 12);
+	if (ret)
+		return ret;
+	ret = expect_int("config-ir-screen-valid",
+			 ir_screen_calibration.valid, 1);
 	if (ret)
 		return ret;
 
@@ -4044,6 +4404,10 @@ static void usage(FILE *out)
 		"\t    --ir-speed <1-127>       IR pointer gain (default: 8)\n"
 		"\t    --ir-deadzone <0-127>   IR jitter deadzone (default: 0)\n"
 		"\t    --ir-smoothing <0-95>   IR smoothing percent (default: 0)\n"
+		"\t    --ir-tracking <dual|centroid|first>\n"
+		"\t                  IR blob tracker (default: dual sensor-bar midpoint)\n"
+		"\t    --ir-aim-mapping <relative|absolute>\n"
+		"\t                  IR aim as motion deltas or calibrated screen position\n"
 		"\t    --pointer-speed <1-127>  Desktop pointer step (default: 16)\n"
 		"\t    --aim-mode <off|mouse|right-stick>\n"
 		"\t                  Motion aim output for Steam/non-Steam games\n"
@@ -4206,6 +4570,26 @@ int main(int argc, char **argv)
 			}
 		} else if (!strcmp(argv[i], "--ir-smoothing")) {
 			if (++i >= argc || parse_ir_smoothing(argv[i])) {
+				usage(stderr);
+				return EINVAL;
+			}
+		} else if (!strncmp(argv[i], "--ir-tracking=", 14)) {
+			if (parse_ir_tracking(argv[i] + 14)) {
+				usage(stderr);
+				return EINVAL;
+			}
+		} else if (!strcmp(argv[i], "--ir-tracking")) {
+			if (++i >= argc || parse_ir_tracking(argv[i])) {
+				usage(stderr);
+				return EINVAL;
+			}
+		} else if (!strncmp(argv[i], "--ir-aim-mapping=", 17)) {
+			if (parse_ir_aim_mapping(argv[i] + 17)) {
+				usage(stderr);
+				return EINVAL;
+			}
+		} else if (!strcmp(argv[i], "--ir-aim-mapping")) {
+			if (++i >= argc || parse_ir_aim_mapping(argv[i])) {
 				usage(stderr);
 				return EINVAL;
 			}

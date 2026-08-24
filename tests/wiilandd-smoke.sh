@@ -76,6 +76,7 @@ grep -F 'aim.mode=off' "$build_dir/doctor" >/dev/null
 "$bin" --no-config --aim-mode=right-stick --aim-source=motion-plus \
 	--aim-activation=z --aim-sensitivity=24 --aim-deadzone=12 \
 	--aim-smoothing=40 --aim-invert-y=yes --aim-calibration-duration=12 \
+	--ir-tracking=centroid --ir-aim-mapping=absolute \
 	--dump-config >"$build_dir/aim-dump"
 grep -F 'aim-mode=right-stick' "$build_dir/aim-dump" >/dev/null
 grep -F 'aim-source=motion-plus' "$build_dir/aim-dump" >/dev/null
@@ -85,6 +86,8 @@ grep -F 'aim-deadzone=12' "$build_dir/aim-dump" >/dev/null
 grep -F 'aim-smoothing=40' "$build_dir/aim-dump" >/dev/null
 grep -F 'aim-invert-y=yes' "$build_dir/aim-dump" >/dev/null
 grep -F 'aim-calibration-duration=12' "$build_dir/aim-dump" >/dev/null
+grep -F 'ir-tracking=centroid' "$build_dir/aim-dump" >/dev/null
+grep -F 'ir-aim-mapping=absolute' "$build_dir/aim-dump" >/dev/null
 if "$bin" --no-config --trace-events=bad --dump-config >/dev/null 2>&1; then
 	printf '%s\n' 'wiilandd accepted invalid trace event filter' >&2
 	exit 1
@@ -192,6 +195,7 @@ grep -F 'manual.steam-motion-aim=TODO:' "$build_dir/hardware-report" >/dev/null
 grep -F 'manual.nonsteam-motion-aim=TODO:' "$build_dir/hardware-report" >/dev/null
 grep -F 'manual.mouse-motion-aim=TODO:' "$build_dir/hardware-report" >/dev/null
 grep -F 'manual.motion-aim-calibration=TODO:' "$build_dir/hardware-report" >/dev/null
+grep -F 'manual.ir-screen-calibration=optional:' "$build_dir/hardware-report" >/dev/null
 grep -F '$ '"$fake_wiilandd"' --axis-map' "$build_dir/hardware-report" >/dev/null
 grep -F 'device.1.uevent.HID_NAME=Nintendo Wii Remote' "$build_dir/hardware-report" >/dev/null
 grep -F 'nunchuk.accel.x=ABS_HAT1X' "$build_dir/hardware-report" >/dev/null
@@ -224,6 +228,9 @@ grep -F 'aim-mode=right-stick' "$root/res/wiilandd.conf" >/dev/null
 grep -F 'aim-mode=right-stick' "$root/doc/wiilandd.1" >/dev/null
 grep -F 'aimMode->addItems' "$root/tools/wiiland-config.cpp" >/dev/null
 grep -F 'aim-calibration-duration=8' "$root/res/wiilandd.conf" >/dev/null
+grep -F 'ir-tracking=dual' "$root/res/wiilandd.conf" >/dev/null
+grep -F 'ir-aim-mapping' "$root/doc/wiilandd.1" >/dev/null
+grep -F 'irTracking->addItems' "$root/tools/wiiland-config.cpp" >/dev/null
 grep -F 'aim-accel-zero-x' "$root/doc/wiilandd.1" >/dev/null
 grep -F 'aimCalibrationDuration' "$root/tools/wiiland-config.cpp" >/dev/null
 grep -F -- '--calibrate-aim' "$root/tools/wiiland-config.cpp" >/dev/null

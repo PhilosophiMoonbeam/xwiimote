@@ -93,6 +93,12 @@ add a WiiLand aim output. `right-stick` feeds camera aim through ABS_RX/ABS_RY;
 `mouse` feeds a virtual relative pointer for games that accept mouse aim:
 	$ printf 'profile=gamepad\naim-mode=right-stick\naim-source=auto\naim-activation=b\n' > ~/.config/wiiland/wiilandd.conf
 
+IR tracking defaults to `ir-tracking=dual`, which follows the midpoint of the
+widest valid sensor-bar dot pair so source-order swaps do not jerk relative aim.
+Screen/corner calibration is optional: keep `ir-aim-mapping=relative` for
+calibration-free camera aim, or set `ir-aim-mapping=absolute` with
+`ir-screen-left/right/top/bottom` when you want Wii-menu-style positional aim.
+
 For Wii-style flat-surface motion calibration, place the Wii Remote face down
 with buttons against a stable table and paste the generated offsets into the
 same config:

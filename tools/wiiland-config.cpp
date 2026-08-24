@@ -199,11 +199,35 @@ private:
         irSpeed = spinBox(1, 127, 8, profileBox);
         irDeadzone = spinBox(0, 127, 0, profileBox);
         irSmoothing = spinBox(0, 95, 0, profileBox);
+        irTracking = new QComboBox(profileBox);
+        irTracking->addItems({QStringLiteral("dual"), QStringLiteral("centroid"), QStringLiteral("first")});
+        irAimMapping = new QComboBox(profileBox);
+        irAimMapping->addItems({QStringLiteral("relative"), QStringLiteral("absolute")});
+        irScreenCalibrationEnabled = new QCheckBox(profileBox);
+        irScreenLeft = spinBox(0, 32767, 0, profileBox);
+        irScreenRight = spinBox(0, 32767, 1023, profileBox);
+        irScreenTop = spinBox(0, 32767, 0, profileBox);
+        irScreenBottom = spinBox(0, 32767, 767, profileBox);
+        const auto syncIrScreenWidgets = [this](bool enabled) {
+            irScreenLeft->setEnabled(enabled);
+            irScreenRight->setEnabled(enabled);
+            irScreenTop->setEnabled(enabled);
+            irScreenBottom->setEnabled(enabled);
+        };
+        connect(irScreenCalibrationEnabled, &QCheckBox::toggled, this, syncIrScreenWidgets);
+        syncIrScreenWidgets(false);
         profileForm->addRow(QStringLiteral("Default profile"), profile);
         profileForm->addRow(QStringLiteral("D-pad pointer speed"), pointerSpeed);
         profileForm->addRow(QStringLiteral("IR pointer gain"), irSpeed);
         profileForm->addRow(QStringLiteral("IR jitter deadzone"), irDeadzone);
         profileForm->addRow(QStringLiteral("IR smoothing %"), irSmoothing);
+        profileForm->addRow(QStringLiteral("IR tracking"), irTracking);
+        profileForm->addRow(QStringLiteral("IR aim mapping"), irAimMapping);
+        profileForm->addRow(QStringLiteral("Use screen calibration"), irScreenCalibrationEnabled);
+        profileForm->addRow(QStringLiteral("IR screen left"), irScreenLeft);
+        profileForm->addRow(QStringLiteral("IR screen right"), irScreenRight);
+        profileForm->addRow(QStringLiteral("IR screen top"), irScreenTop);
+        profileForm->addRow(QStringLiteral("IR screen bottom"), irScreenBottom);
 
         auto *aimBox = new QGroupBox(QStringLiteral("Modern motion aiming"), tab);
         auto *aimForm = new QFormLayout(aimBox);
@@ -560,6 +584,23 @@ private:
             irDeadzone->setValue(value.toInt());
         else if (key == QStringLiteral("ir-smoothing"))
             irSmoothing->setValue(value.toInt());
+        else if (key == QStringLiteral("ir-tracking"))
+            setComboText(irTracking, value);
+        else if (key == QStringLiteral("ir-aim-mapping"))
+            setComboText(irAimMapping, value);
+        else if (key == QStringLiteral("ir-screen-left")) {
+            irScreenCalibrationEnabled->setChecked(true);
+            irScreenLeft->setValue(value.toInt());
+        } else if (key == QStringLiteral("ir-screen-right")) {
+            irScreenCalibrationEnabled->setChecked(true);
+            irScreenRight->setValue(value.toInt());
+        } else if (key == QStringLiteral("ir-screen-top")) {
+            irScreenCalibrationEnabled->setChecked(true);
+            irScreenTop->setValue(value.toInt());
+        } else if (key == QStringLiteral("ir-screen-bottom")) {
+            irScreenCalibrationEnabled->setChecked(true);
+            irScreenBottom->setValue(value.toInt());
+        }
         else if (key == QStringLiteral("aim-mode"))
             setComboText(aimMode, value);
         else if (key == QStringLiteral("aim-source"))
@@ -625,6 +666,14 @@ private:
         out << "ir-speed=" << irSpeed->value() << "\n";
         out << "ir-deadzone=" << irDeadzone->value() << "\n";
         out << "ir-smoothing=" << irSmoothing->value() << "\n";
+        out << "ir-tracking=" << irTracking->currentText() << "\n";
+        out << "ir-aim-mapping=" << irAimMapping->currentText() << "\n";
+        if (irScreenCalibrationEnabled->isChecked()) {
+            out << "ir-screen-left=" << irScreenLeft->value() << "\n";
+            out << "ir-screen-right=" << irScreenRight->value() << "\n";
+            out << "ir-screen-top=" << irScreenTop->value() << "\n";
+            out << "ir-screen-bottom=" << irScreenBottom->value() << "\n";
+        }
         out << "aim-mode=" << aimMode->currentText() << "\n";
         out << "aim-source=" << aimSource->currentText() << "\n";
         out << "aim-activation=" << aimActivation->currentText() << "\n";
@@ -667,6 +716,13 @@ private:
     QSpinBox *irDeadzone = nullptr;
     QSpinBox *irSmoothing = nullptr;
     QComboBox *aimMode = nullptr;
+    QComboBox *irTracking = nullptr;
+    QComboBox *irAimMapping = nullptr;
+    QCheckBox *irScreenCalibrationEnabled = nullptr;
+    QSpinBox *irScreenLeft = nullptr;
+    QSpinBox *irScreenRight = nullptr;
+    QSpinBox *irScreenTop = nullptr;
+    QSpinBox *irScreenBottom = nullptr;
     QComboBox *aimSource = nullptr;
     QComboBox *aimActivation = nullptr;
     QSpinBox *aimSensitivity = nullptr;

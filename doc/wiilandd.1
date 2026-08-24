@@ -68,6 +68,25 @@ scaling. The default is 0.
 Smooth desktop profile IR pointer coordinates by retaining this percentage of
 the previous filtered position. The default is 0.
 .TP
+.BR --ir-tracking " " dual | centroid | first
+Select IR blob tracking. The default
+.B dual
+uses the midpoint of the widest valid IR-dot pair, avoiding source-order swaps
+when both sensor-bar LEDs are visible.
+.B centroid
+averages every valid dot.
+.B first
+preserves the legacy first-valid-source tracker.
+.TP
+.BR --ir-aim-mapping " " relative | absolute
+Select IR aim mapping. The default
+.B relative
+emits camera-like motion deltas and requires no screen calibration.
+.B absolute
+maps the selected IR point through
+.B ir-screen-*
+calibration bounds for users who want Wii-menu-style positional aim.
+.TP
 .BR -c , " --config " path
 Load a key=value configuration file. Command-line options override loaded
 configuration.
@@ -177,6 +196,26 @@ Desktop profile IR jitter deadzone after gain scaling.
 .TP
 .B ir-smoothing=0-95
 Desktop profile IR smoothing percentage.
+.TP
+.B ir-tracking=dual|centroid|first
+Choose the IR tracker used by both desktop IR pointer motion and IR motion aim.
+The default
+.B dual
+tracks the midpoint of the widest valid source pair, so source index swaps do
+not cause jumps when the sensor bar is visible.
+.TP
+.B ir-aim-mapping=relative|absolute
+Choose whether IR aim emits relative deltas or calibrated absolute screen
+position. The default
+.B relative
+needs no display setup and remains best for camera aim.
+.TP
+.B ir-screen-left|right|top|bottom=0-32767
+Optional screen bounds used only when
+.B ir-aim-mapping=absolute
+and all four bounds describe a non-empty rectangle. These values let users dial
+in TV size, aspect ratio, overscan, and sensor-bar placement without making
+absolute pointing mandatory.
 .TP
 .B aim-mode=off|mouse|right-stick
 Enable modern motion aiming. The default
@@ -337,6 +376,30 @@ lines into the same config file that sets
 .BR aim-mode .
 The Qt control center exposes the same fields and a capture button in the
 Validation tab.
+.SS IR tracking and screen calibration
+The default IR path is calibration-free relative tracking. It uses the
+.B dual
+tracker to pick the midpoint of the widest valid IR-source pair, which is stable
+when the sensor bar reports its two LEDs in different source slots between
+frames. Users can switch to
+.B centroid
+for multi-source averaging or
+.B first
+for legacy behavior.
+.PP
+Screen/corner calibration is optional. Set
+.B ir-aim-mapping=absolute
+and provide
+.BR ir-screen-left ,
+.BR ir-screen-right ,
+.BR ir-screen-top ,
+and
+.B ir-screen-bottom
+when a game or setup benefits from Wii-menu-style positional aim. Relative
+desktop pointer motion and relative IR aim continue to work without these
+bounds, so diverse screens and top/bottom sensor-bar placements do not become a
+setup requirement.
+.PP
 .PP
 .TP
 .B Classic Controller

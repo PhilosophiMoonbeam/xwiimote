@@ -295,6 +295,7 @@ report_manual_validation_placeholders() {
 	printf 'manual.nonsteam-motion-aim=TODO: validate aim-mode=right-stick in one native or XWayland non-Steam game\n'
 	printf 'manual.mouse-motion-aim=TODO: validate aim-mode=mouse in one game that accepts mouse aim\n'
 	printf 'manual.motion-aim-calibration=TODO: run wiilandd --device <N> --calibrate-aim on a flat stable surface and paste generated offsets into the test config\n'
+	printf 'manual.ir-screen-calibration=optional: for absolute IR aim, record ir-screen-left/right/top/bottom and sensor bar placement used during validation\n'
 	printf 'manual.notes=TODO: record pass/fail details, game/app names, and deviations\n'
 }
 

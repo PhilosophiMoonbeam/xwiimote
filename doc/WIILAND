@@ -34,15 +34,17 @@ wiilandd:
     the compositor overview key, and 1/2 send Page Down/Page Up;
   - supports key=value configuration for default profile, syspath and devtype
     profile overrides, desktop button actions, D-pad pointer speed, IR pointer
-    gain, IR jitter deadzone, IR smoothing, modern motion-aim output, and
-    persistent flat-surface aim calibration through /etc/wiiland/wiilandd.conf,
+    gain, IR jitter deadzone, IR smoothing, IR tracker selection, optional IR
+    screen calibration, modern motion-aim output, and persistent flat-surface
+    aim calibration through /etc/wiiland/wiilandd.conf,
     ~/.config/wiiland/wiilandd.conf, or --config; res/wiilandd.conf is the
     distributable sample;
   - exposes first-class motion aiming for Steam and non-Steam games:
     aim-mode=right-stick maps the selected sensor to ABS_RX/ABS_RY camera aim,
     aim-mode=mouse maps it to REL_X/REL_Y pointer aim, aim-source=auto prefers
     IR when visible, then calibrated MotionPlus, then calibrated accelerometer
-    tilt, and --calibrate-aim emits the offsets for the config file;
+    tilt, --calibrate-aim emits flat-surface offsets, and IR can stay relative
+    or use optional screen bounds for absolute positional aim;
   - provides --self-test for deterministic profile, button-map, config, and
     pointer-motion validation without hardware;
   - provides --axis-map, --validation-checklist, and --doctor for
@@ -67,9 +69,11 @@ Required runtime permissions:
 
 1. Modern motion aiming
    Shipped as aim-mode=right-stick or aim-mode=mouse with aim-source=auto
-   fallback from IR to MotionPlus to accelerometer, configurable hold-to-aim
-   activation, sensitivity, deadzone, smoothing, axis inversion, and Wii-style
-   flat-surface calibration for accelerometer zero and MotionPlus gyro bias.
+   fallback from IR to MotionPlus to accelerometer, robust dual-source IR
+   midpoint tracking with optional absolute screen bounds, configurable
+   hold-to-aim activation, sensitivity, deadzone, smoothing, axis inversion, and
+   Wii-style flat-surface calibration for accelerometer zero and MotionPlus gyro
+   bias.
    This makes Wii Remote hardware useful as a modern Linux game controller in
    Steam, Proton/Wine, SDL, XWayland games, and native Wayland games without
    spoofing a DualSense/DualShock device identity.
