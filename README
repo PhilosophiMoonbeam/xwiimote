@@ -93,6 +93,12 @@ add a WiiLand aim output. `right-stick` feeds camera aim through ABS_RX/ABS_RY;
 `mouse` feeds a virtual relative pointer for games that accept mouse aim:
 	$ printf 'profile=gamepad\naim-mode=right-stick\naim-source=auto\naim-activation=b\n' > ~/.config/wiiland/wiilandd.conf
 
+For Wii-style flat-surface motion calibration, place the Wii Remote face down
+with buttons against a stable table and paste the generated offsets into the
+same config:
+	$ wiilandd --device 1 --calibrate-aim >> ~/.config/wiiland/wiilandd.conf
+
+
 System-wide defaults can use `/etc/wiiland/wiilandd.conf`; user config files
 override system defaults.
 

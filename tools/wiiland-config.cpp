@@ -218,6 +218,26 @@ private:
         aimSmoothing = spinBox(0, 95, 25, aimBox);
         aimInvertX = new QCheckBox(aimBox);
         aimInvertY = new QCheckBox(aimBox);
+        aimCalibrationEnabled = new QCheckBox(aimBox);
+        aimCalibrationDuration = spinBox(1, 30, 8, aimBox);
+        aimCalibrationDuration->setSuffix(QStringLiteral(" s"));
+        aimAccelZeroX = spinBox(-32768, 32767, 0, aimBox);
+        aimAccelZeroY = spinBox(-32768, 32767, 0, aimBox);
+        aimAccelZeroZ = spinBox(-32768, 32767, 0, aimBox);
+        aimMotionPlusBiasX = spinBox(-32768, 32767, 0, aimBox);
+        aimMotionPlusBiasY = spinBox(-32768, 32767, 0, aimBox);
+        aimMotionPlusBiasZ = spinBox(-32768, 32767, 0, aimBox);
+        aimCalibrationEnabled->setToolTip(QStringLiteral("Save flat-surface accelerometer and MotionPlus offsets from --calibrate-aim."));
+        const auto syncCalibrationWidgets = [this](bool enabled) {
+            aimAccelZeroX->setEnabled(enabled);
+            aimAccelZeroY->setEnabled(enabled);
+            aimAccelZeroZ->setEnabled(enabled);
+            aimMotionPlusBiasX->setEnabled(enabled);
+            aimMotionPlusBiasY->setEnabled(enabled);
+            aimMotionPlusBiasZ->setEnabled(enabled);
+        };
+        connect(aimCalibrationEnabled, &QCheckBox::toggled, this, syncCalibrationWidgets);
+        syncCalibrationWidgets(false);
         aimForm->addRow(QStringLiteral("Output"), aimMode);
         aimForm->addRow(QStringLiteral("Best available sensor"), aimSource);
         aimForm->addRow(QStringLiteral("Activation"), aimActivation);
@@ -226,6 +246,14 @@ private:
         aimForm->addRow(QStringLiteral("Smoothing %"), aimSmoothing);
         aimForm->addRow(QStringLiteral("Invert X"), aimInvertX);
         aimForm->addRow(QStringLiteral("Invert Y"), aimInvertY);
+        aimForm->addRow(QStringLiteral("Use saved calibration"), aimCalibrationEnabled);
+        aimForm->addRow(QStringLiteral("Calibration duration"), aimCalibrationDuration);
+        aimForm->addRow(QStringLiteral("Accelerometer zero X"), aimAccelZeroX);
+        aimForm->addRow(QStringLiteral("Accelerometer zero Y"), aimAccelZeroY);
+        aimForm->addRow(QStringLiteral("Accelerometer zero Z"), aimAccelZeroZ);
+        aimForm->addRow(QStringLiteral("MotionPlus bias X"), aimMotionPlusBiasX);
+        aimForm->addRow(QStringLiteral("MotionPlus bias Y"), aimMotionPlusBiasY);
+        aimForm->addRow(QStringLiteral("MotionPlus bias Z"), aimMotionPlusBiasZ);
 
         auto *bindingsBox = new QGroupBox(QStringLiteral("Desktop button bindings"), tab);
         auto *bindingsForm = new QFormLayout(bindingsBox);
@@ -305,14 +333,17 @@ private:
         auto *startTraceButton = new QPushButton(QStringLiteral("Start dry-run trace"), tab);
         auto *stopTraceButton = new QPushButton(QStringLiteral("Stop trace"), tab);
         auto *clear = new QPushButton(QStringLiteral("Clear output"), tab);
+        auto *calibrateButton = new QPushButton(QStringLiteral("Capture flat-surface calibration"), tab);
         buttons->addWidget(startTraceButton);
         buttons->addWidget(stopTraceButton);
         buttons->addWidget(clear);
+        buttons->addWidget(calibrateButton);
         buttons->addStretch(1);
         layout->addLayout(buttons);
         connect(startTraceButton, &QPushButton::clicked, this, [this]() { startTrace(); });
         connect(stopTraceButton, &QPushButton::clicked, this, [this]() { stopTrace(); });
         connect(clear, &QPushButton::clicked, this, [this]() { output->clear(); });
+        connect(calibrateButton, &QPushButton::clicked, this, [this]() { calibrateAim(); });
 
         auto *checklist = new QLabel(
             QStringLiteral("Recommended matrix: original Wii Remote, MotionPlus external and built-in, "
@@ -401,6 +432,76 @@ private:
             traceProcess->kill();
     }
 
+    void calibrateAim()
+    {
+        QStringList args{
+            QStringLiteral("--calibrate-aim"),
+            QStringLiteral("--aim-calibration-duration"),
+            QString::number(aimCalibrationDuration->value()),
+        };
+        const QString device = deviceSelector->text().trimmed();
+        if (!device.isEmpty())
+            args << QStringLiteral("--device") << device;
+
+        auto *process = new QProcess(this);
+        auto *captured = new QString;
+        process->setProcessChannelMode(QProcess::MergedChannels);
+        const QString program = wiilanddPath->text().trimmed().isEmpty()
+            ? QStringLiteral("wiilandd")
+            : wiilanddPath->text().trimmed();
+        appendOutput(QStringLiteral("$ ") + quoteCommand(program, args));
+        connect(process, &QProcess::readyReadStandardOutput, this, [this, process, captured]() {
+            const QString chunk = QString::fromLocal8Bit(process->readAllStandardOutput());
+            *captured += chunk;
+            appendOutput(chunk);
+        });
+        connect(process, &QProcess::errorOccurred, this, [this, process](QProcess::ProcessError) {
+            appendOutput(QStringLiteral("process error: ") + process->errorString());
+        });
+        connect(process, qOverload<int, QProcess::ExitStatus>(&QProcess::finished),
+                this, [this, process, captured](int code, QProcess::ExitStatus status) {
+            const QString chunk = QString::fromLocal8Bit(process->readAllStandardOutput());
+            *captured += chunk;
+            appendOutput(chunk);
+            if (status == QProcess::NormalExit && code == 0)
+                applyCalibrationOutput(*captured);
+            else
+                appendOutput(QStringLiteral("exit status: %1").arg(code));
+            delete captured;
+            process->deleteLater();
+            statusBar()->showMessage(QStringLiteral("Calibration command finished"), 4000);
+        });
+        process->start(program, args);
+        statusBar()->showMessage(QStringLiteral("Calibration running"));
+    }
+
+    void applyCalibrationOutput(const QString &text)
+    {
+        bool applied = false;
+
+        const QStringList lines = text.split(QLatin1Char('\n'));
+        for (const QString &rawLine : lines) {
+            const QString line = rawLine.trimmed();
+            if (line.isEmpty() || line.startsWith(QLatin1Char('#')))
+                continue;
+            const int equal = line.indexOf(QLatin1Char('='));
+            if (equal <= 0)
+                continue;
+            const QString key = line.left(equal).trimmed();
+            if (!key.startsWith(QStringLiteral("aim-accel-zero-")) &&
+                !key.startsWith(QStringLiteral("aim-motion-plus-bias-")) &&
+                key != QStringLiteral("aim-calibration-duration"))
+                continue;
+            applyConfigValue(key, line.mid(equal + 1).trimmed());
+            applied = true;
+        }
+
+        if (applied)
+            statusBar()->showMessage(QStringLiteral("Calibration values applied to the form; save the config to persist them"), 6000);
+        else
+            appendOutput(QStringLiteral("No calibration key=value lines were captured."));
+    }
+
     void appendRule(const QString &kind, const QString &match, const QString &ruleProfile)
     {
         const int row = rules->rowCount();
@@ -473,6 +574,26 @@ private:
             aimSmoothing->setValue(value.toInt());
         else if (key == QStringLiteral("aim-invert-x"))
             aimInvertX->setChecked(value == QStringLiteral("yes") || value == QStringLiteral("true") || value == QStringLiteral("1"));
+        else if (key == QStringLiteral("aim-accel-zero-x")) {
+            aimCalibrationEnabled->setChecked(true);
+            aimAccelZeroX->setValue(value.toInt());
+        } else if (key == QStringLiteral("aim-accel-zero-y")) {
+            aimCalibrationEnabled->setChecked(true);
+            aimAccelZeroY->setValue(value.toInt());
+        } else if (key == QStringLiteral("aim-accel-zero-z")) {
+            aimCalibrationEnabled->setChecked(true);
+            aimAccelZeroZ->setValue(value.toInt());
+        } else if (key == QStringLiteral("aim-motion-plus-bias-x")) {
+            aimCalibrationEnabled->setChecked(true);
+            aimMotionPlusBiasX->setValue(value.toInt());
+        } else if (key == QStringLiteral("aim-motion-plus-bias-y")) {
+            aimCalibrationEnabled->setChecked(true);
+            aimMotionPlusBiasY->setValue(value.toInt());
+        } else if (key == QStringLiteral("aim-motion-plus-bias-z")) {
+            aimCalibrationEnabled->setChecked(true);
+            aimMotionPlusBiasZ->setValue(value.toInt());
+        } else if (key == QStringLiteral("aim-calibration-duration"))
+            aimCalibrationDuration->setValue(value.toInt());
         else if (key == QStringLiteral("aim-invert-y"))
             aimInvertY->setChecked(value == QStringLiteral("yes") || value == QStringLiteral("true") || value == QStringLiteral("1"));
         else if (key.startsWith(QStringLiteral("desktop.")))
@@ -511,6 +632,15 @@ private:
         out << "aim-deadzone=" << aimDeadzone->value() << "\n";
         out << "aim-smoothing=" << aimSmoothing->value() << "\n";
         out << "aim-invert-x=" << (aimInvertX->isChecked() ? "yes" : "no") << "\n";
+        if (aimCalibrationEnabled->isChecked()) {
+            out << "aim-accel-zero-x=" << aimAccelZeroX->value() << "\n";
+            out << "aim-accel-zero-y=" << aimAccelZeroY->value() << "\n";
+            out << "aim-accel-zero-z=" << aimAccelZeroZ->value() << "\n";
+            out << "aim-motion-plus-bias-x=" << aimMotionPlusBiasX->value() << "\n";
+            out << "aim-motion-plus-bias-y=" << aimMotionPlusBiasY->value() << "\n";
+            out << "aim-motion-plus-bias-z=" << aimMotionPlusBiasZ->value() << "\n";
+        }
+        out << "aim-calibration-duration=" << aimCalibrationDuration->value() << "\n";
         out << "aim-invert-y=" << (aimInvertY->isChecked() ? "yes" : "no") << "\n";
         for (const QString &name : desktopBindingNames())
             out << "desktop." << name << '=' << desktopActions.value(name)->currentText() << "\n";
@@ -543,6 +673,14 @@ private:
     QSpinBox *aimDeadzone = nullptr;
     QSpinBox *aimSmoothing = nullptr;
     QCheckBox *aimInvertX = nullptr;
+    QCheckBox *aimCalibrationEnabled = nullptr;
+    QSpinBox *aimCalibrationDuration = nullptr;
+    QSpinBox *aimAccelZeroX = nullptr;
+    QSpinBox *aimAccelZeroY = nullptr;
+    QSpinBox *aimAccelZeroZ = nullptr;
+    QSpinBox *aimMotionPlusBiasX = nullptr;
+    QSpinBox *aimMotionPlusBiasY = nullptr;
+    QSpinBox *aimMotionPlusBiasZ = nullptr;
     QCheckBox *aimInvertY = nullptr;
     QHash<QString, QComboBox *> desktopActions;
     QTableWidget *rules = nullptr;

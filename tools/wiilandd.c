@@ -120,6 +120,11 @@
 #define MAX_DEVICE_RULES 32
 #define BALANCE_SENSOR_COUNT 4
 #define SENSOR_AXIS_COUNT 3
+#define AIM_CALIBRATION_DEFAULT_SECONDS 8
+#define AIM_CALIBRATION_MIN_SECONDS 1
+#define AIM_CALIBRATION_MAX_SECONDS 30
+#define AIM_CALIBRATION_MIN_SAMPLES 16
+#define AIM_CALIBRATION_MAX_JITTER 512
 #define ARRAY_SIZE(_a) (sizeof(_a) / sizeof((_a)[0]))
 
 enum bridge_profile {
@@ -153,6 +158,27 @@ enum aim_activation {
 	AIM_ACTIVATION_Z,
 	AIM_ACTIVATION_C,
 };
+
+struct sensor_calibration {
+	bool valid;
+	int32_t x;
+	int32_t y;
+	int32_t z;
+};
+
+struct calibration_stats {
+	unsigned int samples;
+	int64_t sum_x;
+	int64_t sum_y;
+	int64_t sum_z;
+	int32_t min_x;
+	int32_t max_x;
+	int32_t min_y;
+	int32_t max_y;
+	int32_t min_z;
+	int32_t max_z;
+};
+
 
 
 enum device_rule_kind {
@@ -205,6 +231,7 @@ struct bridge_device {
 	bool aim_accel_zeroed;
 	int32_t aim_accel_zero_x;
 	int32_t aim_accel_zero_y;
+	int32_t aim_accel_zero_z;
 	int aim_last_x;
 	int aim_last_y;
 };
@@ -232,6 +259,9 @@ static int aim_deadzone = 4;
 static int aim_smoothing = 25;
 static bool aim_invert_x;
 static bool aim_invert_y;
+static struct sensor_calibration aim_accel_calibration;
+static struct sensor_calibration aim_motion_plus_calibration;
+static int aim_calibration_duration = AIM_CALIBRATION_DEFAULT_SECONDS;
 static struct device_rule device_rules[MAX_DEVICE_RULES];
 static unsigned int device_rule_count;
 static struct desktop_binding desktop_bindings[] = {
@@ -244,6 +274,8 @@ static struct desktop_binding desktop_bindings[] = {
 	{ "two", XWII_KEY_TWO, KEY_PAGEUP, KEY_PAGEUP },
 };
 
+static void dump_sensor_calibration(FILE *out, const char *prefix,
+				    const struct sensor_calibration *cal);
 static unsigned int profiles_for_device(const char *syspath, const char *devtype);
 static bool is_key_event(unsigned int type);
 
@@ -903,6 +935,10 @@ static void reset_aim_config(void)
 	aim_smoothing = 25;
 	aim_invert_x = false;
 	aim_invert_y = false;
+	aim_calibration_duration = AIM_CALIBRATION_DEFAULT_SECONDS;
+	memset(&aim_accel_calibration, 0, sizeof(aim_accel_calibration));
+	memset(&aim_motion_plus_calibration, 0,
+	       sizeof(aim_motion_plus_calibration));
 }
 
 static int desktop_key_code(unsigned int code)
@@ -1237,15 +1273,23 @@ static int forward_aim_ir_event(struct bridge_device *dev,
 static int forward_aim_motion_plus_event(struct bridge_device *dev,
 					 const struct xwii_event *event)
 {
+	int32_t raw_x, raw_y;
 	int x, y;
 
 	if (event->type != XWII_EVENT_MOTION_PLUS ||
 	    !aim_accepts_source(dev, AIM_SOURCE_MOTION_PLUS))
 		return 0;
 
+	raw_x = event->v.abs[0].x;
+	raw_y = event->v.abs[0].y;
+	if (aim_motion_plus_calibration.valid) {
+		raw_x -= aim_motion_plus_calibration.x;
+		raw_y -= aim_motion_plus_calibration.y;
+	}
+
 	dev->active_aim_source = AIM_SOURCE_MOTION_PLUS;
-	x = scale_aim_axis(event->v.abs[0].x);
-	y = scale_aim_axis(event->v.abs[0].y);
+	x = scale_aim_axis(raw_x);
+	y = scale_aim_axis(raw_y);
 	return emit_aim_output(dev, x, y);
 }
 
@@ -1258,9 +1302,15 @@ static int forward_aim_accel_event(struct bridge_device *dev,
 	    !aim_accepts_source(dev, AIM_SOURCE_ACCELEROMETER))
 		return 0;
 
-	if (!dev->aim_accel_zeroed) {
+	if (aim_accel_calibration.valid) {
+		dev->aim_accel_zero_x = aim_accel_calibration.x;
+		dev->aim_accel_zero_y = aim_accel_calibration.y;
+		dev->aim_accel_zero_z = aim_accel_calibration.z;
+		dev->aim_accel_zeroed = true;
+	} else if (!dev->aim_accel_zeroed) {
 		dev->aim_accel_zero_x = event->v.abs[0].x;
 		dev->aim_accel_zero_y = event->v.abs[0].y;
+		dev->aim_accel_zero_z = event->v.abs[0].z;
 		dev->aim_accel_zeroed = true;
 		dev->active_aim_source = AIM_SOURCE_ACCELEROMETER;
 		return 0;
@@ -1898,6 +1948,204 @@ static int run_one(const char *arg)
 	return ret;
 }
 
+static void calibration_stats_init(struct calibration_stats *stats)
+{
+	memset(stats, 0, sizeof(*stats));
+	stats->min_x = INT32_MAX;
+	stats->min_y = INT32_MAX;
+	stats->min_z = INT32_MAX;
+	stats->max_x = INT32_MIN;
+	stats->max_y = INT32_MIN;
+	stats->max_z = INT32_MIN;
+}
+
+static void calibration_stats_add(struct calibration_stats *stats,
+				  const struct xwii_event_abs *abs)
+{
+	if (!stats->samples)
+		calibration_stats_init(stats);
+
+	stats->samples++;
+	stats->sum_x += abs->x;
+	stats->sum_y += abs->y;
+	stats->sum_z += abs->z;
+	if (abs->x < stats->min_x)
+		stats->min_x = abs->x;
+	if (abs->x > stats->max_x)
+		stats->max_x = abs->x;
+	if (abs->y < stats->min_y)
+		stats->min_y = abs->y;
+	if (abs->y > stats->max_y)
+		stats->max_y = abs->y;
+	if (abs->z < stats->min_z)
+		stats->min_z = abs->z;
+	if (abs->z > stats->max_z)
+		stats->max_z = abs->z;
+}
+
+static int calibration_jitter(const struct calibration_stats *stats)
+{
+	int jitter_x, jitter_y, jitter_z, jitter;
+
+	jitter_x = stats->max_x - stats->min_x;
+	jitter_y = stats->max_y - stats->min_y;
+	jitter_z = stats->max_z - stats->min_z;
+	jitter = jitter_x > jitter_y ? jitter_x : jitter_y;
+	return jitter > jitter_z ? jitter : jitter_z;
+}
+
+static bool calibration_stats_finish(const struct calibration_stats *stats,
+				     struct sensor_calibration *cal)
+{
+	if (stats->samples < AIM_CALIBRATION_MIN_SAMPLES)
+		return false;
+	if (calibration_jitter(stats) > AIM_CALIBRATION_MAX_JITTER)
+		return false;
+
+	cal->valid = true;
+	cal->x = (int32_t)(stats->sum_x / stats->samples);
+	cal->y = (int32_t)(stats->sum_y / stats->samples);
+	cal->z = (int32_t)(stats->sum_z / stats->samples);
+	return true;
+}
+
+static int64_t monotonic_time_us(void)
+{
+	struct timespec ts;
+
+	if (clock_gettime(CLOCK_MONOTONIC, &ts) < 0)
+		return -1;
+
+	return (int64_t)ts.tv_sec * 1000000 + ts.tv_nsec / 1000;
+}
+
+static int print_calibration_report(const struct calibration_stats *accel,
+				    const struct calibration_stats *motion)
+{
+	struct sensor_calibration accel_cal;
+	struct sensor_calibration motion_cal;
+	bool have_accel, have_motion;
+
+	memset(&accel_cal, 0, sizeof(accel_cal));
+	memset(&motion_cal, 0, sizeof(motion_cal));
+	have_accel = calibration_stats_finish(accel, &accel_cal);
+	have_motion = calibration_stats_finish(motion, &motion_cal);
+
+	if (!have_accel && !have_motion) {
+		fprintf(stderr,
+			"wiilandd: calibration failed: keep the Wii Remote flat and still; no stable accelerometer or MotionPlus window was captured\n");
+		return -EAGAIN;
+	}
+
+	printf("# WiiLand motion aim calibration\n");
+	printf("# Place these key=value lines in wiilandd.conf.\n");
+	printf("# samples.accelerometer=%u jitter.accelerometer=%d\n",
+	       accel->samples, accel->samples ? calibration_jitter(accel) : 0);
+	printf("# samples.motion-plus=%u jitter.motion-plus=%d\n",
+	       motion->samples, motion->samples ? calibration_jitter(motion) : 0);
+	dump_sensor_calibration(stdout, "aim-accel-zero", &accel_cal);
+	dump_sensor_calibration(stdout, "aim-motion-plus-bias", &motion_cal);
+	if (!have_accel)
+		printf("# warning: accelerometer calibration unavailable or unstable\n");
+	if (!have_motion)
+		printf("# warning: MotionPlus calibration unavailable or unstable\n");
+	return 0;
+}
+
+static int run_calibrate_aim(const char *arg)
+{
+	struct calibration_stats accel_stats;
+	struct calibration_stats motion_stats;
+	struct xwii_iface *iface = NULL;
+	struct xwii_event event;
+	char *syspath = NULL;
+	int64_t start_us, now_us, deadline_us;
+	int fd, ret = 0;
+
+	calibration_stats_init(&accel_stats);
+	calibration_stats_init(&motion_stats);
+
+	syspath = arg ? resolve_device_arg(arg) : device_by_number(1);
+	if (!syspath) {
+		fprintf(stderr,
+			"wiilandd: cannot resolve calibration device; run --list and pass --device <number|/sys/path>\n");
+		return -ENODEV;
+	}
+
+	ret = xwii_iface_new(&iface, syspath);
+	if (ret)
+		goto out;
+
+	ret = xwii_iface_open(iface, xwii_iface_available(iface));
+	if (ret)
+		goto out_iface;
+
+	fd = xwii_iface_get_fd(iface);
+	if (fd < 0) {
+		ret = -ENODEV;
+		goto out_iface;
+	}
+
+	fprintf(stderr,
+		"wiilandd: place the Wii Remote face down, buttons against a flat stable surface, and keep it still for %d seconds\n",
+		aim_calibration_duration);
+	start_us = monotonic_time_us();
+	if (start_us < 0) {
+		ret = -errno;
+		goto out_iface;
+	}
+	deadline_us = start_us + (int64_t)aim_calibration_duration * 1000000;
+
+	while (!should_stop) {
+		struct pollfd pfd;
+
+		now_us = monotonic_time_us();
+		if (now_us < 0) {
+			ret = -errno;
+			break;
+		}
+		if (now_us >= deadline_us)
+			break;
+
+		pfd.fd = fd;
+		pfd.events = POLLIN;
+		pfd.revents = 0;
+		ret = poll(&pfd, 1, 250);
+		if (ret < 0) {
+			if (errno == EINTR)
+				continue;
+			ret = -errno;
+			break;
+		}
+		if (!ret)
+			continue;
+
+		while ((ret = xwii_iface_dispatch(iface, &event,
+						  sizeof(event))) == 0) {
+			if (event.type == XWII_EVENT_ACCEL)
+				calibration_stats_add(&accel_stats,
+						      &event.v.abs[0]);
+			else if (event.type == XWII_EVENT_MOTION_PLUS)
+				calibration_stats_add(&motion_stats,
+						      &event.v.abs[0]);
+		}
+		if (ret == -EAGAIN)
+			ret = 0;
+		if (ret)
+			break;
+	}
+
+	if (!ret)
+		ret = print_calibration_report(&accel_stats, &motion_stats);
+
+out_iface:
+	if (iface)
+		xwii_iface_unref(iface);
+out:
+	free(syspath);
+	return ret;
+}
+
 static const char *profile_name(unsigned int value)
 {
 	switch (value) {
@@ -2003,6 +2251,17 @@ static const char *bool_name(bool value)
 	return value ? "yes" : "no";
 }
 
+static void dump_sensor_calibration(FILE *out, const char *prefix,
+				    const struct sensor_calibration *cal)
+{
+	if (!cal->valid)
+		return;
+
+	fprintf(out, "%s-x=%d\n", prefix, cal->x);
+	fprintf(out, "%s-y=%d\n", prefix, cal->y);
+	fprintf(out, "%s-z=%d\n", prefix, cal->z);
+}
+
 static void dump_config_state(FILE *out)
 {
 	unsigned int i;
@@ -2021,6 +2280,10 @@ static void dump_config_state(FILE *out)
 	fprintf(out, "aim-smoothing=%d\n", aim_smoothing);
 	fprintf(out, "aim-invert-x=%s\n", bool_name(aim_invert_x));
 	fprintf(out, "aim-invert-y=%s\n", bool_name(aim_invert_y));
+	dump_sensor_calibration(out, "aim-accel-zero", &aim_accel_calibration);
+	dump_sensor_calibration(out, "aim-motion-plus-bias",
+				&aim_motion_plus_calibration);
+	fprintf(out, "aim-calibration-duration=%d\n", aim_calibration_duration);
 
 	for (i = 0; i < ARRAY_SIZE(desktop_bindings); ++i)
 		fprintf(out, "desktop.%s=%s\n", desktop_bindings[i].name,
@@ -2229,6 +2492,39 @@ static int parse_aim_invert_y(const char *arg)
 	return parse_bool(arg, &aim_invert_y);
 }
 
+static int parse_calibration_axis(const char *arg,
+				  struct sensor_calibration *cal, char axis)
+{
+	int value, ret;
+
+	ret = parse_int_range(arg, -32768, 32767, &value);
+	if (ret)
+		return ret;
+
+	switch (axis) {
+	case 'x':
+		cal->x = value;
+		break;
+	case 'y':
+		cal->y = value;
+		break;
+	case 'z':
+		cal->z = value;
+		break;
+	default:
+		return -EINVAL;
+	}
+	cal->valid = true;
+	return 0;
+}
+
+static int parse_aim_calibration_duration(const char *arg)
+{
+	return parse_int_range(arg, AIM_CALIBRATION_MIN_SECONDS,
+			       AIM_CALIBRATION_MAX_SECONDS,
+			       &aim_calibration_duration);
+}
+
 static int parse_desktop_action(const char *arg, int *out)
 {
 	if (!strcmp(arg, "disabled")) {
@@ -2424,6 +2720,20 @@ static int apply_config_line(const char *path, unsigned int lineno, char *line)
 		ret = parse_aim_invert_x(value);
 	else if (!strcmp(key, "aim-invert-y"))
 		ret = parse_aim_invert_y(value);
+	else if (!strcmp(key, "aim-accel-zero-x"))
+		ret = parse_calibration_axis(value, &aim_accel_calibration, 'x');
+	else if (!strcmp(key, "aim-accel-zero-y"))
+		ret = parse_calibration_axis(value, &aim_accel_calibration, 'y');
+	else if (!strcmp(key, "aim-accel-zero-z"))
+		ret = parse_calibration_axis(value, &aim_accel_calibration, 'z');
+	else if (!strcmp(key, "aim-motion-plus-bias-x"))
+		ret = parse_calibration_axis(value, &aim_motion_plus_calibration, 'x');
+	else if (!strcmp(key, "aim-motion-plus-bias-y"))
+		ret = parse_calibration_axis(value, &aim_motion_plus_calibration, 'y');
+	else if (!strcmp(key, "aim-motion-plus-bias-z"))
+		ret = parse_calibration_axis(value, &aim_motion_plus_calibration, 'z');
+	else if (!strcmp(key, "aim-calibration-duration"))
+		ret = parse_aim_calibration_duration(value);
 	else if (!strncmp(key, "desktop.", 8))
 		ret = set_desktop_binding(key + 8, value);
 	else if (!strncmp(key, "device.", 7) && has_suffix(key, ".profile")) {
@@ -2911,6 +3221,56 @@ static int self_test_motion_aim(void)
 	if (ret)
 		return ret;
 
+	aim_motion_plus_calibration.valid = true;
+	aim_motion_plus_calibration.x = 4;
+	aim_motion_plus_calibration.y = -4;
+	memset(captured_abs_seen, 0, sizeof(captured_abs_seen));
+	memset(captured_abs_value, 0, sizeof(captured_abs_value));
+	capture_abs_events = true;
+	dry_run = true;
+	ret = forward_aim_event(&dev, &event);
+	capture_abs_events = false;
+	dry_run = old_dry_run;
+	if (ret)
+		return ret;
+	ret = expect_abs_capture("aim-motion-plus-calibrated-x", ABS_RX, 12);
+	if (ret)
+		return ret;
+	ret = expect_abs_capture("aim-motion-plus-calibrated-y", ABS_RY, -4);
+	if (ret)
+		return ret;
+
+	reset_aim_config();
+	dev.active_aim_source = AIM_SOURCE_NONE;
+	dev.aim_accel_zeroed = false;
+	aim_output = AIM_OUTPUT_RIGHT_STICK;
+	aim_source = AIM_SOURCE_ACCELEROMETER;
+	aim_activation = AIM_ACTIVATION_ALWAYS;
+	aim_sensitivity = 16;
+	aim_deadzone = 4;
+	aim_smoothing = 0;
+	aim_accel_calibration.valid = true;
+	aim_accel_calibration.x = 100;
+	aim_accel_calibration.y = 200;
+	event.type = XWII_EVENT_ACCEL;
+	event.v.abs[0].x = 120;
+	event.v.abs[0].y = 188;
+	memset(captured_abs_seen, 0, sizeof(captured_abs_seen));
+	memset(captured_abs_value, 0, sizeof(captured_abs_value));
+	capture_abs_events = true;
+	dry_run = true;
+	ret = forward_aim_event(&dev, &event);
+	capture_abs_events = false;
+	dry_run = old_dry_run;
+	if (ret)
+		return ret;
+	ret = expect_abs_capture("aim-accel-calibrated-x", ABS_RX, 16);
+	if (ret)
+		return ret;
+	ret = expect_abs_capture("aim-accel-calibrated-y", ABS_RY, -8);
+	if (ret)
+		return ret;
+
 	reset_aim_config();
 	aim_output = AIM_OUTPUT_RIGHT_STICK;
 	aim_activation = AIM_ACTIVATION_B;
@@ -3161,6 +3521,34 @@ static int self_test_config(void)
 	if (ret)
 		return ret;
 	ret = expect_int("config-aim-invert-y", aim_invert_y, 1);
+	if (ret)
+		return ret;
+	snprintf(line, sizeof(line), " aim-accel-zero-x = -12\n");
+	ret = apply_config_line("self-test", 14, line);
+	if (ret)
+		return ret;
+	ret = expect_int("config-aim-accel-zero-x",
+			 aim_accel_calibration.x, -12);
+	if (ret)
+		return ret;
+	ret = expect_int("config-aim-accel-valid",
+			 aim_accel_calibration.valid, 1);
+	if (ret)
+		return ret;
+	snprintf(line, sizeof(line), " aim-motion-plus-bias-y = 9\n");
+	ret = apply_config_line("self-test", 15, line);
+	if (ret)
+		return ret;
+	ret = expect_int("config-aim-motion-plus-bias-y",
+			 aim_motion_plus_calibration.y, 9);
+	if (ret)
+		return ret;
+	snprintf(line, sizeof(line), " aim-calibration-duration = 12\n");
+	ret = apply_config_line("self-test", 16, line);
+	if (ret)
+		return ret;
+	ret = expect_int("config-aim-calibration-duration",
+			 aim_calibration_duration, 12);
 	if (ret)
 		return ret;
 	reset_aim_config();
@@ -3668,6 +4056,10 @@ static void usage(FILE *out)
 		"\t    --aim-smoothing <0-95>\n"
 		"\t    --aim-invert-x <yes|no>\n"
 		"\t    --aim-invert-y <yes|no>\n"
+		"\t    --calibrate-aim\n"
+		"\t                  Capture Wii-style flat-surface aim calibration\n"
+		"\t    --aim-calibration-duration <1-30>\n"
+		"\t                  Calibration sample window in seconds (default: 8)\n"
 		"\t-c, --config     Load key=value config file\n"
 		"\t    --no-config  Do not load the default config file\n"
 		"\t-n, --dry-run    Do not create /dev/uinput devices or emit input\n"
@@ -3697,6 +4089,7 @@ int main(int argc, char **argv)
 	bool dump_config = false;
 	bool doctor = false;
 	bool diagnostic = false;
+	bool calibrate_aim = false;
 	int i, ret;
 
 	for (i = 1; i < argc; ++i) {
@@ -3896,6 +4289,18 @@ int main(int argc, char **argv)
 				usage(stderr);
 				return EINVAL;
 			}
+		} else if (!strncmp(argv[i], "--aim-calibration-duration=", 27)) {
+			if (parse_aim_calibration_duration(argv[i] + 27)) {
+				usage(stderr);
+				return EINVAL;
+			}
+		} else if (!strcmp(argv[i], "--aim-calibration-duration")) {
+			if (++i >= argc || parse_aim_calibration_duration(argv[i])) {
+				usage(stderr);
+				return EINVAL;
+			}
+		} else if (!strcmp(argv[i], "--calibrate-aim")) {
+			calibrate_aim = true;
 		} else if (!strncmp(argv[i], "--config=", 9)) {
 		} else if (!strcmp(argv[i], "-c") || !strcmp(argv[i], "--config")) {
 			++i;
@@ -3941,6 +4346,8 @@ int main(int argc, char **argv)
 	}
 	if (self_test)
 		return abs(run_self_test());
+	if (calibrate_aim)
+		return abs(run_calibrate_aim(device));
 
 	signal(SIGINT, on_signal);
 	signal(SIGTERM, on_signal);
