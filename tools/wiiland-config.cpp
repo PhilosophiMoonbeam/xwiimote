@@ -35,6 +35,7 @@
 #include <QtWidgets/QPushButton>
 #include <QtWidgets/QSpinBox>
 #include <QtWidgets/QStatusBar>
+#include <QtWidgets/QSplitter>
 #include <QtWidgets/QTableWidget>
 #include <QtWidgets/QScrollArea>
 #include <QtWidgets/QTableWidgetItem>
@@ -128,21 +129,29 @@ public:
         subtitle->setWordWrap(true);
         rootLayout->addWidget(subtitle);
 
-        auto *tabs = new QTabWidget(root);
+        auto *workspace = new QSplitter(Qt::Vertical, root);
+        workspace->setAccessibleName(QStringLiteral("Settings and command output"));
+        workspace->setChildrenCollapsible(false);
+
+        auto *tabs = new QTabWidget;
         tabs->setAccessibleName(QStringLiteral("WiiLand settings"));
         tabs->addTab(buildOverviewTab(tabs), QStringLiteral("Overview"));
         tabs->addTab(buildConfigTab(tabs), QStringLiteral("Configuration"));
         tabs->addTab(buildValidationTab(tabs), QStringLiteral("Validation"));
-        rootLayout->addWidget(tabs, 3);
+        workspace->addWidget(tabs);
 
-        auto *outputBox = new QGroupBox(QStringLiteral("Command output"), root);
+        auto *outputBox = new QGroupBox(QStringLiteral("Command output"));
         auto *outputLayout = new QVBoxLayout(outputBox);
         output = new QPlainTextEdit(outputBox);
         output->setAccessibleName(QStringLiteral("Command output"));
         output->setReadOnly(true);
         output->setLineWrapMode(QPlainTextEdit::NoWrap);
         outputLayout->addWidget(output);
-        rootLayout->addWidget(outputBox, 2);
+        workspace->addWidget(outputBox);
+        workspace->setStretchFactor(0, 3);
+        workspace->setStretchFactor(1, 1);
+        workspace->setSizes({480, 180});
+        rootLayout->addWidget(workspace, 1);
 
         setCentralWidget(root);
         const QString platformName = QGuiApplication::platformName();
