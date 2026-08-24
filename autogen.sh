@@ -2,17 +2,17 @@
 
 set -e
 
-srcdir=`dirname $0`
+srcdir=$(dirname "$0")
 test -z "$srcdir" && srcdir=.
 
-origdir=`pwd`
-cd $srcdir
+origdir=$(pwd)
+cd "$srcdir"
 
 mkdir -p m4
 autoreconf -is --force
 
-cd $origdir
+cd "$origdir"
 
 if test -z "$NOCONFIGURE" ; then
-        exec $srcdir/configure "$@"
+	exec "$srcdir/configure" "$@"
 fi
