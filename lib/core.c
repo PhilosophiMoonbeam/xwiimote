@@ -1061,6 +1061,36 @@ try_again:
 	goto try_again;
 }
 
+static int32_t clamp_i64_to_i32(int64_t value)
+{
+	if (value > INT32_MAX)
+		return INT32_MAX;
+	if (value < INT32_MIN)
+		return INT32_MIN;
+
+	return value;
+}
+
+static int32_t normalize_mp_axis(int32_t value, int32_t *normalizer,
+				 int32_t factor)
+{
+	int32_t normalized;
+	int64_t next;
+
+	normalized = clamp_i64_to_i32((int64_t)value - *normalizer / 100);
+	if (!normalized)
+		return 0;
+
+	next = *normalizer;
+	if (normalized > 0)
+		next += factor;
+	else
+		next -= factor;
+	*normalizer = clamp_i64_to_i32(next);
+
+	return normalized;
+}
+
 static int read_mp(struct xwii_iface *dev, struct xwii_event *ev)
 {
 	int ret, fd;
@@ -1086,15 +1116,15 @@ try_again:
 		memset(ev, 0, sizeof(*ev));
 		memcpy(&ev->time, &input.time, sizeof(struct timeval));
 
-		ev->v.abs[0].x = dev->mp_cache.x - dev->mp_normalizer.x / 100;
-		ev->v.abs[0].y = dev->mp_cache.y - dev->mp_normalizer.y / 100;
-		ev->v.abs[0].z = dev->mp_cache.z - dev->mp_normalizer.z / 100;
-		dev->mp_normalizer.x += dev->mp_normalize_factor *
-					((ev->v.abs[0].x > 0) ? 1 : -1);
-		dev->mp_normalizer.y += dev->mp_normalize_factor *
-					((ev->v.abs[0].y > 0) ? 1 : -1);
-		dev->mp_normalizer.z += dev->mp_normalize_factor *
-					((ev->v.abs[0].z > 0) ? 1 : -1);
+		ev->v.abs[0].x = normalize_mp_axis(dev->mp_cache.x,
+						   &dev->mp_normalizer.x,
+						   dev->mp_normalize_factor);
+		ev->v.abs[0].y = normalize_mp_axis(dev->mp_cache.y,
+						   &dev->mp_normalizer.y,
+						   dev->mp_normalize_factor);
+		ev->v.abs[0].z = normalize_mp_axis(dev->mp_cache.z,
+						   &dev->mp_normalizer.z,
+						   dev->mp_normalize_factor);
 
 		ev->type = XWII_EVENT_MOTION_PLUS;
 		return 0;
@@ -1962,9 +1992,9 @@ void xwii_iface_set_mp_normalization(struct xwii_iface *dev, int32_t x,
 	if (!dev)
 		return;
 
-	dev->mp_normalizer.x = x * 100;
-	dev->mp_normalizer.y = y * 100;
-	dev->mp_normalizer.z = z * 100;
+	dev->mp_normalizer.x = clamp_i64_to_i32((int64_t)x * 100);
+	dev->mp_normalizer.y = clamp_i64_to_i32((int64_t)y * 100);
+	dev->mp_normalizer.z = clamp_i64_to_i32((int64_t)z * 100);
 	dev->mp_normalize_factor = factor;
 }
 

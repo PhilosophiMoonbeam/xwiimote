@@ -145,9 +145,68 @@ static int test_iface_names(void)
 	return 0;
 }
 
+static int test_motion_plus_normalization(void)
+{
+	struct xwii_iface dev;
+	int32_t normalizer = 0;
+	int32_t normalized;
+
+	normalized = normalize_mp_axis(0, &normalizer, 7);
+	if (normalized != 0 || normalizer != 0) {
+		fprintf(stderr,
+			"stationary MotionPlus calibration returned %" PRId32
+			" and drifted to %" PRId32 "\n",
+			normalized, normalizer);
+		return 1;
+	}
+
+	normalized = normalize_mp_axis(5, &normalizer, 7);
+	if (normalized != 5 || normalizer != 7) {
+		fprintf(stderr,
+			"positive MotionPlus calibration returned %" PRId32
+			" and moved to %" PRId32 "\n",
+			normalized, normalizer);
+		return 1;
+	}
+
+	normalized = normalize_mp_axis(-5, &normalizer, 7);
+	if (normalized != -5 || normalizer != 0) {
+		fprintf(stderr,
+			"negative MotionPlus calibration returned %" PRId32
+			" and moved to %" PRId32 "\n",
+			normalized, normalizer);
+		return 1;
+	}
+
+	normalizer = INT32_MAX - 1;
+	normalize_mp_axis(INT32_MAX, &normalizer, INT32_MAX);
+	if (normalizer != INT32_MAX) {
+		fprintf(stderr, "positive MotionPlus calibration did not saturate\n");
+		return 1;
+	}
+
+	normalizer = INT32_MIN + 1;
+	normalize_mp_axis(INT32_MIN, &normalizer, INT32_MAX);
+	if (normalizer != INT32_MIN) {
+		fprintf(stderr, "negative MotionPlus calibration did not saturate\n");
+		return 1;
+	}
+
+	memset(&dev, 0, sizeof(dev));
+	xwii_iface_set_mp_normalization(&dev, INT32_MAX, INT32_MIN, 0, 0);
+	if (dev.mp_normalizer.x != INT32_MAX ||
+	    dev.mp_normalizer.y != INT32_MIN) {
+		fprintf(stderr, "MotionPlus normalization input did not saturate\n");
+		return 1;
+	}
+
+	return 0;
+}
+
 int main(void)
 {
-	if (test_guitar() || test_drums() || test_iface_names())
+	if (test_guitar() || test_drums() || test_iface_names() ||
+	    test_motion_plus_normalization())
 		return 1;
 
 	puts("libxwiimote extension decoder test: ok");

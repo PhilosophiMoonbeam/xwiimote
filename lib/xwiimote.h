@@ -1245,17 +1245,17 @@ int xwii_iface_get_extension(struct xwii_iface *dev, char **extension);
  * @param[in] z z-value to use or 0
  * @param[in] factor factor-value to use or 0
  *
- * Set MP-normalization and calibration values. The Motion-Plus sensor is very
- * sensitive and may return really crappy values. This interfaces allows to
- * apply 3 absolute offsets x, y and z which are subtracted from any MP data
- * before it is returned to the application. That is, if you set these values
- * to 0, this has no effect (which is also the initial state).
+ * Set MP normalization and calibration values. The MotionPlus sensor is very
+ * sensitive and may return noisy values. This interface allows three absolute
+ * offsets, x, y and z, which are subtracted from MotionPlus data before it is
+ * returned to the application. Setting these values to 0 has no effect, which
+ * is also the initial state.
  *
- * The calibration factor @p factor is used to perform runtime calibration. If
- * it is 0 (the initial state), no runtime calibration is performed. Otherwise,
- * the factor is used to re-calibrate the zero-point of MP data depending on MP
- * input. This is an angoing calibration which modifies the internal state of
- * the x, y and z values.
+ * The calibration @p factor controls runtime calibration. A factor of 0, the
+ * initial value, disables runtime calibration. After each non-zero normalized
+ * sample, the factor is added to a positive axis zero point or subtracted from
+ * a negative one. Stationary samples do not move the zero point. Internal
+ * calibration values saturate instead of overflowing.
  */
 void xwii_iface_set_mp_normalization(struct xwii_iface *dev, int32_t x,
 				     int32_t y, int32_t z, int32_t factor);
@@ -1275,9 +1275,9 @@ void xwii_iface_set_mp_normalization(struct xwii_iface *dev, int32_t x,
  * Note that if the calibration factor is not 0, the normalization values may
  * change depending on incoming MP data. Therefore, the data read via this
  * function may differ from the values that you wrote to previously. However,
- * apart from applied calibration, these value are the same as were set
- * previously via xwii_iface_set_mp_normalization() and you can feed them back
- * in later.
+ * apart from applied calibration and saturation, these values are the same as
+ * those previously passed to xwii_iface_set_mp_normalization(), and you can
+ * feed them back later.
  */
 void xwii_iface_get_mp_normalization(struct xwii_iface *dev, int32_t *x,
 				     int32_t *y, int32_t *z, int32_t *factor);
