@@ -2914,6 +2914,7 @@ static int self_test_motion_aim(void)
 	reset_aim_config();
 	aim_output = AIM_OUTPUT_RIGHT_STICK;
 	aim_activation = AIM_ACTIVATION_B;
+	dev.uinput_fd = -1;
 	dev.aim_held = false;
 	memset(&event, 0, sizeof(event));
 	event.type = XWII_EVENT_KEY;
