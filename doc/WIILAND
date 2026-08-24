@@ -21,6 +21,8 @@ will be an optional backend, not a replacement for the uinput baseline.
 
 wiilandd:
   - monitors hid-wiimote devices through libxwiimote compatibility library;
+  - decodes the standard BTN_1..BTN_5, D-pad, and HAT-axis events emitted by
+    current mainline hid-wiimote Guitar and Drums devices;
   - creates one virtual uinput gamepad per Wii Remote by default;
   - optionally creates a virtual desktop mouse/keyboard with --profile desktop
     or --profile both;
@@ -29,6 +31,9 @@ wiilandd:
   - forwards accelerometer, MotionPlus, Nunchuk, Classic Controller,
     Pro Controller, Guitar, Drums, and Balance Board axes to the gamepad
     profile;
+  - normalizes each controller family's raw stick, trigger, sensor, whammy,
+    touch-strip, and pressure ranges to the ranges advertised by the unified
+    virtual gamepad, so applications receive full axis travel;
   - maps Wii Remote core input in the desktop profile: D-pad repeat and valid
     IR events move the pointer, A/B click, +/- send Enter/Escape, Home sends
     the compositor overview key, and 1/2 send Page Down/Page Up;
@@ -50,9 +55,9 @@ wiilandd:
   - provides --axis-map, --validation-checklist, and --doctor for
     machine-readable virtual gamepad mapping, required hardware-validation
     coverage, and runtime readiness diagnostics;
-  - ships CI and make-check smoke coverage that compiles wiilandd against
-    committed libxwiimote stubs and runs --self-test, --check-config,
-    --dump-config, --axis-map, --validation-checklist, and --doctor;
+  - ships CI and make-check coverage for mainline Guitar/Drums decoding plus
+    hardware-free wiilandd profile, button-map, axis-scaling, config,
+    dump-config, axis-map, validation-checklist, doctor, and trace behavior;
     CI also builds the Autotools package and validates the staged udev,
     systemd-user, example-config, and wiilandd binary install paths;
   - opens only the hid-wiimote interfaces required by each device profile and

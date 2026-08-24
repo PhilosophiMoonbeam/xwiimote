@@ -127,6 +127,21 @@
 #define AIM_CALIBRATION_MAX_JITTER 512
 #define POINTER_TICK_INTERVAL_US 16000
 #define MAX_EVENTS_PER_DRAIN 256
+#define VIRTUAL_AXIS_MIN (-32768)
+#define VIRTUAL_AXIS_MAX 32767
+#define VIRTUAL_TRIGGER_MAX 1023
+#define WIIMOTE_ACCEL_AXIS_EXTENT 500
+#define NUNCHUK_STICK_AXIS_EXTENT 120
+#define CLASSIC_STICK_AXIS_EXTENT 30
+#define CLASSIC_TRIGGER_MAX 62
+#define PRO_STICK_AXIS_EXTENT 1024
+#define RHYTHM_STICK_NEGATIVE_EXTENT 32
+#define RHYTHM_STICK_POSITIVE_EXTENT 31
+#define DRUM_PRESSURE_MAX 7
+#define GUITAR_WHAMMY_NEGATIVE_EXTENT 16
+#define GUITAR_WHAMMY_POSITIVE_EXTENT 15
+#define GUITAR_FRET_MAX 31
+#define MOTION_PLUS_AXIS_EXTENT 16000
 #define ARRAY_SIZE(_a) (sizeof(_a) / sizeof((_a)[0]))
 
 enum bridge_profile {
@@ -438,11 +453,33 @@ static int emit_rel(int fd, int code, int32_t value)
 
 static int clamp_axis_value(int value)
 {
-	if (value > 32767)
-		return 32767;
-	if (value < -32768)
-		return -32768;
+	if (value > VIRTUAL_AXIS_MAX)
+		return VIRTUAL_AXIS_MAX;
+	if (value < VIRTUAL_AXIS_MIN)
+		return VIRTUAL_AXIS_MIN;
 	return value;
+}
+
+static int scale_signed_axis(int32_t value, int negative_extent,
+			     int positive_extent)
+{
+	if (value <= -negative_extent)
+		return VIRTUAL_AXIS_MIN;
+	if (value >= positive_extent)
+		return VIRTUAL_AXIS_MAX;
+	if (value < 0)
+		return (int)((int64_t)value * -VIRTUAL_AXIS_MIN /
+			     negative_extent);
+	return (int)((int64_t)value * VIRTUAL_AXIS_MAX / positive_extent);
+}
+
+static int scale_unsigned_axis(int32_t value, int source_max, int target_max)
+{
+	if (value <= 0)
+		return 0;
+	if (value >= source_max)
+		return target_max;
+	return (int)((int64_t)value * target_max / source_max);
 }
 
 static int map_key(unsigned int code)
@@ -566,18 +603,18 @@ static int enable_abs_bits(int fd, struct uinput_user_dev *udev)
 		ret = set_bit(fd, UI_SET_ABSBIT, axes[i]);
 		if (ret)
 			return ret;
-		setup_abs_axis(udev, axes[i], -32768, 32767, 256, 16);
+		setup_abs_axis(udev, axes[i], VIRTUAL_AXIS_MIN,
+			       VIRTUAL_AXIS_MAX, 256, 16);
 	}
 
-	setup_abs_axis(udev, ABS_Z, 0, 1023, 0, 4);
-	setup_abs_axis(udev, ABS_RZ, 0, 1023, 0, 4);
-	setup_abs_axis(udev, ABS_HAT3X, 0, 1023, 0, 4);
-	setup_abs_axis(udev, ABS_HAT3Y, 0, 1023, 0, 4);
+	setup_abs_axis(udev, ABS_Z, 0, VIRTUAL_TRIGGER_MAX, 0, 4);
+	setup_abs_axis(udev, ABS_RZ, 0, VIRTUAL_TRIGGER_MAX, 0, 4);
+	setup_abs_axis(udev, ABS_HAT3Y, 0, VIRTUAL_TRIGGER_MAX, 0, 4);
 	setup_abs_axis(udev, ABS_PRESSURE, 0, 65535, 0, 4);
 	setup_abs_axis(udev, ABS_DISTANCE, 0, 65535, 0, 4);
 	setup_abs_axis(udev, ABS_TILT_X, 0, 65535, 0, 4);
 	setup_abs_axis(udev, ABS_TILT_Y, 0, 65535, 0, 4);
-	setup_abs_axis(udev, ABS_MISC, 0, 1023, 0, 4);
+	setup_abs_axis(udev, ABS_MISC, 0, VIRTUAL_TRIGGER_MAX, 0, 4);
 
 	return 0;
 }
@@ -725,15 +762,20 @@ static int forward_key_event(struct bridge_device *dev,
 }
 
 static int forward_abs_pair(struct bridge_device *dev, int code_x, int code_y,
-			    const struct xwii_event_abs *abs)
+			    const struct xwii_event_abs *abs,
+			    int negative_extent, int positive_extent)
 {
 	int ret;
 
-	ret = emit_abs(dev->uinput_fd, code_x, abs->x);
+	ret = emit_abs(dev->uinput_fd, code_x,
+		       scale_signed_axis(abs->x, negative_extent,
+					 positive_extent));
 	if (ret)
 		return ret;
 
-	return emit_abs(dev->uinput_fd, code_y, abs->y);
+	return emit_abs(dev->uinput_fd, code_y,
+			scale_signed_axis(abs->y, negative_extent,
+					  positive_extent));
 }
 
 static int accel_abs_code(unsigned int index)
@@ -780,17 +822,20 @@ static int motion_plus_abs_code(unsigned int index)
 
 static int forward_xyz_event(struct bridge_device *dev,
 			     const struct xwii_event_abs *abs,
-			     int (*axis_code)(unsigned int))
+			     int (*axis_code)(unsigned int), int extent)
 {
 	int ret;
 
-	ret = emit_abs(dev->uinput_fd, axis_code(0), abs->x);
+	ret = emit_abs(dev->uinput_fd, axis_code(0),
+		       scale_signed_axis(abs->x, extent, extent));
 	if (ret)
 		return ret;
-	ret = emit_abs(dev->uinput_fd, axis_code(1), abs->y);
+	ret = emit_abs(dev->uinput_fd, axis_code(1),
+		       scale_signed_axis(abs->y, extent, extent));
 	if (ret)
 		return ret;
-	return emit_abs(dev->uinput_fd, axis_code(2), abs->z);
+	return emit_abs(dev->uinput_fd, axis_code(2),
+			scale_signed_axis(abs->z, extent, extent));
 }
 
 static int balance_abs_code(unsigned int index)
@@ -845,6 +890,24 @@ static int drums_abs_code(unsigned int index)
 	return codes[index];
 }
 
+static int scale_drums_pressure(unsigned int index, int32_t value)
+{
+	int target_max;
+
+	switch (index) {
+	case XWII_DRUMS_ABS_CYMBAL_LEFT:
+	case XWII_DRUMS_ABS_CYMBAL_RIGHT:
+	case XWII_DRUMS_ABS_TOM_FAR_RIGHT:
+		target_max = VIRTUAL_AXIS_MAX;
+		break;
+	default:
+		target_max = VIRTUAL_TRIGGER_MAX;
+		break;
+	}
+
+	return scale_unsigned_axis(value, DRUM_PRESSURE_MAX, target_max);
+}
+
 static int forward_drums_move_event(struct bridge_device *dev,
 				    const struct xwii_event *event)
 {
@@ -852,7 +915,9 @@ static int forward_drums_move_event(struct bridge_device *dev,
 	int code, ret;
 
 	ret = forward_abs_pair(dev, ABS_X, ABS_Y,
-			       &event->v.abs[XWII_DRUMS_ABS_PAD]);
+			       &event->v.abs[XWII_DRUMS_ABS_PAD],
+			       RHYTHM_STICK_NEGATIVE_EXTENT,
+			       RHYTHM_STICK_POSITIVE_EXTENT);
 	if (ret)
 		return ret;
 
@@ -860,7 +925,8 @@ static int forward_drums_move_event(struct bridge_device *dev,
 		code = drums_abs_code(i);
 		if (code < 0)
 			continue;
-		ret = emit_abs(dev->uinput_fd, code, event->v.abs[i].x);
+		ret = emit_abs(dev->uinput_fd, code,
+			       scale_drums_pressure(i, event->v.abs[i].x));
 		if (ret)
 			return ret;
 	}
@@ -875,43 +941,71 @@ static int forward_move_event(struct bridge_device *dev,
 
 	switch (event->type) {
 	case XWII_EVENT_ACCEL:
-		ret = forward_xyz_event(dev, &event->v.abs[0], accel_abs_code);
+		ret = forward_xyz_event(dev, &event->v.abs[0], accel_abs_code,
+					WIIMOTE_ACCEL_AXIS_EXTENT);
 		break;
 	case XWII_EVENT_NUNCHUK_MOVE:
-		ret = forward_abs_pair(dev, ABS_X, ABS_Y, &event->v.abs[0]);
+		ret = forward_abs_pair(dev, ABS_X, ABS_Y, &event->v.abs[0],
+				       NUNCHUK_STICK_AXIS_EXTENT,
+				       NUNCHUK_STICK_AXIS_EXTENT);
 		if (!ret)
 			ret = forward_xyz_event(dev, &event->v.abs[1],
-						nunchuk_accel_abs_code);
+						nunchuk_accel_abs_code,
+						WIIMOTE_ACCEL_AXIS_EXTENT);
 		break;
 	case XWII_EVENT_CLASSIC_CONTROLLER_MOVE:
-		ret = forward_abs_pair(dev, ABS_X, ABS_Y, &event->v.abs[0]);
+		ret = forward_abs_pair(dev, ABS_X, ABS_Y, &event->v.abs[0],
+				       CLASSIC_STICK_AXIS_EXTENT,
+				       CLASSIC_STICK_AXIS_EXTENT);
 		if (!ret)
-			ret = forward_abs_pair(dev, ABS_RX, ABS_RY, &event->v.abs[1]);
+			ret = forward_abs_pair(dev, ABS_RX, ABS_RY,
+					       &event->v.abs[1],
+					       CLASSIC_STICK_AXIS_EXTENT,
+					       CLASSIC_STICK_AXIS_EXTENT);
 		if (!ret)
-			ret = emit_abs(dev->uinput_fd, ABS_Z, event->v.abs[2].x);
+			ret = emit_abs(dev->uinput_fd, ABS_Z,
+				       scale_unsigned_axis(event->v.abs[2].x,
+							   CLASSIC_TRIGGER_MAX,
+							   VIRTUAL_TRIGGER_MAX));
 		if (!ret)
-			ret = emit_abs(dev->uinput_fd, ABS_RZ, event->v.abs[2].y);
+			ret = emit_abs(dev->uinput_fd, ABS_RZ,
+				       scale_unsigned_axis(event->v.abs[2].y,
+							   CLASSIC_TRIGGER_MAX,
+							   VIRTUAL_TRIGGER_MAX));
 		break;
 	case XWII_EVENT_PRO_CONTROLLER_MOVE:
-		ret = forward_abs_pair(dev, ABS_X, ABS_Y, &event->v.abs[0]);
+		ret = forward_abs_pair(dev, ABS_X, ABS_Y, &event->v.abs[0],
+				       PRO_STICK_AXIS_EXTENT,
+				       PRO_STICK_AXIS_EXTENT);
 		if (!ret)
-			ret = forward_abs_pair(dev, ABS_RX, ABS_RY, &event->v.abs[1]);
+			ret = forward_abs_pair(dev, ABS_RX, ABS_RY,
+					       &event->v.abs[1],
+					       PRO_STICK_AXIS_EXTENT,
+					       PRO_STICK_AXIS_EXTENT);
 		break;
 	case XWII_EVENT_GUITAR_MOVE:
-		ret = forward_abs_pair(dev, ABS_X, ABS_Y, &event->v.abs[0]);
+		ret = forward_abs_pair(dev, ABS_X, ABS_Y, &event->v.abs[0],
+				       RHYTHM_STICK_NEGATIVE_EXTENT,
+				       RHYTHM_STICK_POSITIVE_EXTENT);
 		if (!ret)
 			ret = emit_abs(dev->uinput_fd, ABS_HAT3X,
-				       event->v.abs[1].x);
+				       scale_signed_axis(
+					       event->v.abs[1].x,
+					       GUITAR_WHAMMY_NEGATIVE_EXTENT,
+					       GUITAR_WHAMMY_POSITIVE_EXTENT));
 		if (!ret)
 			ret = emit_abs(dev->uinput_fd, ABS_HAT3Y,
-				       event->v.abs[2].x);
+				       scale_unsigned_axis(event->v.abs[2].x,
+							   GUITAR_FRET_MAX,
+							   VIRTUAL_TRIGGER_MAX));
 		break;
 	case XWII_EVENT_BALANCE_BOARD:
 		ret = forward_balance_board_event(dev, event);
 		break;
 	case XWII_EVENT_MOTION_PLUS:
 		ret = forward_xyz_event(dev, &event->v.abs[0],
-					motion_plus_abs_code);
+					motion_plus_abs_code,
+					MOTION_PLUS_AXIS_EXTENT);
 		break;
 	case XWII_EVENT_DRUMS_MOVE:
 		ret = forward_drums_move_event(dev, event);
@@ -3194,46 +3288,217 @@ static int expect_abs_capture(const char *name, int code, int32_t want)
 	return expect_int(name, captured_abs_value[code], want);
 }
 
-static int self_test_nunchuk_forwarding(void)
+static int capture_move_event(const struct xwii_event *event)
 {
 	struct bridge_device dev;
-	struct xwii_event event;
 	bool old_dry_run = dry_run;
 	int ret;
 
 	memset(&dev, 0, sizeof(dev));
 	dev.uinput_fd = -1;
-	memset(&event, 0, sizeof(event));
-	event.type = XWII_EVENT_NUNCHUK_MOVE;
-	event.v.abs[0].x = 11;
-	event.v.abs[0].y = 12;
-	event.v.abs[1].x = 21;
-	event.v.abs[1].y = 22;
-	event.v.abs[1].z = 23;
-
 	memset(captured_abs_seen, 0, sizeof(captured_abs_seen));
 	memset(captured_abs_value, 0, sizeof(captured_abs_value));
 	capture_abs_events = true;
 	dry_run = true;
-	ret = forward_move_event(&dev, &event);
+	ret = forward_move_event(&dev, event);
 	capture_abs_events = false;
 	dry_run = old_dry_run;
+	return ret;
+}
+
+static int self_test_nunchuk_forwarding(void)
+{
+	struct xwii_event event;
+	int ret;
+
+	memset(&event, 0, sizeof(event));
+	event.type = XWII_EVENT_NUNCHUK_MOVE;
+	event.v.abs[0].x = -NUNCHUK_STICK_AXIS_EXTENT;
+	event.v.abs[0].y = NUNCHUK_STICK_AXIS_EXTENT;
+	event.v.abs[1].x = -WIIMOTE_ACCEL_AXIS_EXTENT;
+	event.v.abs[1].y = 0;
+	event.v.abs[1].z = WIIMOTE_ACCEL_AXIS_EXTENT;
+
+	ret = capture_move_event(&event);
 	if (ret)
 		return ret;
 
-	ret = expect_abs_capture("nunchuk-stick-x", ABS_X, 11);
+	ret = expect_abs_capture("nunchuk-stick-x", ABS_X, VIRTUAL_AXIS_MIN);
 	if (ret)
 		return ret;
-	ret = expect_abs_capture("nunchuk-stick-y", ABS_Y, 12);
+	ret = expect_abs_capture("nunchuk-stick-y", ABS_Y, VIRTUAL_AXIS_MAX);
 	if (ret)
 		return ret;
-	ret = expect_abs_capture("nunchuk-accel-x", ABS_HAT1X, 21);
+	ret = expect_abs_capture("nunchuk-accel-x", ABS_HAT1X,
+				 VIRTUAL_AXIS_MIN);
 	if (ret)
 		return ret;
-	ret = expect_abs_capture("nunchuk-accel-y", ABS_HAT1Y, 22);
+	ret = expect_abs_capture("nunchuk-accel-y", ABS_HAT1Y, 0);
 	if (ret)
 		return ret;
-	return expect_abs_capture("nunchuk-accel-z", ABS_HAT2X, 23);
+	return expect_abs_capture("nunchuk-accel-z", ABS_HAT2X,
+				  VIRTUAL_AXIS_MAX);
+}
+
+static int self_test_axis_scaling(void)
+{
+	struct xwii_event event;
+	unsigned int i;
+	int ret;
+
+	ret = expect_int("signed-negative-midpoint",
+			 scale_signed_axis(-60, 120, 120), -16384);
+	if (ret)
+		return ret;
+	ret = expect_int("signed-positive-midpoint",
+			 scale_signed_axis(60, 120, 120), 16383);
+	if (ret)
+		return ret;
+	ret = expect_int("unsigned-midpoint",
+			 scale_unsigned_axis(31, 62, VIRTUAL_TRIGGER_MAX), 511);
+	if (ret)
+		return ret;
+
+	memset(&event, 0, sizeof(event));
+	event.type = XWII_EVENT_CLASSIC_CONTROLLER_MOVE;
+	event.v.abs[0].x = -CLASSIC_STICK_AXIS_EXTENT;
+	event.v.abs[0].y = CLASSIC_STICK_AXIS_EXTENT;
+	event.v.abs[1].x = -CLASSIC_STICK_AXIS_EXTENT;
+	event.v.abs[1].y = CLASSIC_STICK_AXIS_EXTENT;
+	event.v.abs[2].x = CLASSIC_TRIGGER_MAX;
+	event.v.abs[2].y = 0;
+	ret = capture_move_event(&event);
+	if (ret)
+		return ret;
+	ret = expect_abs_capture("classic-left-x", ABS_X, VIRTUAL_AXIS_MIN);
+	if (ret)
+		return ret;
+	ret = expect_abs_capture("classic-left-y", ABS_Y, VIRTUAL_AXIS_MAX);
+	if (ret)
+		return ret;
+	ret = expect_abs_capture("classic-right-x", ABS_RX, VIRTUAL_AXIS_MIN);
+	if (ret)
+		return ret;
+	ret = expect_abs_capture("classic-right-y", ABS_RY, VIRTUAL_AXIS_MAX);
+	if (ret)
+		return ret;
+	ret = expect_abs_capture("classic-trigger-left", ABS_Z,
+				 VIRTUAL_TRIGGER_MAX);
+	if (ret)
+		return ret;
+	ret = expect_abs_capture("classic-trigger-right", ABS_RZ, 0);
+	if (ret)
+		return ret;
+
+	memset(&event, 0, sizeof(event));
+	event.type = XWII_EVENT_PRO_CONTROLLER_MOVE;
+	event.v.abs[0].x = -PRO_STICK_AXIS_EXTENT;
+	event.v.abs[0].y = PRO_STICK_AXIS_EXTENT;
+	event.v.abs[1].x = PRO_STICK_AXIS_EXTENT;
+	event.v.abs[1].y = -PRO_STICK_AXIS_EXTENT;
+	ret = capture_move_event(&event);
+	if (ret)
+		return ret;
+	ret = expect_abs_capture("pro-left-x", ABS_X, VIRTUAL_AXIS_MIN);
+	if (ret)
+		return ret;
+	ret = expect_abs_capture("pro-left-y", ABS_Y, VIRTUAL_AXIS_MAX);
+	if (ret)
+		return ret;
+	ret = expect_abs_capture("pro-right-x", ABS_RX, VIRTUAL_AXIS_MAX);
+	if (ret)
+		return ret;
+	ret = expect_abs_capture("pro-right-y", ABS_RY, VIRTUAL_AXIS_MIN);
+	if (ret)
+		return ret;
+
+	memset(&event, 0, sizeof(event));
+	event.type = XWII_EVENT_GUITAR_MOVE;
+	event.v.abs[0].x = -RHYTHM_STICK_NEGATIVE_EXTENT;
+	event.v.abs[0].y = RHYTHM_STICK_POSITIVE_EXTENT;
+	event.v.abs[1].x = -GUITAR_WHAMMY_NEGATIVE_EXTENT;
+	event.v.abs[2].x = GUITAR_FRET_MAX;
+	ret = capture_move_event(&event);
+	if (ret)
+		return ret;
+	ret = expect_abs_capture("guitar-stick-x", ABS_X, VIRTUAL_AXIS_MIN);
+	if (ret)
+		return ret;
+	ret = expect_abs_capture("guitar-stick-y", ABS_Y, VIRTUAL_AXIS_MAX);
+	if (ret)
+		return ret;
+	ret = expect_abs_capture("guitar-whammy", ABS_HAT3X,
+				 VIRTUAL_AXIS_MIN);
+	if (ret)
+		return ret;
+	ret = expect_abs_capture("guitar-fret-board", ABS_HAT3Y,
+				 VIRTUAL_TRIGGER_MAX);
+	if (ret)
+		return ret;
+
+	memset(&event, 0, sizeof(event));
+	event.type = XWII_EVENT_DRUMS_MOVE;
+	event.v.abs[XWII_DRUMS_ABS_PAD].x =
+		-RHYTHM_STICK_NEGATIVE_EXTENT;
+	event.v.abs[XWII_DRUMS_ABS_PAD].y =
+		RHYTHM_STICK_POSITIVE_EXTENT;
+	for (i = XWII_DRUMS_ABS_CYMBAL_LEFT; i < XWII_DRUMS_ABS_NUM; ++i)
+		event.v.abs[i].x = DRUM_PRESSURE_MAX;
+	ret = capture_move_event(&event);
+	if (ret)
+		return ret;
+	ret = expect_abs_capture("drums-pad-x", ABS_X, VIRTUAL_AXIS_MIN);
+	if (ret)
+		return ret;
+	ret = expect_abs_capture("drums-pad-y", ABS_Y, VIRTUAL_AXIS_MAX);
+	if (ret)
+		return ret;
+	ret = expect_abs_capture("drums-cymbal-left", ABS_RX,
+				 VIRTUAL_AXIS_MAX);
+	if (ret)
+		return ret;
+	ret = expect_abs_capture("drums-cymbal-right", ABS_RY,
+				 VIRTUAL_AXIS_MAX);
+	if (ret)
+		return ret;
+	ret = expect_abs_capture("drums-tom-left", ABS_Z,
+				 VIRTUAL_TRIGGER_MAX);
+	if (ret)
+		return ret;
+	ret = expect_abs_capture("drums-tom-right", ABS_RZ,
+				 VIRTUAL_TRIGGER_MAX);
+	if (ret)
+		return ret;
+	ret = expect_abs_capture("drums-tom-far-right", ABS_HAT3X,
+				 VIRTUAL_AXIS_MAX);
+	if (ret)
+		return ret;
+	ret = expect_abs_capture("drums-bass", ABS_HAT3Y,
+				 VIRTUAL_TRIGGER_MAX);
+	if (ret)
+		return ret;
+	ret = expect_abs_capture("drums-hi-hat", ABS_MISC,
+				 VIRTUAL_TRIGGER_MAX);
+	if (ret)
+		return ret;
+
+	memset(&event, 0, sizeof(event));
+	event.type = XWII_EVENT_MOTION_PLUS;
+	event.v.abs[0].x = -MOTION_PLUS_AXIS_EXTENT;
+	event.v.abs[0].y = 0;
+	event.v.abs[0].z = MOTION_PLUS_AXIS_EXTENT;
+	ret = capture_move_event(&event);
+	if (ret)
+		return ret;
+	ret = expect_abs_capture("motion-plus-scaled-x", ABS_GAS,
+				 VIRTUAL_AXIS_MIN);
+	if (ret)
+		return ret;
+	ret = expect_abs_capture("motion-plus-scaled-y", ABS_BRAKE, 0);
+	if (ret)
+		return ret;
+	return expect_abs_capture("motion-plus-scaled-z", ABS_HAT0X,
+				  VIRTUAL_AXIS_MAX);
 }
 
 static int self_test_gamepad_map(void)
@@ -4271,6 +4536,9 @@ static int run_self_test(void)
 	ret = self_test_nunchuk_forwarding();
 	if (ret)
 		return ret;
+	ret = self_test_axis_scaling();
+	if (ret)
+		return ret;
 	ret = self_test_ir_pointer();
 	if (ret)
 		return ret;
@@ -4296,6 +4564,9 @@ static int run_self_test(void)
 
 static void print_axis_map(void)
 {
+	puts("range.signed=-32768:32767");
+	puts("range.trigger=0:1023");
+	puts("range.balance=0:65535");
 	puts("wiimote.dpad.left=BTN_DPAD_LEFT");
 	puts("wiimote.dpad.right=BTN_DPAD_RIGHT");
 	puts("wiimote.dpad.up=BTN_DPAD_UP");
@@ -4373,7 +4644,7 @@ static void print_axis_map(void)
 	puts("guitar.strum.up=BTN_STRUM_BAR_UP");
 	puts("guitar.strum.down=BTN_STRUM_BAR_DOWN");
 	puts("guitar.plus=BTN_START");
-	puts("guitar.home=BTN_MODE");
+	puts("guitar.minus=BTN_SELECT");
 	puts("guitar.fret.far-up=BTN_FRET_FAR_UP");
 	puts("guitar.fret.up=BTN_FRET_UP");
 	puts("guitar.fret.mid=BTN_FRET_MID");

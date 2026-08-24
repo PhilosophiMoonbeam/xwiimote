@@ -54,6 +54,9 @@ fi
 grep -F 'IR screen calibration requires right > left and bottom > top' \
 	"$build_dir/invalid-screen-err" >/dev/null
 "$bin" --axis-map >"$build_dir/axis-map"
+grep -F 'range.signed=-32768:32767' "$build_dir/axis-map" >/dev/null
+grep -F 'range.trigger=0:1023' "$build_dir/axis-map" >/dev/null
+grep -F 'range.balance=0:65535' "$build_dir/axis-map" >/dev/null
 grep -F 'nunchuk.accel.x=ABS_HAT1X' "$build_dir/axis-map" >/dev/null
 grep -F 'wiimote.a=BTN_SOUTH' "$build_dir/axis-map" >/dev/null
 grep -F 'pro.zl=BTN_TL2' "$build_dir/axis-map" >/dev/null
@@ -64,7 +67,7 @@ grep -F 'drums.tom.far-right=ABS_HAT3X' "$build_dir/axis-map" >/dev/null
 grep -F 'drums.bass=ABS_HAT3Y' "$build_dir/axis-map" >/dev/null
 grep -F 'classic.zl=BTN_TL2' "$build_dir/axis-map" >/dev/null
 grep -F 'guitar.fret.mid=BTN_FRET_MID' "$build_dir/axis-map" >/dev/null
-grep -F 'guitar.home=BTN_MODE' "$build_dir/axis-map" >/dev/null
+grep -F 'guitar.minus=BTN_SELECT' "$build_dir/axis-map" >/dev/null
 grep -F 'drums.minus=BTN_SELECT' "$build_dir/axis-map" >/dev/null
 grep -F 'aim.right-stick.x=ABS_RX' "$build_dir/axis-map" >/dev/null
 grep -F 'aim.mouse.x=REL_X' "$build_dir/axis-map" >/dev/null

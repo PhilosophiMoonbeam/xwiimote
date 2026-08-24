@@ -123,6 +123,13 @@ For hardware-free diagnostics in packaging or CI, run:
 	$ wiilandd --self-test
 	$ wiilandd --dry-run --trace-events --verbose
 
+Current mainline hid-wiimote Guitar and Drums events use standard BTN, D-pad,
+and HAT codes; libxwiimote translates those events rather than relying on
+obsolete out-of-range aliases. wiilandd also normalizes the different raw
+controller ranges to the ranges advertised by its unified virtual gamepad, so
+sticks, triggers, motion sensors, whammy, touch strip, and drum pressures reach
+their full usable travel in SDL, Steam Input, Wine/Proton, and native games.
+
 `wiilandd --help` and `wiilandd --list` intentionally bypass configuration so
 diagnostics still work when a local config file is broken. At runtime the daemon
 opens only the hid-wiimote interfaces needed by the selected profile and aim

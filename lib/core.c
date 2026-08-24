@@ -234,8 +234,12 @@ static int xwii_iface_read_nodes(struct xwii_iface *dev)
 			continue;
 
 		subs = udev_device_get_subsystem(d);
+		if (!subs)
+			continue;
 		if (!strcmp(subs, "input")) {
 			name = udev_device_get_sysname(d);
+			if (!name)
+				continue;
 			if (!strncmp(name, "input", 5)) {
 				name = udev_device_get_sysattr_value(d, "name");
 				if (!name)
@@ -1448,6 +1452,104 @@ try_again:
 	goto try_again;
 }
 
+static bool update_drums_cache(struct xwii_iface *dev, unsigned int code,
+			       int32_t value)
+{
+	switch (code) {
+	case ABS_X:
+		dev->drums_cache[XWII_DRUMS_ABS_PAD].x = value;
+		break;
+	case ABS_Y:
+		dev->drums_cache[XWII_DRUMS_ABS_PAD].y = value;
+		break;
+	case ABS_HAT2X:
+		dev->drums_cache[XWII_DRUMS_ABS_CYMBAL_LEFT].x = value;
+		break;
+	case ABS_HAT2Y:
+		dev->drums_cache[XWII_DRUMS_ABS_CYMBAL_RIGHT].x = value;
+		break;
+	case ABS_HAT0X:
+		dev->drums_cache[XWII_DRUMS_ABS_TOM_LEFT].x = value;
+		break;
+	case ABS_HAT1X:
+		dev->drums_cache[XWII_DRUMS_ABS_TOM_RIGHT].x = value;
+		break;
+	case ABS_HAT0Y:
+		dev->drums_cache[XWII_DRUMS_ABS_TOM_FAR_RIGHT].x = value;
+		break;
+	case ABS_HAT3X:
+		dev->drums_cache[XWII_DRUMS_ABS_BASS].x = value;
+		break;
+	case ABS_HAT3Y:
+		dev->drums_cache[XWII_DRUMS_ABS_HI_HAT].x = value;
+		break;
+	default:
+		return false;
+	}
+
+	return true;
+}
+
+static bool map_guitar_key(unsigned int code, unsigned int *key)
+{
+	switch (code) {
+	case BTN_1:
+		*key = XWII_KEY_FRET_FAR_UP;
+		break;
+	case BTN_2:
+		*key = XWII_KEY_FRET_UP;
+		break;
+	case BTN_3:
+		*key = XWII_KEY_FRET_MID;
+		break;
+	case BTN_4:
+		*key = XWII_KEY_FRET_LOW;
+		break;
+	case BTN_5:
+		*key = XWII_KEY_FRET_FAR_LOW;
+		break;
+	case BTN_DPAD_UP:
+		*key = XWII_KEY_STRUM_BAR_UP;
+		break;
+	case BTN_DPAD_DOWN:
+		*key = XWII_KEY_STRUM_BAR_DOWN;
+		break;
+	case BTN_START:
+		*key = XWII_KEY_PLUS;
+		break;
+	case BTN_SELECT:
+		*key = XWII_KEY_MINUS;
+		break;
+	default:
+		return false;
+	}
+
+	return true;
+}
+
+static bool update_guitar_cache(struct xwii_iface *dev, unsigned int code,
+				int32_t value)
+{
+	switch (code) {
+	case ABS_X:
+		dev->guitar_cache[0].x = value;
+		break;
+	case ABS_Y:
+		dev->guitar_cache[0].y = value;
+		break;
+	case ABS_HAT1X:
+		dev->guitar_cache[1].x = value;
+		break;
+	case ABS_HAT0X:
+		dev->guitar_cache[2].x = value;
+		break;
+	default:
+		return false;
+	}
+
+	return true;
+}
+
 static int read_drums(struct xwii_iface *dev, struct xwii_event *ev)
 {
 	int ret, fd;
@@ -1492,45 +1594,7 @@ try_again:
 		ev->v.key.state = input.value;
 		return 0;
 	} else if (input.type == EV_ABS) {
-		if (input.code == ABS_X)
-			dev->drums_cache[XWII_DRUMS_ABS_PAD].x = input.value;
-		else if (input.code == ABS_Y)
-			dev->drums_cache[XWII_DRUMS_ABS_PAD].y = input.value;
-#ifndef ABS_CYMBAL_LEFT
-#define ABS_CYMBAL_LEFT 0x45
-#endif
-		else if (input.code == ABS_CYMBAL_LEFT)
-			dev->drums_cache[XWII_DRUMS_ABS_CYMBAL_LEFT].x = input.value;
-#ifndef ABS_CYMBAL_RIGHT
-#define ABS_CYMBAL_RIGHT 0x46
-#endif
-		else if (input.code == ABS_CYMBAL_RIGHT)
-			dev->drums_cache[XWII_DRUMS_ABS_CYMBAL_RIGHT].x = input.value;
-#ifndef ABS_TOM_LEFT
-#define ABS_TOM_LEFT 0x41
-#endif
-		else if (input.code == ABS_TOM_LEFT)
-			dev->drums_cache[XWII_DRUMS_ABS_TOM_LEFT].x = input.value;
-#ifndef ABS_TOM_RIGHT
-#define ABS_TOM_RIGHT 0x42
-#endif
-		else if (input.code == ABS_TOM_RIGHT)
-			dev->drums_cache[XWII_DRUMS_ABS_TOM_RIGHT].x = input.value;
-#ifndef ABS_TOM_FAR_RIGHT
-#define ABS_TOM_FAR_RIGHT 0x43
-#endif
-		else if (input.code == ABS_TOM_FAR_RIGHT)
-			dev->drums_cache[XWII_DRUMS_ABS_TOM_FAR_RIGHT].x = input.value;
-#ifndef ABS_BASS
-#define ABS_BASS 0x48
-#endif
-		else if (input.code == ABS_BASS)
-			dev->drums_cache[XWII_DRUMS_ABS_BASS].x = input.value;
-#ifndef ABS_HI_HAT
-#define ABS_HI_HAT 0x49
-#endif
-		else if (input.code == ABS_HI_HAT)
-			dev->drums_cache[XWII_DRUMS_ABS_HI_HAT].x = input.value;
+		update_drums_cache(dev, input.code, input.value);
 	} else if (input.type == EV_SYN) {
 		memset(ev, 0, sizeof(*ev));
 		memcpy(&ev->time, &input.time, sizeof(struct timeval));
@@ -1569,58 +1633,8 @@ try_again:
 		if (input.value < 0 || input.value > 2)
 			goto try_again;
 
-		switch (input.code) {
-#ifndef BTN_FRET_FAR_UP
-#define BTN_FRET_FAR_UP 0x224
-#endif
-		case BTN_FRET_FAR_UP:
-			key = XWII_KEY_FRET_FAR_UP;
-			break;
-#ifndef BTN_FRET_UP
-#define BTN_FRET_UP 0x225
-#endif
-		case BTN_FRET_UP:
-			key = XWII_KEY_FRET_UP;
-			break;
-#ifndef BTN_FRET_MID
-#define BTN_FRET_MID 0x226
-#endif
-		case BTN_FRET_MID:
-			key = XWII_KEY_FRET_MID;
-			break;
-#ifndef BTN_FRET_LOW
-#define BTN_FRET_LOW 0x227
-#endif
-		case BTN_FRET_LOW:
-			key = XWII_KEY_FRET_LOW;
-			break;
-#ifndef BTN_FRET_FAR_LOW
-#define BTN_FRET_FAR_LOW 0x228
-#endif
-		case BTN_FRET_FAR_LOW:
-			key = XWII_KEY_FRET_FAR_LOW;
-			break;
-#ifndef BTN_STRUM_BAR_UP
-#define BTN_STRUM_BAR_UP 0x229
-#endif
-		case BTN_STRUM_BAR_UP:
-			key = XWII_KEY_STRUM_BAR_UP;
-			break;
-#ifndef BTN_STRUM_BAR_DOWN
-#define BTN_STRUM_BAR_DOWN 0x22a
-#endif
-		case BTN_STRUM_BAR_DOWN:
-			key = XWII_KEY_STRUM_BAR_DOWN;
-			break;
-		case BTN_START:
-			key = XWII_KEY_PLUS;
-			break;
-		case BTN_MODE:
-			key = XWII_KEY_HOME;
-			break;
-		default:
+		if (!map_guitar_key(input.code, &key))
 			goto try_again;
-		}
 
 		memset(ev, 0, sizeof(*ev));
 		memcpy(&ev->time, &input.time, sizeof(struct timeval));
@@ -1629,20 +1643,7 @@ try_again:
 		ev->v.key.state = input.value;
 		return 0;
 	} else if (input.type == EV_ABS) {
-		if (input.code == ABS_X)
-			dev->guitar_cache[0].x = input.value;
-		else if (input.code == ABS_Y)
-			dev->guitar_cache[0].y = input.value;
-#ifndef ABS_WHAMMY_BAR
-#define ABS_WHAMMY_BAR 0x4b
-#endif
-		else if (input.code == ABS_WHAMMY_BAR)
-			dev->guitar_cache[1].x = input.value;
-#ifndef ABS_FRET_BOARD
-#define ABS_FRET_BOARD 0x4a
-#endif
-		else if (input.code == ABS_FRET_BOARD)
-			dev->guitar_cache[2].x = input.value;
+		update_guitar_cache(dev, input.code, input.value);
 	} else if (input.type == EV_SYN) {
 		memset(ev, 0, sizeof(*ev));
 		memcpy(&ev->time, &input.time, sizeof(struct timeval));

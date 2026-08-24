@@ -205,6 +205,18 @@ wiiland_config_LDFLAGS = \
 	$(AM_LDFLAGS)
 endif
 
+check_PROGRAMS = libxwiimote-decode-test
+TESTS = libxwiimote-decode-test
+libxwiimote_decode_test_SOURCES = \
+	tests/libxwiimote-decode.c
+libxwiimote_decode_test_CPPFLAGS = \
+	$(AM_CPPFLAGS) \
+	$(UDEV_CFLAGS)
+libxwiimote_decode_test_LDADD = \
+	$(UDEV_LIBS)
+libxwiimote_decode_test_LDFLAGS = \
+	$(AM_LDFLAGS)
+
 check-local: wiilandd
 	$(AM_V_at)./wiilandd --self-test
 	$(AM_V_at)$(SHELL) $(top_srcdir)/tests/wiilandd-smoke.sh

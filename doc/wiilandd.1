@@ -402,6 +402,15 @@ desktop pointer motion and relative IR aim continue to work without these
 bounds, so diverse screens and top/bottom sensor-bar placements do not become a
 setup requirement.
 .PP
+.SS Gamepad axis normalization
+Mainline hid-wiimote devices expose controller families with different raw
+ranges. WiiLand normalizes signed sticks, accelerometers, MotionPlus, and the
+whammy bar to -32768 through 32767. Triggers, the guitar touch strip, and drum
+pressures on trigger-style axes use 0 through 1023; drum pressures sharing
+signed stick axes use 0 through 32767. Balance Board sensors retain their 0
+through 65535 values. This gives SDL, Steam Input, Wine/Proton, and native
+games full axis travel instead of the small fraction produced by forwarding
+raw extension values into wider virtual ranges.
 .PP
 .TP
 .B Classic Controller
@@ -428,8 +437,8 @@ whammy and fret board use the valid generic uinput axes
 .BR ABS_HAT3X
 and
 .BR ABS_HAT3Y ;
-strum/fret buttons use dedicated guitar button events, and +/Home use
-.BR BTN_START / BTN_MODE .
+strum/fret buttons use dedicated guitar button events, and +/- use
+.BR BTN_START / BTN_SELECT .
 .TP
 .B Drums
 Pad X/Y use

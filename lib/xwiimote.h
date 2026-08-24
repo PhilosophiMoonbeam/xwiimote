@@ -313,7 +313,10 @@ extern "C" {
  * The different available devices are handled by the kernel and provided as
  * vendor-generic controller.
  *
- * TODO: Describe the provided interface
+ * Mainline hid-wiimote reports the pad on ABS_X/ABS_Y and seven pressure
+ * channels on ABS_HAT0X/ABS_HAT0Y/ABS_HAT1X/ABS_HAT2X/ABS_HAT2Y/
+ * ABS_HAT3X/ABS_HAT3Y. libxwiimote translates those standard evdev codes into
+ * XWII_EVENT_DRUMS_MOVE and the indices in enum xwii_drums_abs.
  *
  * Input: Guitar Controller
  * ---------------------
@@ -324,7 +327,11 @@ extern "C" {
  * The different available devices are handled by the kernel and provided as
  * vendor-generic controller.
  *
- * TODO: Describe the provided interface
+ * Mainline hid-wiimote reports frets on BTN_1 through BTN_5, the strum bar on
+ * BTN_DPAD_UP/BTN_DPAD_DOWN, +/- on BTN_START/BTN_SELECT, the stick on
+ * ABS_X/ABS_Y, the touch strip on ABS_HAT0X, and the whammy bar on ABS_HAT1X.
+ * libxwiimote translates those standard evdev codes into
+ * XWII_EVENT_GUITAR_KEY and XWII_EVENT_GUITAR_MOVE.
  *
  * @{
  */
@@ -541,10 +548,10 @@ enum xwii_event_types {
 	/**
 	 * Guitar key event
 	 *
-	 * Button events for guitar controllers. Valid buttons are HOME and PLUS
-	 * for the StarPower/Home button and the + button. Furthermore, you get
-	 * FRET_FAR_UP, FRET_UP, FRET_MID, FRET_LOW, FRET_FAR_LOW for fret
-	 * activity and STRUM_BAR_UP and STRUM_BAR_LOW for the strum bar.
+	 * Button events for guitar controllers. Valid buttons are PLUS and MINUS
+	 * for the +/- buttons. Furthermore, you get FRET_FAR_UP, FRET_UP,
+	 * FRET_MID, FRET_LOW, FRET_FAR_LOW for fret activity and
+	 * STRUM_BAR_UP and STRUM_BAR_DOWN for the strum bar.
 	 * Payload type is struct xwii_event_key.
 	 */
 	XWII_EVENT_GUITAR_KEY,
