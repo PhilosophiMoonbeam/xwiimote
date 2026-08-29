@@ -1,0 +1,17 @@
+{
+  "adapters": {
+    "gdb": {
+      "launchDefaults": {
+        "env": {
+          "LD_LIBRARY_PATH": ".libs"
+        }
+      },
+      "rootMarkers": [
+        "Makefile",
+        "Makefile.am",
+        "configure.ac",
+        "compile_commands.json"
+      ]
+    }
+  }
+}

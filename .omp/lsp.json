@@ -1,0 +1,15 @@
+{
+  "servers": {
+    "clangd": {
+      "rootMarkers": [
+        "compile_commands.json",
+        "CMakeLists.txt",
+        ".clangd",
+        ".clang-format",
+        "Makefile",
+        "Makefile.am",
+        "configure.ac"
+      ]
+    }
+  }
+}
