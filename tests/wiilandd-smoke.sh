@@ -1,6 +1,8 @@
 #!/bin/sh
 # Build and exercise wiilandd logic without requiring real Wii hardware.
 set -eu
+LC_ALL=C
+export LC_ALL
 
 cc=${CC:-gcc}
 root=$(CDPATH=; cd -- "$(dirname -- "$0")/.." && pwd)
@@ -13,7 +15,8 @@ system_config=$build_dir/system/wiilandd.conf
 "$cc" -std=gnu99 -Wall -Wextra -Werror -DPACKAGE_VERSION=\"smoke\" \
 	"-DWIILAND_SYSTEM_CONFIG_PATH=\"$system_config\"" \
 	-I"$root/lib" "$root/tools/wiilandd.c" "$root/tests/xwii_stubs.c" \
-	-o "$bin"
+	-Wl,--wrap=open -Wl,--wrap=pipe -Wl,--wrap=write \
+	-Wl,--wrap=ioctl -Wl,--wrap=close -o "$bin"
 
 test "$("$bin" --version)" = "wiilandd smoke"
 mkdir -p "$(dirname "$system_config")" "$build_dir/home"
@@ -27,6 +30,31 @@ grep -F "config.system.path=$system_config" \
 	"$build_dir/system-config-doctor" >/dev/null
 grep -F 'config.system.exists=yes' "$build_dir/system-config-doctor" >/dev/null
 rm -f "$system_config"
+HOME=$build_dir/home XDG_CONFIG_HOME='' \
+	"$bin" --dump-config >"$build_dir/optional-missing-out" \
+	2>"$build_dir/optional-missing-err"
+test ! -s "$build_dir/optional-missing-err"
+
+missing_config=$build_dir/missing-explicit.conf
+if "$bin" --config "$missing_config" --check-config \
+	>"$build_dir/missing-explicit-out" \
+	2>"$build_dir/missing-explicit-err"; then
+	printf '%s\n' 'wiilandd accepted a missing explicit config' >&2
+	exit 1
+fi
+grep -F "wiilandd: cannot open $missing_config: No such file or directory" \
+	"$build_dir/missing-explicit-err" >/dev/null
+
+ln -s "$system_config" "$system_config"
+if HOME=$build_dir/home XDG_CONFIG_HOME='' \
+	"$bin" --dump-config >"$build_dir/system-open-fail-out" \
+	2>"$build_dir/system-open-fail-err"; then
+	printf '%s\n' 'wiilandd accepted an unopenable layered config' >&2
+	exit 1
+fi
+grep -F "wiilandd: cannot open $system_config: Too many levels of symbolic links" \
+	"$build_dir/system-open-fail-err" >/dev/null
+rm -f "$system_config"
 
 mkdir -p "$build_dir/relative/wiiland" "$build_dir/home/.config/wiiland"
 printf '%s\n' 'profile=desktop' \
@@ -37,6 +65,22 @@ printf '%s\n' 'profile=both' \
 	"$bin" --dump-config) >"$build_dir/relative-xdg-dump"
 grep -F 'profile=both' "$build_dir/relative-xdg-dump" >/dev/null
 rm -rf "$build_dir/relative" "$build_dir/home/.config"
+mkdir -p "$build_dir/home/.config/wiiland"
+cat >"$system_config" <<'EOF'
+device.blue.profile=gamepad
+device.wiimote.profile=desktop
+EOF
+printf '%s\n' 'device.blue.profile=both' \
+	>"$build_dir/home/.config/wiiland/wiilandd.conf"
+HOME=$build_dir/home XDG_CONFIG_HOME='' XWII_STUB_DEVICES=/sys/blue/wiimote \
+	XWII_STUB_IFACE_NEW_OK=1 "$bin" --dry-run --verbose \
+	>"$build_dir/rule-precedence-out" 2>"$build_dir/rule-precedence-err"
+grep -F 'dry-run: would create uinput controller for /sys/blue/wiimote' \
+	"$build_dir/rule-precedence-err" >/dev/null
+grep -F 'dry-run: would create uinput desktop device for /sys/blue/wiimote' \
+	"$build_dir/rule-precedence-err" >/dev/null
+rm -f "$system_config"
+rm -rf "$build_dir/home/.config"
 
 install_stage=$build_dir/install-stage
 mkdir -p \
@@ -311,6 +355,67 @@ if grep -F 'stale simultaneous owner dispatch' \
 	printf '%s\n' 'wiilandd dispatched a stale simultaneous owner' >&2
 	exit 1
 fi
+XWII_STUB_SCENARIO=watch-loss \
+	"$bin" --no-config --device /sys/watch-loss --profile gamepad \
+	--aim-mode=right-stick --aim-source=motion-plus --aim-activation=b \
+	>"$build_dir/watch-loss-out" 2>"$build_dir/watch-loss-err"
+grep -F 'xwii stub: watch-loss recreated=1 pre-aim=1 post-aim=0' \
+	"$build_dir/watch-loss-err" >/dev/null
+
+if XWII_STUB_SCENARIO=uinput-eagain \
+	"$bin" --no-config --device /sys/uinput-eagain --profile gamepad \
+	>"$build_dir/uinput-eagain-out" 2>"$build_dir/uinput-eagain-err"; then
+	printf '%s\n' 'wiilandd swallowed uinput EAGAIN' >&2
+	exit 1
+fi
+grep -F 'wiilandd: event dispatch failed for /sys/uinput-eagain: -11' \
+	"$build_dir/uinput-eagain-err" >/dev/null
+grep -F 'xwii stub: uinput-eagain failed=1 destroyed=1 dispatches=2' \
+	"$build_dir/uinput-eagain-err" >/dev/null
+
+if XWII_STUB_SCENARIO=dispatch-failure \
+	"$bin" --no-config --device /sys/dispatch-failure --profile gamepad \
+	>"$build_dir/dispatch-failure-out" \
+	2>"$build_dir/dispatch-failure-err"; then
+	printf '%s\n' 'wiilandd reported successful single-device dispatch failure' >&2
+	exit 1
+fi
+grep -F 'wiilandd: event dispatch failed for /sys/dispatch-failure: -5' \
+	"$build_dir/dispatch-failure-err" >/dev/null
+grep -F 'xwii stub: dispatch-failure destroyed=1 cleanup=1' \
+	"$build_dir/dispatch-failure-err" >/dev/null
+
+XWII_STUB_SCENARIO=signal-race \
+	"$bin" --no-config --device /sys/signal-race --profile gamepad \
+	>"$build_dir/signal-race-out" 2>"$build_dir/signal-race-err"
+grep -F 'xwii stub: signal-race cleanup=1' \
+	"$build_dir/signal-race-err" >/dev/null
+grep -F 'xwii stub: signal-teardown closes=2 reused=1 stray-writes=0' \
+	"$build_dir/signal-race-err" >/dev/null
+
+XWII_STUB_SCENARIO=partial-open XWII_STUB_DEVICES=/sys/partial-open \
+	"$bin" --no-config --profile gamepad --verbose \
+	>"$build_dir/partial-open-retry-out" \
+	2>"$build_dir/partial-open-retry-err"
+grep -F 'xwii stub: partial-open calls=2 retained=1' \
+	"$build_dir/partial-open-retry-err" >/dev/null
+test "$(grep -c 'bridging /sys/partial-open' \
+	"$build_dir/partial-open-retry-err")" = 1
+
+XWII_STUB_SCENARIO=pointer-failure \
+	XWII_STUB_DEVICES=/sys/pointer-bad:/sys/pointer-good \
+	"$bin" --no-config --profile desktop --verbose \
+	>"$build_dir/pointer-failure-out" \
+	2>"$build_dir/pointer-failure-err"
+grep -F 'wiilandd: pointer output failed for /sys/pointer-bad: -5' \
+	"$build_dir/pointer-failure-err" >/dev/null
+grep -F 'xwii stub: pointer-failure bad-rebuilt=1 good-preserved=1 good-ticked=1' \
+	"$build_dir/pointer-failure-err" >/dev/null
+test "$(grep -c 'bridging /sys/pointer-bad' \
+	"$build_dir/pointer-failure-err")" = 2
+test "$(grep -c 'bridging /sys/pointer-good' \
+	"$build_dir/pointer-failure-err")" = 1
+
 
 
 XWII_STUB_CALIBRATION_SOURCE=accel XWII_STUB_AVAILABLE=2 \

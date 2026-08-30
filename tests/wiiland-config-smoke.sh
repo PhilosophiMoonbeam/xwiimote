@@ -23,10 +23,35 @@ capture=$(mktemp "${TMPDIR:-/tmp}/wiiland-config-smoke.XXXXXX")
 errors=$(mktemp "${TMPDIR:-/tmp}/wiiland-config-smoke-errors.XXXXXX")
 smoke_home=$(mktemp -d "${TMPDIR:-/tmp}/wiiland-config-smoke-home.XXXXXX")
 trap 'rm -rf "$capture" "$errors" "$smoke_home"' EXIT INT HUP TERM
+fake_bin=$smoke_home/bin
+fake_daemon=$fake_bin/wiilandd
+mkdir -p "$fake_bin"
+cat >"$fake_daemon" <<'EOF'
+#!/bin/sh
+case " $* " in
+    *" --dump-config "*)
+        sleep 0.15
+        case "$*" in
+            *".load-error.conf"*)
+                printf '%s\n' 'delayed fake load failure' >&2
+                exit 9
+                ;;
+        esac
+        printf '%s\n' \
+            'profile=gamepad' \
+            'pointer-speed=99'
+        ;;
+    *" --check-config "*)
+        sleep 0.15
+        ;;
+esac
+EOF
+chmod +x "$fake_daemon"
+
 
 set +e
 HOME=$smoke_home XDG_CONFIG_HOME=relative WIILAND_CONFIG_SMOKE_TEST=1 \
-    "$binary" >"$capture" 2>"$errors"
+    PATH=$fake_bin:$PATH "$binary" >"$capture" 2>"$errors"
 status=$?
 set -e
 
@@ -45,6 +70,9 @@ if ! {
         'config.compact-layout=responsive' \
         'config.default-path=absolute' \
         'config.unsaved-state=tracked' \
+        'config.transaction.load=revision-safe' \
+        'config.transaction.save=revision-safe' \
+        'config.transaction.error=recovered' \
         'output.actions=available' \
         'output.buffer=bounded' \
         'validation.controls=coordinated' \

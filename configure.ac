@@ -22,12 +22,23 @@ AC_CANONICAL_HOST
 AM_INIT_AUTOMAKE([foreign 1.11 subdir-objects dist-xz no-dist-gzip tar-pax -Wall -Werror -Wno-portability])
 AM_SILENT_RULES([yes])
 
-# Don't add a default "-g -O2" if CFLAGS wasn't specified
+AC_ARG_ENABLE([qt-ui],
+              [AS_HELP_STRING([--enable-qt-ui=@<:@auto/yes/no@:>@],
+                              [build optional Qt 6 configuration UI])],
+              [enable_qt_ui="$enableval"],
+              [enable_qt_ui=auto])
+AS_CASE([$enable_qt_ui],
+        [auto|yes|no], [],
+        [AC_MSG_ERROR([invalid value '$enable_qt_ui' for --enable-qt-ui; expected auto, yes, or no])])
+
+# Don't add default compiler flags if they weren't specified
 : ${CFLAGS=""}
+: ${CXXFLAGS=""}
 
 AC_PROG_CC
-AC_PROG_CXX
 AM_PROG_CC_C_O
+AC_PROG_CXX
+
 AC_PROG_LN_S
 m4_ifdef([AM_PROG_AR], [AM_PROG_AR])
 
@@ -58,23 +69,17 @@ if test "x$enable_xwiishow" != "xno"; then
 fi
 AM_CONDITIONAL([HAVE_XWIISHOW], [test "$have_xwiishow" = yes])
 
-AC_ARG_ENABLE([qt-ui],
-              [AS_HELP_STRING([--enable-qt-ui=@<:@auto/yes/no@:>@],
-                              [build optional Qt 6 configuration UI])],
-              [enable_qt_ui="$enableval"],
-              [enable_qt_ui=auto])
-AS_CASE([$enable_qt_ui],
-        [auto|yes|no], [],
-        [AC_MSG_ERROR([invalid value '$enable_qt_ui' for --enable-qt-ui; expected auto, yes, or no])])
 have_qt_ui=no
 if test "x$enable_qt_ui" != "xno"; then
         PKG_CHECK_MODULES([QT6_WIDGETS], [Qt6Widgets],
                           [save_CPPFLAGS=$CPPFLAGS
                            save_CXXFLAGS=$CXXFLAGS
+                           save_LIBS=$LIBS
                            CPPFLAGS="$CPPFLAGS $QT6_WIDGETS_CFLAGS"
                            CXXFLAGS="$CXXFLAGS $QT6_WIDGETS_CFLAGS"
+                           LIBS="$QT6_WIDGETS_LIBS $LIBS"
                            AC_LANG_PUSH([C++])
-                           AC_COMPILE_IFELSE(
+                           AC_LINK_IFELSE(
                                    [AC_LANG_PROGRAM(
                                            [[#include <QApplication>
 #include <QWidget>]],
@@ -84,7 +89,8 @@ widget.setWindowTitle(QStringLiteral("WiiLand"));]])],
                                    [have_qt_ui=no])
                            AC_LANG_POP([C++])
                            CPPFLAGS=$save_CPPFLAGS
-                           CXXFLAGS=$save_CXXFLAGS],
+                           CXXFLAGS=$save_CXXFLAGS
+                           LIBS=$save_LIBS],
                           [have_qt_ui=no])
         if test "x$enable_qt_ui" = "xyes" && test "$have_qt_ui" != yes; then
                 AC_MSG_ERROR([Qt6Widgets headers and a working C++ compiler are required for --enable-qt-ui=yes])

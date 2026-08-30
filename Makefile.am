@@ -50,6 +50,9 @@ EXTRA_DIST = \
 	res/wiilandd.conf \
 	res/wiilandd.service.in \
 	doc/wiiland.7 \
+	doc/DEVICES \
+	doc/PROTOCOL \
+	doc/DEV_REMOTE \
 	doc/libxwiimote.7 \
 	doc/xwiishow.1 \
 	doc/wiilandd.1 \
@@ -140,16 +143,16 @@ endif
 wiilandd-hardware-report: $(srcdir)/tools/wiilandd-hardware-report.sh
 	$(AM_V_GEN)$(INSTALL_SCRIPT) $(srcdir)/tools/wiilandd-hardware-report.sh $@
 
-res/wiilandd.service: $(srcdir)/res/wiilandd.service.in Makefile
+res/wiilandd.service: $(srcdir)/res/wiilandd.service.in Makefile FORCE-systemd-user-unit
 	$(AM_V_at)$(MKDIR_P) res
 	$(AM_V_GEN)sed -e 's|@bindir[@]|$(bindir)|g' \
 		$(srcdir)/res/wiilandd.service.in >$@
 
+.PHONY: FORCE-systemd-user-unit
+FORCE-systemd-user-unit:
+
 CLEANFILES = wiilandd-hardware-report
-distclean-local:
-	$(AM_V_at)if test "$(abs_builddir)" != "$(abs_srcdir)"; then \
-		rm -f res/wiilandd.service; \
-	fi
+DISTCLEANFILES = res/wiilandd.service
 
 
 #
@@ -327,7 +330,11 @@ clean-doc: clean-doxygen
 all-local:: doc
 clean-local:: clean-doc
 
-doc/stamp-doxygen: $(top_srcdir)/lib/xwiimote.h
+wiilandhtmldir = $(htmldir)/$(PACKAGE_TARNAME)
+
+doc/stamp-doxygen: $(top_srcdir)/lib/xwiimote.h \
+		$(top_srcdir)/README.md \
+		doc/Doxyfile
 	$(AM_V_GEN)$(DOXYGEN) doc/Doxyfile
 	$(AM_V_at)touch $@
 
@@ -335,10 +342,10 @@ clean-doxygen:
 	$(AM_V_at)rm -vrf doc/html doc/stamp-doxygen
 
 install-data-local:: doc
-	$(MKDIR_P) $(DESTDIR)$(htmldir)
-	$(INSTALL_DATA) doc/html/* $(DESTDIR)$(htmldir)
+	$(MKDIR_P) "$(DESTDIR)$(wiilandhtmldir)"
+	cp -R "doc/html/." "$(DESTDIR)$(wiilandhtmldir)"
 
 uninstall-local::
-	rm -rf $(DESTDIR)$(htmldir)
+	rm -rf "$(DESTDIR)$(wiilandhtmldir)"
 
 endif # HAVE_DOXYGEN

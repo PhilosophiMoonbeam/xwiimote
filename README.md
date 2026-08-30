@@ -39,9 +39,9 @@ Wii hardware → hid-wiimote → libxwiimote → wiilandd → uinput/evdev
 
 ### 1. Build and install
 
-Required: a C compiler, C++17 compiler, GNU Make, `pkg-config`, libudev headers,
-and Linux uinput headers. Autotools and Libtool are required for a checkout.
-Qt 6 Widgets and ncurses are optional.
+Required: a C compiler, GNU Make, `pkg-config`, libudev headers, and Linux
+uinput headers. Autotools and Libtool are required for a checkout. Qt 6 Widgets
+with a C++17 compiler and ncurses are optional.
 
 ```sh
 ./autogen.sh --prefix=/usr --sysconfdir=/etc \

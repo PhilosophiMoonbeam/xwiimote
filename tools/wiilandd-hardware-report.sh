@@ -485,7 +485,9 @@ fi
 section trace
 printf 'Tracing %s. Stop with Ctrl-C after exercising the hardware matrix.\n' "$device"
 if [ "$trace_selectors" -eq 0 ]; then
+	rm -rf "$tmp_dir"
 	exec "$wiilandd" --dry-run --trace-events --verbose \
 		--device "$device" --profile both "$@"
 fi
+rm -rf "$tmp_dir"
 exec "$wiilandd" --dry-run --verbose --device "$device" --profile both "$@"

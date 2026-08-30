@@ -5,6 +5,7 @@
 
 #include <QtCore/QDir>
 #include <QtCore/QFile>
+#include <QtCore/QEventLoop>
 #include <QtCore/QFileInfo>
 #include <QtCore/QHash>
 #include <QtCore/QIODevice>
@@ -21,6 +22,7 @@
 #include <QtGui/QFontDatabase>
 #include <QtGui/QGuiApplication>
 #include <QtGui/QTextCursor>
+#include <QtGui/QTextDocument>
 #include <QtWidgets/QApplication>
 #include <QtWidgets/QCheckBox>
 #include <QtWidgets/QComboBox>
@@ -221,7 +223,7 @@ public:
         });
         connect(clearOutputButton, &QPushButton::clicked, output, &QPlainTextEdit::clear);
         connect(output, &QPlainTextEdit::textChanged, this, [this]() {
-            const bool hasOutput = !output->toPlainText().isEmpty();
+            const bool hasOutput = !output->document()->isEmpty();
             copyOutputButton->setEnabled(hasOutput);
             clearOutputButton->setEnabled(hasOutput);
         });
@@ -268,10 +270,108 @@ public:
 
     bool writeSmokeReport(QTextStream &stream)
     {
+        const auto waitForConfigTransaction = [this]() {
+            if (configTransaction == ConfigTransaction::None)
+                return true;
+
+            QEventLoop loop;
+            QTimer poll;
+            QTimer timeout;
+            bool expired = false;
+            poll.setInterval(5);
+            timeout.setSingleShot(true);
+            connect(&poll, &QTimer::timeout, &loop, [this, &loop]() {
+                if (configTransaction == ConfigTransaction::None)
+                    loop.quit();
+            });
+            connect(&timeout, &QTimer::timeout, &loop, [&expired, &loop]() {
+                expired = true;
+                loop.quit();
+            });
+            poll.start();
+            timeout.start(5000);
+            loop.exec();
+            return !expired && configTransaction == ConfigTransaction::None;
+        };
+        const auto mutationControlsEnabled = [this]() {
+            return configTransaction == ConfigTransaction::None &&
+                   configPath->isEnabled() && configBrowseButton->isEnabled() &&
+                   configScroll->isEnabled() && loadButton->isEnabled() &&
+                   saveButton->isEnabled();
+        };
+
+        QTimer dismissDialogs;
+        dismissDialogs.setInterval(5);
+        connect(&dismissDialogs, &QTimer::timeout, this, []() {
+            for (QWidget *widget : QApplication::topLevelWidgets()) {
+                if (auto *message = qobject_cast<QMessageBox *>(widget))
+                    message->accept();
+            }
+        });
+
         const QString defaultPath = defaultConfigPath();
+        const QString explicitPath =
+            defaultPath + QStringLiteral(".explicit-smoke");
         const bool defaultPathAbsolute = QDir::isAbsolutePath(defaultPath);
-        configPath->setText(defaultPath + QStringLiteral(".explicit-smoke"));
-        const bool explicitRestartDisabled = !saveAndRestartButton->isEnabled();
+        const bool loadControlsLocked =
+            configTransaction == ConfigTransaction::Load &&
+            !configPath->isEnabled() && !configBrowseButton->isEnabled() &&
+            !configScroll->isEnabled() && !loadButton->isEnabled() &&
+            !saveButton->isEnabled();
+        configPath->setText(explicitPath);
+        resetConfigForm();
+        setComboText(profile, QStringLiteral("desktop"));
+        saveConfig(false);
+        const bool loadCompleted = waitForConfigTransaction();
+        const bool staleLoadDiscarded =
+            loadCompleted && configPath->text() == explicitPath &&
+            comboValue(profile) == QStringLiteral("desktop") &&
+            isWindowModified() && !QFileInfo::exists(explicitPath);
+        const bool loadControlsRecovered = mutationControlsEnabled();
+        const bool explicitRestartDisabled =
+            !saveAndRestartButton->isEnabled();
+        const bool loadTransactionSafe =
+            loadControlsLocked && staleLoadDiscarded && loadControlsRecovered;
+
+        setConfigDirty(false);
+        pointerSpeed->setValue(17);
+        const QByteArray savedSnapshot = renderedConfig();
+        saveConfig(false);
+        const bool saveControlsLocked =
+            configTransaction == ConfigTransaction::Save &&
+            !configPath->isEnabled() && !configBrowseButton->isEnabled() &&
+            !configScroll->isEnabled() && !loadButton->isEnabled() &&
+            !saveButton->isEnabled();
+        pointerSpeed->setValue(18);
+        dismissDialogs.start();
+        const bool saveCompleted = waitForConfigTransaction();
+        dismissDialogs.stop();
+        QFile persistedFile(explicitPath);
+        QByteArray persisted;
+        if (persistedFile.open(QIODevice::ReadOnly))
+            persisted = persistedFile.readAll();
+        const bool saveTransactionSafe =
+            saveControlsLocked && saveCompleted &&
+            persisted == savedSnapshot && pointerSpeed->value() == 18 &&
+            isWindowModified() && mutationControlsEnabled();
+
+        const QString errorPath =
+            explicitPath + QStringLiteral(".load-error.conf");
+        configPath->setText(errorPath);
+        const QByteArray stateBeforeError = renderedConfig();
+        const bool dirtyBeforeError = isWindowModified();
+        loadConfigFromPath(errorPath, false);
+        const bool errorControlsLocked =
+            configTransaction == ConfigTransaction::Load &&
+            !configPath->isEnabled() && !configBrowseButton->isEnabled() &&
+            !configScroll->isEnabled() && !loadButton->isEnabled() &&
+            !saveButton->isEnabled();
+        const bool errorCompleted = waitForConfigTransaction();
+        const bool errorControlsRecovered =
+            errorControlsLocked && errorCompleted && mutationControlsEnabled() &&
+            configPath->text() == errorPath &&
+            renderedConfig() == stateBeforeError &&
+            isWindowModified() == dirtyBeforeError;
 
         resetConfigForm();
         setConfigDirty(false);
@@ -360,6 +460,18 @@ public:
                       .arg(unsavedStateTracked
                                ? QStringLiteral("tracked")
                                : QStringLiteral("missing"))
+               << QStringLiteral("config.transaction.load=%1\n")
+                      .arg(loadTransactionSafe
+                               ? QStringLiteral("revision-safe")
+                               : QStringLiteral("stale"))
+               << QStringLiteral("config.transaction.save=%1\n")
+                      .arg(saveTransactionSafe
+                               ? QStringLiteral("revision-safe")
+                               : QStringLiteral("stale"))
+               << QStringLiteral("config.transaction.error=%1\n")
+                      .arg(errorControlsRecovered
+                               ? QStringLiteral("recovered")
+                               : QStringLiteral("stuck"))
                << QStringLiteral("output.actions=%1\n")
                       .arg(outputActionsAvailable
                                ? QStringLiteral("available")
@@ -379,8 +491,10 @@ public:
         return defaultPathAbsolute && explicitRestartDisabled &&
                calibrationSourcesIsolated && canonicalChoiceValues &&
                compactLayoutResponsive && unsavedStateTracked &&
-               outputActionsAvailable && outputBounded &&
-               validationControlsCoordinated && validationFormVisible;
+               loadTransactionSafe && saveTransactionSafe &&
+               errorControlsRecovered && outputActionsAvailable &&
+               outputBounded && validationControlsCoordinated &&
+               validationFormVisible;
     }
 
 private:
@@ -397,12 +511,12 @@ private:
         wiilanddPath->setAccessibleName(QStringLiteral("Daemon executable"));
         wiilanddPath->setPlaceholderText(QStringLiteral("wiilandd or an absolute path"));
         configPath->setAccessibleName(QStringLiteral("Configuration file"));
-        auto *browse = new QPushButton(QStringLiteral("Browse…"), paths);
+        configBrowseButton = new QPushButton(QStringLiteral("Browse…"), paths);
         auto *configRow = new QWidget(paths);
         auto *configRowLayout = new QHBoxLayout(configRow);
         configRowLayout->setContentsMargins(0, 0, 0, 0);
         configRowLayout->addWidget(configPath, 1);
-        configRowLayout->addWidget(browse);
+        configRowLayout->addWidget(configBrowseButton);
         configScope = new QLabel(paths);
         configScope->setWordWrap(true);
         configScope->setAccessibleName(QStringLiteral("Configuration scope"));
@@ -414,7 +528,7 @@ private:
         form->addRow(QStringLiteral("Window system"), backend);
         layout->addWidget(paths);
 
-        connect(browse, &QPushButton::clicked, this, [this]() {
+        connect(configBrowseButton, &QPushButton::clicked, this, [this]() {
             const QString chosen = QFileDialog::getSaveFileName(
                 this,
                 QStringLiteral("Choose wiilandd configuration"),
@@ -423,7 +537,10 @@ private:
             if (!chosen.isEmpty())
                 configPath->setText(chosen);
         });
-        connect(configPath, &QLineEdit::textChanged, this, [this]() { updateConfigScope(); });
+        connect(configPath, &QLineEdit::textChanged, this, [this]() {
+            ++configRevision;
+            updateConfigScope();
+        });
         updateConfigScope();
 
         auto *service = new QGroupBox(QStringLiteral("Background service"), tab);
@@ -758,6 +875,12 @@ private:
         return box;
     }
 
+    enum class ConfigTransaction {
+        None,
+        Load,
+        Save,
+    };
+
     void setConfigDirty(bool dirty)
     {
         configDirty = dirty;
@@ -766,8 +889,48 @@ private:
 
     void markConfigDirty()
     {
-        if (!applyingConfig)
+        if (!applyingConfig) {
+            ++configRevision;
             setConfigDirty(true);
+        }
+    }
+
+    void updateConfigTransactionControls()
+    {
+        const bool idle = configTransaction == ConfigTransaction::None;
+        configPath->setEnabled(idle);
+        configBrowseButton->setEnabled(idle);
+        configScroll->setEnabled(idle);
+        loadButton->setEnabled(idle);
+        saveButton->setEnabled(idle);
+        saveAndRestartButton->setEnabled(
+            idle && !isExplicitConfigPath(configPath->text()));
+    }
+
+    quint64 beginConfigTransaction(ConfigTransaction transaction)
+    {
+        if (configTransaction != ConfigTransaction::None)
+            return 0;
+
+        configTransaction = transaction;
+        activeConfigTransaction = ++nextConfigTransaction;
+        updateConfigTransactionControls();
+        return activeConfigTransaction;
+    }
+
+    bool ownsConfigTransaction(ConfigTransaction transaction, quint64 id) const
+    {
+        return configTransaction == transaction && activeConfigTransaction == id;
+    }
+
+    void finishConfigTransaction(ConfigTransaction transaction, quint64 id)
+    {
+        if (!ownsConfigTransaction(transaction, id))
+            return;
+
+        configTransaction = ConfigTransaction::None;
+        activeConfigTransaction = 0;
+        updateConfigTransactionControls();
     }
 
     void trackConfigChanges(QWidget *configRoot)
@@ -873,7 +1036,8 @@ private:
         }
 
         if (saveAndRestartButton) {
-            saveAndRestartButton->setEnabled(!savingConfig && !explicitPath);
+            saveAndRestartButton->setEnabled(
+                configTransaction == ConfigTransaction::None && !explicitPath);
             saveAndRestartButton->setToolTip(
                 explicitPath
                     ? QStringLiteral("The background service only loads the default layered configuration.")
@@ -1329,12 +1493,13 @@ private:
             applyConfigValue(line.left(equal).trimmed(), line.mid(equal + 1).trimmed());
         }
         applyingConfig = false;
+        ++configRevision;
         setConfigDirty(false);
     }
 
     void loadConfigFromPath(const QString &path, bool reportErrors)
     {
-        if (loadingConfig)
+        if (configTransaction != ConfigTransaction::None)
             return;
 
         const QString selected = path.trimmed();
@@ -1351,8 +1516,12 @@ private:
         if (isExplicitConfigPath(selected))
             arguments = QStringList{QStringLiteral("--config"), selected} + arguments;
 
-        loadingConfig = true;
-        loadButton->setEnabled(false);
+        const quint64 revision = configRevision;
+        const quint64 transaction =
+            beginConfigTransaction(ConfigTransaction::Load);
+        if (!transaction)
+            return;
+
         auto *process = new QProcess(this);
         auto standardOutput = QSharedPointer<QString>::create();
         auto standardError = QSharedPointer<QString>::create();
@@ -1371,13 +1540,13 @@ private:
             appendOutput(chunk);
         });
         connect(process, &QProcess::errorOccurred, this,
-                [this, process, reportErrors](QProcess::ProcessError error) {
-            if (error != QProcess::FailedToStart)
+                [this, process, reportErrors, transaction](QProcess::ProcessError error) {
+            if (error != QProcess::FailedToStart ||
+                !ownsConfigTransaction(ConfigTransaction::Load, transaction))
                 return;
             const QString detail = process->errorString();
             appendOutputLine(QStringLiteral("config load failed to start: ") + detail);
-            loadingConfig = false;
-            loadButton->setEnabled(true);
+            finishConfigTransaction(ConfigTransaction::Load, transaction);
             statusBar()->showMessage(QStringLiteral("Effective config could not be loaded"), 5000);
             if (reportErrors)
                 QMessageBox::warning(this, QStringLiteral("Cannot load effective config"), detail);
@@ -1385,9 +1554,19 @@ private:
         });
         connect(process, qOverload<int, QProcess::ExitStatus>(&QProcess::finished),
                 this,
-                [this, process, standardOutput, standardError, selected, reportErrors](
-                    int code,
-                    QProcess::ExitStatus exitStatus) {
+                [this,
+                 process,
+                 standardOutput,
+                 standardError,
+                 selected,
+                 reportErrors,
+                 revision,
+                 transaction](int code, QProcess::ExitStatus exitStatus) {
+            if (!ownsConfigTransaction(ConfigTransaction::Load, transaction)) {
+                process->deleteLater();
+                return;
+            }
+
             const QString outputRemainder =
                 QString::fromLocal8Bit(process->readAllStandardOutput());
             const QString errorRemainder =
@@ -1397,15 +1576,26 @@ private:
             appendOutput(outputRemainder);
             appendOutput(errorRemainder);
 
-            loadingConfig = false;
-            loadButton->setEnabled(true);
             if (exitStatus == QProcess::NormalExit && code == 0) {
-                applyDumpedConfig(*standardOutput);
-                statusBar()->showMessage(
-                    isExplicitConfigPath(selected)
-                        ? QStringLiteral("Loaded effective configuration from %1").arg(selected)
-                        : QStringLiteral("Loaded effective layered configuration"),
-                    5000);
+                const bool transactionStillCurrent =
+                    configRevision == revision &&
+                    configPath->text().trimmed() == selected;
+                if (transactionStillCurrent)
+                    applyDumpedConfig(*standardOutput);
+                finishConfigTransaction(ConfigTransaction::Load, transaction);
+                if (transactionStillCurrent) {
+                    statusBar()->showMessage(
+                        isExplicitConfigPath(selected)
+                            ? QStringLiteral("Loaded effective configuration from %1").arg(selected)
+                            : QStringLiteral("Loaded effective layered configuration"),
+                        5000);
+                } else {
+                    appendOutputLine(
+                        QStringLiteral("config load result discarded after target or form changed"));
+                    statusBar()->showMessage(
+                        QStringLiteral("Loaded configuration was not applied because the target or form changed"),
+                        5000);
+                }
             } else {
                 const QString outcome = exitStatus == QProcess::NormalExit
                     ? QStringLiteral("wiilandd exited with code %1.").arg(code)
@@ -1414,6 +1604,7 @@ private:
                     ? outcome
                     : outcome + QStringLiteral("\n\n") + standardError->trimmed();
                 appendOutputLine(QStringLiteral("config load failed: ") + outcome);
+                finishConfigTransaction(ConfigTransaction::Load, transaction);
                 statusBar()->showMessage(QStringLiteral("Effective config load failed"), 5000);
                 if (reportErrors)
                     QMessageBox::warning(
@@ -1584,17 +1775,10 @@ private:
         return text.toUtf8();
     }
 
-    void setSaving(bool active)
-    {
-        savingConfig = active;
-        saveButton->setEnabled(!active);
-        saveAndRestartButton->setEnabled(
-            !active && !isExplicitConfigPath(configPath->text()));
-    }
 
     void saveConfig(bool restartAfterSave)
     {
-        if (savingConfig || !validateConfigForm())
+        if (configTransaction != ConfigTransaction::None || !validateConfigForm())
             return;
 
         const QString target = configPath->text().trimmed();
@@ -1623,6 +1807,7 @@ private:
             return;
         }
         auto rendered = QSharedPointer<QByteArray>::create(renderedConfig());
+        const quint64 revision = configRevision;
         if (temporary->write(*rendered) != rendered->size() || !temporary->flush()) {
             const QString detail = temporary->errorString();
             temporary->close();
@@ -1640,8 +1825,11 @@ private:
             temporary->fileName(),
         };
         const QString program = daemonProgram();
+        const quint64 transaction =
+            beginConfigTransaction(ConfigTransaction::Save);
+        if (!transaction)
+            return;
         appendOutputLine(QStringLiteral("$ ") + quoteCommand(program, arguments));
-        setSaving(true);
 
         auto *process = new QProcess(this);
         auto standardOutput = QSharedPointer<QString>::create();
@@ -1659,12 +1847,13 @@ private:
             appendOutput(chunk);
         });
         connect(process, &QProcess::errorOccurred, this,
-                [this, process, temporary](QProcess::ProcessError error) {
-            if (error != QProcess::FailedToStart)
+                [this, process, temporary, transaction](QProcess::ProcessError error) {
+            if (error != QProcess::FailedToStart ||
+                !ownsConfigTransaction(ConfigTransaction::Save, transaction))
                 return;
             const QString detail = process->errorString();
             appendOutputLine(QStringLiteral("config validation failed to start: ") + detail);
-            setSaving(false);
+            finishConfigTransaction(ConfigTransaction::Save, transaction);
             statusBar()->showMessage(QStringLiteral("Configuration was not saved"), 5000);
             QMessageBox::warning(
                 this,
@@ -1681,7 +1870,14 @@ private:
                  standardOutput,
                  standardError,
                  target,
+                 revision,
+                 transaction,
                  restartAfterSave](int code, QProcess::ExitStatus exitStatus) {
+            if (!ownsConfigTransaction(ConfigTransaction::Save, transaction)) {
+                process->deleteLater();
+                return;
+            }
+
             const QString outputRemainder =
                 QString::fromLocal8Bit(process->readAllStandardOutput());
             const QString errorRemainder =
@@ -1702,7 +1898,7 @@ private:
                     ? outcome
                     : outcome + QStringLiteral("\n\n") + daemonDetails;
                 appendOutputLine(QStringLiteral("config validation failed: ") + outcome);
-                setSaving(false);
+                finishConfigTransaction(ConfigTransaction::Save, transaction);
                 statusBar()->showMessage(QStringLiteral("Configuration was not saved"), 5000);
                 QMessageBox::warning(
                     this,
@@ -1718,7 +1914,7 @@ private:
                 file.write(*rendered) != rendered->size()) {
                 const QString detail = file.errorString();
                 file.cancelWriting();
-                setSaving(false);
+                finishConfigTransaction(ConfigTransaction::Save, transaction);
                 QMessageBox::warning(
                     this,
                     QStringLiteral("Cannot write configuration"),
@@ -1728,7 +1924,7 @@ private:
             }
             if (!file.commit()) {
                 const QString detail = file.errorString();
-                setSaving(false);
+                finishConfigTransaction(ConfigTransaction::Save, transaction);
                 QMessageBox::warning(
                     this,
                     QStringLiteral("Cannot replace configuration"),
@@ -1737,8 +1933,11 @@ private:
                 return;
             }
 
-            setSaving(false);
-            setConfigDirty(false);
+            const bool transactionStillCurrent =
+                configRevision == revision &&
+                configPath->text().trimmed() == target;
+            setConfigDirty(!transactionStillCurrent);
+            finishConfigTransaction(ConfigTransaction::Save, transaction);
             const bool serviceManagedTarget = !isExplicitConfigPath(target);
             statusBar()->showMessage(
                 serviceManagedTarget
@@ -1829,6 +2028,7 @@ private:
     QPushButton *loadButton = nullptr;
     QPushButton *saveButton = nullptr;
     QPushButton *saveAndRestartButton = nullptr;
+    QPushButton *configBrowseButton = nullptr;
     QPushButton *copyOutputButton = nullptr;
     QPushButton *clearOutputButton = nullptr;
     QPushButton *startTraceButton = nullptr;
@@ -1846,8 +2046,10 @@ private:
     QProcess *serviceProcess = nullptr;
     bool applyingConfig = false;
     bool configDirty = false;
-    bool loadingConfig = false;
-    bool savingConfig = false;
+    ConfigTransaction configTransaction = ConfigTransaction::None;
+    quint64 configRevision = 0;
+    quint64 activeConfigTransaction = 0;
+    quint64 nextConfigTransaction = 0;
     bool traceStopping = false;
 };
 

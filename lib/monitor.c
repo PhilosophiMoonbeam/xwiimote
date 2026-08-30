@@ -21,35 +21,47 @@
 #include <unistd.h>
 #include "xwiimote.h"
 
+struct xwii_monitor_initial {
+	struct xwii_monitor_initial *next;
+	char path[];
+};
+
 struct xwii_monitor {
 	size_t ref;
 	struct udev *udev;
 	struct udev_enumerate *enumerate;
 	struct udev_list_entry *entry;
+	struct xwii_monitor_initial *initial;
 	struct udev_monitor *monitor;
+	bool enumerated;
 };
+
+static void free_initial(struct xwii_monitor *monitor)
+{
+	struct xwii_monitor_initial *initial;
+
+	while (monitor->initial) {
+		initial = monitor->initial;
+		monitor->initial = initial->next;
+		free(initial);
+	}
+}
 
 XWII__EXPORT
 struct xwii_monitor *xwii_monitor_new(bool poll, bool direct)
 {
 	struct udev *udev;
 	struct udev_enumerate *enumerate = NULL;
-	struct udev_list_entry *entry;
+	struct udev_list_entry *entry, *iter;
 	struct udev_monitor *monitor = NULL;
+	struct xwii_monitor_initial *initial;
 	struct xwii_monitor *mon;
+	const char *path;
+	size_t len;
 
 	udev = udev_new();
 	if (!udev)
 		return NULL;
-
-	enumerate = udev_enumerate_new(udev);
-	if (!enumerate)
-		goto out;
-	if (0 != udev_enumerate_add_match_subsystem(enumerate, "hid"))
-		goto out;
-	if (0 != udev_enumerate_scan_devices(enumerate))
-		goto out;
-	entry = udev_enumerate_get_list_entry(enumerate);
 
 	if (poll) {
 		monitor = udev_monitor_new_from_netlink(udev,
@@ -63,6 +75,15 @@ struct xwii_monitor *xwii_monitor_new(bool poll, bool direct)
 			goto out;
 	}
 
+	enumerate = udev_enumerate_new(udev);
+	if (!enumerate)
+		goto out;
+	if (0 != udev_enumerate_add_match_subsystem(enumerate, "hid"))
+		goto out;
+	if (0 != udev_enumerate_scan_devices(enumerate))
+		goto out;
+	entry = udev_enumerate_get_list_entry(enumerate);
+
 	mon = malloc(sizeof(*mon));
 	if (!mon)
 		goto out;
@@ -70,9 +91,30 @@ struct xwii_monitor *xwii_monitor_new(bool poll, bool direct)
 	mon->udev = udev;
 	mon->enumerate = enumerate;
 	mon->entry = entry;
+	mon->initial = NULL;
 	mon->monitor = monitor;
+	mon->enumerated = false;
+	if (monitor) {
+		for (iter = entry; iter;
+		     iter = udev_list_entry_get_next(iter)) {
+			path = udev_list_entry_get_name(iter);
+			if (!path)
+				continue;
+			len = strlen(path) + 1;
+			initial = malloc(sizeof(*initial) + len);
+			if (!initial)
+				goto out_mon;
+			initial->next = mon->initial;
+			memcpy(initial->path, path, len);
+			mon->initial = initial;
+		}
+	}
 
 	return mon;
+
+out_mon:
+	free_initial(mon);
+	free(mon);
 
 out:
 	if (monitor)
@@ -94,6 +136,7 @@ void xwii_monitor_ref(struct xwii_monitor *mon)
 
 static inline void free_enum(struct xwii_monitor *monitor)
 {
+	free_initial(monitor);
 	if (monitor->enumerate) {
 		udev_enumerate_unref(monitor->enumerate);
 		monitor->enumerate = NULL;
@@ -160,7 +203,9 @@ static struct udev_device *next_enum(struct xwii_monitor *monitor)
 			return dev;
 	}
 
-	free_enum(monitor);
+	monitor->enumerated = true;
+	if (!monitor->monitor)
+		free_enum(monitor);
 
 	return NULL;
 }
@@ -189,6 +234,34 @@ out:
 	return ret;
 }
 
+static bool deduplicate_initial_device(struct xwii_monitor *monitor,
+				       struct udev_device *dev)
+{
+	struct xwii_monitor_initial **link, *initial;
+	const char *action, *path;
+	bool duplicate;
+
+	action = udev_device_get_action(dev);
+	if (!action || (strcmp(action, "add") && strcmp(action, "remove")))
+		return false;
+	path = udev_device_get_syspath(dev);
+	if (!path)
+		return false;
+
+	for (link = &monitor->initial; *link; link = &initial->next) {
+		initial = *link;
+		if (strcmp(path, initial->path))
+			continue;
+
+		duplicate = !strcmp(action, "add");
+		*link = initial->next;
+		free(initial);
+		return duplicate;
+	}
+
+	return false;
+}
+
 XWII__EXPORT
 char *xwii_monitor_poll(struct xwii_monitor *monitor)
 {
@@ -198,7 +271,7 @@ char *xwii_monitor_poll(struct xwii_monitor *monitor)
 	if (!monitor)
 		return NULL;
 
-	if (monitor->enumerate) {
+	if (!monitor->enumerated) {
 		while (1) {
 			dev = next_enum(monitor);
 			if (!dev)
@@ -212,8 +285,14 @@ char *xwii_monitor_poll(struct xwii_monitor *monitor)
 	} else if (monitor->monitor) {
 		while (1) {
 			dev = udev_monitor_receive_device(monitor->monitor);
-			if (!dev)
+			if (!dev) {
+				free_enum(monitor);
 				return NULL;
+			}
+			if (deduplicate_initial_device(monitor, dev)) {
+				udev_device_unref(dev);
+				continue;
+			}
 
 			ret = make_device(dev);
 			if (ret)

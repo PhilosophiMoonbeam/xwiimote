@@ -288,6 +288,7 @@ struct bridge_device {
 	struct xwii_iface *iface;
 	char *syspath;
 	unsigned int profiles;
+	unsigned int opened_ifaces;
 	int uinput_fd;
 	int desktop_fd;
 	unsigned int pointer_keys;
@@ -310,6 +311,7 @@ struct bridge_device {
 };
 
 static volatile sig_atomic_t should_stop;
+static int signal_pipe[2] = { -1, -1 };
 static bool verbose;
 static bool dry_run;
 static bool trace_events;
@@ -362,19 +364,83 @@ static bool is_key_event(unsigned int type);
 
 static void on_signal(int signo)
 {
-	(void)signo;
+	char byte = (char)signo;
+	int saved_errno = errno;
+
 	should_stop = 1;
+	if (signal_pipe[1] >= 0) {
+		ssize_t written = write(signal_pipe[1], &byte, sizeof(byte));
+
+		(void)written;
+	}
+	errno = saved_errno;
 }
+
+static void close_signal_pipe(void)
+{
+	sigset_t handled_signals, previous_mask;
+	int read_fd, write_fd;
+	int saved_errno = errno;
+
+	sigemptyset(&handled_signals);
+	sigaddset(&handled_signals, SIGINT);
+	sigaddset(&handled_signals, SIGTERM);
+	if (sigprocmask(SIG_BLOCK, &handled_signals, &previous_mask) < 0) {
+		errno = saved_errno;
+		return;
+	}
+
+	read_fd = signal_pipe[0];
+	write_fd = signal_pipe[1];
+	signal_pipe[0] = -1;
+	signal_pipe[1] = -1;
+
+	if (read_fd >= 0)
+		close(read_fd);
+	if (write_fd >= 0 && write_fd != read_fd)
+		close(write_fd);
+
+	(void)sigprocmask(SIG_SETMASK, &previous_mask, NULL);
+	errno = saved_errno;
+}
+
+static int set_fd_flags(int fd)
+{
+	int flags;
+
+	flags = fcntl(fd, F_GETFL);
+	if (flags < 0 || fcntl(fd, F_SETFL, flags | O_NONBLOCK) < 0)
+		return -errno;
+	flags = fcntl(fd, F_GETFD);
+	if (flags < 0 || fcntl(fd, F_SETFD, flags | FD_CLOEXEC) < 0)
+		return -errno;
+	return 0;
+}
+
 static int install_signal_handlers(void)
 {
 	struct sigaction action;
+	int ret;
+
+	if (pipe(signal_pipe) < 0)
+		return -errno;
+	ret = set_fd_flags(signal_pipe[0]);
+	if (!ret)
+		ret = set_fd_flags(signal_pipe[1]);
+	if (ret) {
+		close_signal_pipe();
+		return ret;
+	}
 
 	memset(&action, 0, sizeof(action));
 	action.sa_handler = on_signal;
 	sigemptyset(&action.sa_mask);
 	if (sigaction(SIGINT, &action, NULL) < 0 ||
-	    sigaction(SIGTERM, &action, NULL) < 0)
-		return -errno;
+	    sigaction(SIGTERM, &action, NULL) < 0) {
+		ret = -errno;
+		close_signal_pipe();
+		return ret;
+	}
 
 	return 0;
 }
@@ -1412,6 +1478,74 @@ static unsigned int input_ifaces_for_profiles(unsigned int device_profiles)
 
 	return ifaces;
 }
+static int create_virtual_outputs(struct bridge_device *dev)
+{
+	int ret;
+
+	if (device_needs_gamepad(dev->profiles)) {
+		dev->uinput_fd = create_virtual_controller(dev->syspath);
+		if (!dry_run && dev->uinput_fd < 0) {
+			ret = dev->uinput_fd;
+			fprintf(stderr,
+				"wiilandd: cannot create /dev/uinput gamepad for %s: %d\n"
+				"wiilandd: ensure the uinput module is loaded and the user can write /dev/uinput\n",
+				dev->syspath, ret);
+			goto error;
+		}
+	}
+
+	if (device_needs_desktop(dev->profiles)) {
+		dev->desktop_fd = create_virtual_desktop(dev->syspath);
+		if (!dry_run && dev->desktop_fd < 0) {
+			ret = dev->desktop_fd;
+			fprintf(stderr,
+				"wiilandd: cannot create /dev/uinput desktop device for %s: %d\n"
+				"wiilandd: ensure the uinput module is loaded and the user can write /dev/uinput\n",
+				dev->syspath, ret);
+			goto error;
+		}
+	}
+
+	return 0;
+
+error:
+	destroy_virtual_controller(dev->uinput_fd);
+	destroy_virtual_controller(dev->desktop_fd);
+	dev->uinput_fd = -1;
+	dev->desktop_fd = -1;
+	return ret;
+}
+
+static void clear_transient_state(struct bridge_device *dev)
+{
+	dev->pointer_keys = 0;
+	dev->pointer_dx = 0;
+	dev->pointer_dy = 0;
+	dev->ir_active = false;
+	dev->ir_x = 0;
+	dev->ir_y = 0;
+	dev->aim_held = false;
+	dev->active_aim_source = AIM_SOURCE_NONE;
+	dev->aim_ir_active = false;
+	dev->aim_ir_x = 0;
+	dev->aim_ir_y = 0;
+	dev->aim_accel_zeroed = false;
+	dev->aim_accel_zero_x = 0;
+	dev->aim_accel_zero_y = 0;
+	dev->aim_accel_zero_z = 0;
+	dev->aim_last_x = 0;
+	dev->aim_last_y = 0;
+}
+
+static int recreate_virtual_outputs(struct bridge_device *dev)
+{
+	destroy_virtual_controller(dev->uinput_fd);
+	destroy_virtual_controller(dev->desktop_fd);
+	dev->uinput_fd = -1;
+	dev->desktop_fd = -1;
+	clear_transient_state(dev);
+	return create_virtual_outputs(dev);
+}
 
 static bool aim_is_active(const struct bridge_device *dev)
 {
@@ -1718,8 +1852,10 @@ static int reopen_available_ifaces(struct bridge_device *dev)
 	requested = input_ifaces_for_profiles(dev->profiles);
 	opened = xwii_iface_opened(dev->iface);
 	todo = xwii_iface_available(dev->iface) & requested & ~opened;
-	if (!todo)
+	if (!todo) {
+		dev->opened_ifaces = opened;
 		return opened & requested ? 0 : -ENODEV;
+	}
 
 	ret = xwii_iface_open(dev->iface, todo);
 	if (ret)
@@ -1727,9 +1863,25 @@ static int reopen_available_ifaces(struct bridge_device *dev)
 			"wiilandd: cannot open some interfaces for %s: %d\n",
 			dev->syspath, ret);
 
-	if (xwii_iface_opened(dev->iface) & requested)
+	dev->opened_ifaces = xwii_iface_opened(dev->iface);
+	if (dev->opened_ifaces & requested)
 		return 0;
 	return ret ? ret : -ENODEV;
+}
+
+static int handle_watch_event(struct bridge_device *dev)
+{
+	unsigned int opened = xwii_iface_opened(dev->iface);
+	unsigned int lost = dev->opened_ifaces & ~opened;
+	int ret;
+
+	if (lost) {
+		info("interfaces lost for %s: 0x%x\n", dev->syspath, lost);
+		ret = recreate_virtual_outputs(dev);
+		if (ret)
+			return ret;
+	}
+	return reopen_available_ifaces(dev);
 }
 
 static const char *event_type_name(unsigned int type)
@@ -1876,7 +2028,7 @@ static int handle_xwii_event(struct bridge_device *dev,
 		info("device gone: %s\n", dev->syspath);
 		return 1;
 	case XWII_EVENT_WATCH:
-		return reopen_available_ifaces(dev);
+		return handle_watch_event(dev);
 	case XWII_EVENT_KEY:
 	case XWII_EVENT_NUNCHUK_KEY:
 	case XWII_EVENT_CLASSIC_CONTROLLER_KEY:
@@ -1932,8 +2084,6 @@ static int drain_device(struct bridge_device *dev)
 
 		trace_xwii_event(dev, &event);
 		ret = handle_xwii_event(dev, &event);
-		if (ret == -EAGAIN || ret == -EWOULDBLOCK)
-			return 0;
 		if (ret)
 			return ret;
 	}
@@ -1956,16 +2106,17 @@ static void remove_device(struct bridge_device *dev)
 	dev->desktop_fd = -1;
 }
 
-static bool has_device(struct bridge_device *devices, const char *syspath)
+static struct bridge_device *find_device(struct bridge_device *devices,
+					 const char *syspath)
 {
 	unsigned int i;
 
 	for (i = 0; i < MAX_DEVICES; ++i) {
 		if (devices[i].iface && !strcmp(devices[i].syspath, syspath))
-			return true;
+			return &devices[i];
 	}
 
-	return false;
+	return NULL;
 }
 
 static int add_device(struct bridge_device *devices, const char *syspath)
@@ -1975,7 +2126,7 @@ static int add_device(struct bridge_device *devices, const char *syspath)
 	unsigned int i;
 	int ret;
 
-	if (has_device(devices, syspath))
+	if (find_device(devices, syspath))
 		return 0;
 
 	for (i = 0; i < MAX_DEVICES; ++i) {
@@ -2018,36 +2169,13 @@ static int add_device(struct bridge_device *devices, const char *syspath)
 		goto err_iface;
 	}
 
-	if (device_needs_gamepad(dev->profiles)) {
-		dev->uinput_fd = create_virtual_controller(syspath);
-		if (!dry_run && dev->uinput_fd < 0) {
-			ret = dev->uinput_fd;
-			fprintf(stderr,
-				"wiilandd: cannot create /dev/uinput gamepad for %s: %d\n"
-				"wiilandd: ensure the uinput module is loaded and the user can write /dev/uinput\n",
-				syspath, ret);
-			goto err_iface;
-		}
-	}
-
-	if (device_needs_desktop(dev->profiles)) {
-		dev->desktop_fd = create_virtual_desktop(syspath);
-		if (!dry_run && dev->desktop_fd < 0) {
-			ret = dev->desktop_fd;
-			fprintf(stderr,
-				"wiilandd: cannot create /dev/uinput desktop device for %s: %d\n"
-				"wiilandd: ensure the uinput module is loaded and the user can write /dev/uinput\n",
-				syspath, ret);
-			goto err_uinput;
-		}
-	}
+	ret = create_virtual_outputs(dev);
+	if (ret)
+		goto err_iface;
 
 	info("bridging %s\n", syspath);
 	return 0;
 
-err_uinput:
-	destroy_virtual_controller(dev->uinput_fd);
-	destroy_virtual_controller(dev->desktop_fd);
 err_iface:
 	xwii_iface_unref(dev->iface);
 err_free:
@@ -2136,7 +2264,10 @@ static void reconcile_devices(struct bridge_device *devices)
 	}
 
 	for (i = 0; i < count; ++i) {
-		ret = add_device(devices, syspaths[i]);
+		struct bridge_device *dev = find_device(devices, syspaths[i]);
+
+		ret = dev ? handle_watch_event(dev) :
+			    add_device(devices, syspaths[i]);
 		if (ret)
 			fprintf(stderr, "wiilandd: cannot add %s: %d\n",
 				syspaths[i], ret);
@@ -2157,7 +2288,7 @@ static bool any_pointer_motion(struct bridge_device *devices)
 	return false;
 }
 
-static int tick_pointers(struct bridge_device *devices)
+static int tick_pointers(struct bridge_device *devices, bool single_device)
 {
 	unsigned int i;
 	int ret;
@@ -2169,8 +2300,14 @@ static int tick_pointers(struct bridge_device *devices)
 		ret = tick_pointer(&devices[i]);
 		if (ret == -EAGAIN || ret == -EWOULDBLOCK)
 			continue;
-		if (ret)
-			return ret;
+		if (ret) {
+			fprintf(stderr,
+				"wiilandd: pointer output failed for %s: %d\n",
+				devices[i].syspath, ret);
+			remove_device(&devices[i]);
+			if (single_device)
+				return ret;
+		}
 	}
 
 	return 0;
@@ -2217,7 +2354,7 @@ static int prepare_reconcile_poll(int64_t *next_reconcile_us, int *timeout)
 
 
 static int tick_pointers_if_due(struct bridge_device *devices,
-				int64_t *next_tick_us)
+				int64_t *next_tick_us, bool single_device)
 {
 	int64_t now_us;
 	int ret;
@@ -2231,7 +2368,7 @@ static int tick_pointers_if_due(struct bridge_device *devices,
 	if (now_us < *next_tick_us)
 		return 0;
 
-	ret = tick_pointers(devices);
+	ret = tick_pointers(devices, single_device);
 	if (ret)
 		return ret;
 
@@ -2245,8 +2382,8 @@ static int tick_pointers_if_due(struct bridge_device *devices,
 
 static int poll_devices(struct bridge_device *devices, struct xwii_monitor *mon)
 {
-	struct pollfd fds[MAX_DEVICES + 1];
-	int owners[MAX_DEVICES + 1];
+	struct pollfd fds[MAX_DEVICES + 2];
+	int owners[MAX_DEVICES + 2];
 	char *syspath;
 	unsigned int i, nfds;
 	int64_t next_tick_us = 0;
@@ -2277,6 +2414,10 @@ static int poll_devices(struct bridge_device *devices, struct xwii_monitor *mon)
 
 		if (nfds == 0 && !mon)
 			return 0;
+		fds[nfds].fd = signal_pipe[0];
+		fds[nfds].events = POLLIN;
+		fds[nfds].revents = 0;
+		owners[nfds++] = -2;
 
 		ret = prepare_pointer_poll(devices, &next_tick_us, &timeout);
 		if (ret)
@@ -2293,12 +2434,18 @@ static int poll_devices(struct bridge_device *devices, struct xwii_monitor *mon)
 
 			return -errno;
 		}
+		if (should_stop)
+			break;
 
 		if (ret > 0) {
 			for (i = 0; i < nfds; ++i) {
 				if (!fds[i].revents)
 					continue;
 
+				if (owners[i] == -2) {
+					should_stop = 1;
+					break;
+				}
 				if (owners[i] == -1) {
 					while ((syspath = xwii_monitor_poll(mon)))
 						free(syspath);
@@ -2309,20 +2456,22 @@ static int poll_devices(struct bridge_device *devices, struct xwii_monitor *mon)
 					 * mappings from this poll snapshot.
 					 */
 					break;
-				} else {
-					ret = drain_device(&devices[owners[i]]);
-					if (ret) {
-						if (ret != 1)
-							fprintf(stderr,
-								"wiilandd: event dispatch failed for %s: %d\n",
-								devices[owners[i]].syspath, ret);
-						remove_device(&devices[owners[i]]);
-					}
+				}
+
+				ret = drain_device(&devices[owners[i]]);
+				if (ret) {
+					if (ret != 1)
+						fprintf(stderr,
+							"wiilandd: event dispatch failed for %s: %d\n",
+							devices[owners[i]].syspath, ret);
+					remove_device(&devices[owners[i]]);
+					if (!mon && ret != 1)
+						return ret;
 				}
 			}
 		}
 
-		ret = tick_pointers_if_due(devices, &next_tick_us);
+		ret = tick_pointers_if_due(devices, &next_tick_us, !mon);
 		if (ret)
 			return ret;
 		if (mon) {
@@ -3218,11 +3367,20 @@ static int set_device_profile_rule(enum device_rule_kind kind, const char *match
 		return -EINVAL;
 
 	for (i = 0; i < device_rule_count; ++i) {
-		if (device_rules[i].kind == kind &&
-		    !strcmp(device_rules[i].match, match)) {
-			device_rules[i].profiles = profiles;
-			return 0;
-		}
+		struct device_rule rule;
+
+		if (device_rules[i].kind != kind ||
+		    strcmp(device_rules[i].match, match))
+			continue;
+
+		rule = device_rules[i];
+		rule.profiles = profiles;
+		if (i + 1 < device_rule_count)
+			memmove(&device_rules[i], &device_rules[i + 1],
+				(device_rule_count - i - 1) *
+				sizeof(device_rules[0]));
+		device_rules[device_rule_count - 1] = rule;
+		return 0;
 	}
 
 	if (device_rule_count >= MAX_DEVICE_RULES)
@@ -3391,9 +3549,13 @@ static int load_config_file(const char *path, bool required)
 
 	file = fopen(path, "re");
 	if (!file) {
-		if (!required && errno == ENOENT)
+		int open_errno = errno;
+
+		if (!required && open_errno == ENOENT)
 			return 0;
-		return -errno;
+		fprintf(stderr, "wiilandd: cannot open %s: %s\n",
+			path, strerror(open_errno));
+		return -open_errno;
 	}
 
 	while (fgets(line, sizeof(line), file)) {
@@ -4573,6 +4735,19 @@ static int self_test_config(void)
 			 PROFILE_GAMEPAD | PROFILE_DESKTOP);
 	if (ret)
 		return ret;
+	snprintf(line, sizeof(line), " device.wiimote.profile = desktop\n");
+	ret = apply_config_line("self-test", 8, line);
+	if (ret)
+		return ret;
+	snprintf(line, sizeof(line), " device.blue.profile = gamepad\n");
+	ret = apply_config_line("self-test", 9, line);
+	if (ret)
+		return ret;
+	ret = expect_int("device-profile-later-override-precedence",
+			 profiles_for_syspath("/sys/devices/blue/wiimote"),
+			 PROFILE_GAMEPAD);
+	if (ret)
+		return ret;
 
 	snprintf(line, sizeof(line), " device-type.balanceboard.profile = desktop\n");
 	ret = apply_config_line("self-test", 8, line);
@@ -4595,10 +4770,10 @@ static int self_test_config(void)
 	if (ret)
 		return ret;
 
-	ret = expect_int("device-type-profile-miss",
+	ret = expect_int("device-type-profile-miss-syspath-match",
 			 profiles_for_device("/sys/devices/red/wiimote",
 					     "procontroller"),
-			 PROFILE_GAMEPAD);
+			 PROFILE_DESKTOP);
 	if (ret)
 		return ret;
 
@@ -5606,11 +5781,12 @@ int main(int argc, char **argv)
 	if (ret)
 		return abs(ret);
 	if (action == COMMAND_CALIBRATE_AIM)
-		return abs(run_calibrate_aim(device));
+		ret = run_calibrate_aim(device);
+	else
+		ret = device ? run_one(device) : run_monitor();
+	close_signal_pipe();
 
-	ret = device ? run_one(device) : run_monitor();
 	if (ret < 0)
 		ret = -ret;
-
 	return ret;
 }
