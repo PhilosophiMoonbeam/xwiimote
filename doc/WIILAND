@@ -121,10 +121,16 @@ The corresponding Qt QPA platform plugin must be installed at runtime; the
 configure check verifies Qt 6 Widgets but does not verify those runtime
 plugins.
 
+The configuration surface uses human-readable labels while serializing the
+canonical daemon values, keeps reload/save actions outside its scroll area,
+and warns before discarding edited form values.  The validation form is visible
+at compact window sizes and coordinates trace and calibration state so those
+tasks cannot overlap.
+
 Saved accelerometer and MotionPlus calibration are controlled independently;
-each enabled sensor emits a complete X/Y/Z triple.  The command-output view
-retains the most recent 10,000 text blocks so long-running diagnostics cannot
-grow the GUI document without bound.
+each enabled sensor emits a complete X/Y/Z triple.  Fixed-width command output
+can be copied or cleared and retains the most recent 10,000 text blocks so
+long-running diagnostics cannot grow the GUI document without bound.
 
 
 == Configure and installed artifacts ==

@@ -239,13 +239,21 @@ When built with `--enable-qt-ui`, run:
 	$ wiiland-config
 
 The frontend uses Qt Widgets/QPA and contains no X11- or Wayland-specific
-input API. It validates configuration before atomic save, launches daemon
-diagnostics and traces, and controls the installed user
-service with `systemctl --user`. The default user file is read by the next
-service start, so the GUI can restart that unit to apply it. An explicitly
-selected file is not loaded by the packaged unit; the GUI disables its restart
-action and shows the exact `wiilandd --config PATH` command instead. The status
-area reports the QPA backend selected by Qt.
+input API. Its responsive configuration surface presents readable choice
+labels while writing canonical daemon values, keeps reload/save actions
+available below the scroll area, and warns before discarding unsaved changes.
+It validates configuration before atomic save, launches coordinated daemon
+diagnostics and traces, and controls the installed user service with
+`systemctl --user`. The validation form remains visible at compact window
+sizes, prevents traces and calibration capture from overlapping, and exposes
+only valid actions for the current state. Fixed-width command output can be
+copied or cleared and is bounded to the most recent 10,000 blocks.
+
+The default user file is read by the next service start, so the GUI can restart
+that unit to apply it. An explicitly selected file is not loaded by the
+packaged unit; the GUI disables its restart action and shows the exact
+`wiilandd --config PATH` command instead. The status area reports the QPA
+backend selected by Qt.
 
 For deterministic package checks, explicitly require each plugin rather than
 assuming that environment detection or fallback proves availability:

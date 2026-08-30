@@ -573,22 +573,12 @@ grep -F 'git.dirty=unavailable' "$build_dir/hardware-report-nongit" >/dev/null
 test "$(sed -n '$p' "$build_dir/hardware-report")" = \
 	"fake-wiilandd [--dry-run] [--verbose] [--device] [7] [--profile] [both] [--trace-events=motion-plus]"
 grep -F 'PKG_CHECK_MODULES([QT6_WIDGETS], [Qt6Widgets]' "$root/configure.ac" >/dev/null
-grep -F 'bin_PROGRAMS += wiiland-config' "$root/Makefile.am" >/dev/null
-grep -F 'QApplication app(argc, argv);' "$root/tools/wiiland-config.cpp" >/dev/null
-grep -F 'QTabWidget' "$root/tools/wiiland-config.cpp" >/dev/null
-grep -F 'qOverload<int, QProcess::ExitStatus>(&QProcess::finished)' "$root/tools/wiiland-config.cpp" >/dev/null
-grep -F 'process->start(program, arguments);' "$root/tools/wiiland-config.cpp" >/dev/null
-grep -F 'desktopBindingNames()' "$root/tools/wiiland-config.cpp" >/dev/null
 grep -F 'aim-mode=right-stick' "$root/res/wiilandd.conf" >/dev/null
 grep -F 'aim-mode=right-stick' "$root/doc/wiilandd.1" >/dev/null
-grep -F 'aimMode->addItems' "$root/tools/wiiland-config.cpp" >/dev/null
 grep -F 'aim-calibration-duration=8' "$root/res/wiilandd.conf" >/dev/null
 grep -F 'ir-tracking=dual' "$root/res/wiilandd.conf" >/dev/null
 grep -F 'ir-aim-mapping' "$root/doc/wiilandd.1" >/dev/null
-grep -F 'irTracking->addItems' "$root/tools/wiiland-config.cpp" >/dev/null
 grep -F 'aim-accel-zero-x' "$root/doc/wiilandd.1" >/dev/null
-grep -F 'aimCalibrationDuration' "$root/tools/wiiland-config.cpp" >/dev/null
-grep -F -- '--calibrate-aim' "$root/tools/wiiland-config.cpp" >/dev/null
 
 
 

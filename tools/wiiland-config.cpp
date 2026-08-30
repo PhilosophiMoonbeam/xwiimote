@@ -15,7 +15,10 @@
 #include <QtCore/QTemporaryFile>
 #include <QtCore/QTimer>
 #include <QtCore/QStringList>
+#include <QtGui/QClipboard>
+#include <QtGui/QCloseEvent>
 #include <QtGui/QFont>
+#include <QtGui/QFontDatabase>
 #include <QtGui/QGuiApplication>
 #include <QtGui/QTextCursor>
 #include <QtWidgets/QApplication>
@@ -38,6 +41,7 @@
 #include <QtWidgets/QSplitter>
 #include <QtWidgets/QTableWidget>
 #include <QtWidgets/QScrollArea>
+#include <QtWidgets/QScrollBar>
 #include <QtWidgets/QTableWidgetItem>
 #include <QtWidgets/QTabWidget>
 #include <QtWidgets/QVBoxLayout>
@@ -71,18 +75,30 @@ QString quoteCommand(const QString &program, const QStringList &arguments)
     return parts.join(QLatin1Char(' '));
 }
 
-QStringList buttonActions()
+void addChoice(QComboBox *combo, const QString &label, const QString &value)
 {
-    return {
-        QStringLiteral("left-click"),
-        QStringLiteral("right-click"),
-        QStringLiteral("enter"),
-        QStringLiteral("escape"),
-        QStringLiteral("overview"),
-        QStringLiteral("page-up"),
-        QStringLiteral("page-down"),
-        QStringLiteral("disabled"),
-    };
+    combo->addItem(label, value);
+    combo->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+    combo->setMinimumContentsLength(14);
+}
+
+void addProfileChoices(QComboBox *combo)
+{
+    addChoice(combo, QStringLiteral("Gamepad"), QStringLiteral("gamepad"));
+    addChoice(combo, QStringLiteral("Desktop pointer"), QStringLiteral("desktop"));
+    addChoice(combo, QStringLiteral("Gamepad + desktop"), QStringLiteral("both"));
+}
+
+void addDesktopActionChoices(QComboBox *combo)
+{
+    addChoice(combo, QStringLiteral("Left click"), QStringLiteral("left-click"));
+    addChoice(combo, QStringLiteral("Right click"), QStringLiteral("right-click"));
+    addChoice(combo, QStringLiteral("Enter"), QStringLiteral("enter"));
+    addChoice(combo, QStringLiteral("Escape"), QStringLiteral("escape"));
+    addChoice(combo, QStringLiteral("Overview"), QStringLiteral("overview"));
+    addChoice(combo, QStringLiteral("Page up"), QStringLiteral("page-up"));
+    addChoice(combo, QStringLiteral("Page down"), QStringLiteral("page-down"));
+    addChoice(combo, QStringLiteral("Disabled"), QStringLiteral("disabled"));
 }
 
 QStringList desktopBindingNames()
@@ -98,13 +114,32 @@ QStringList desktopBindingNames()
     };
 }
 
+QString desktopBindingLabel(const QString &name)
+{
+    if (name == QStringLiteral("plus"))
+        return QStringLiteral("+ button");
+    if (name == QStringLiteral("minus"))
+        return QStringLiteral("− button");
+    if (name == QStringLiteral("home"))
+        return QStringLiteral("Home button");
+    return name.toUpper() + QStringLiteral(" button");
+}
+
 void setComboText(QComboBox *combo, const QString &value)
 {
     if (!combo)
         return;
-    const int index = combo->findText(value);
+    int index = combo->findData(value);
+    if (index < 0)
+        index = combo->findText(value);
     if (index >= 0)
         combo->setCurrentIndex(index);
+}
+
+QString comboValue(const QComboBox *combo)
+{
+    const QVariant data = combo->currentData();
+    return data.isValid() ? data.toString() : combo->currentText();
 }
 
 QString displayBackendName()
@@ -123,7 +158,8 @@ class MainWindow final : public QMainWindow {
 public:
     MainWindow()
     {
-        setWindowTitle(QStringLiteral("WiiLand Control Center"));
+        setWindowTitle(QStringLiteral("WiiLand Control Center[*]"));
+        setMinimumSize(760, 600);
         resize(1180, 780);
 
         auto *root = new QWidget(this);
@@ -148,25 +184,51 @@ public:
         workspace->setAccessibleName(QStringLiteral("Settings and command output"));
         workspace->setChildrenCollapsible(false);
 
-        auto *tabs = new QTabWidget;
-        tabs->setAccessibleName(QStringLiteral("WiiLand settings"));
-        tabs->addTab(buildOverviewTab(tabs), QStringLiteral("Overview"));
-        tabs->addTab(buildConfigTab(tabs), QStringLiteral("Configuration"));
-        tabs->addTab(buildValidationTab(tabs), QStringLiteral("Validation"));
-        workspace->addWidget(tabs);
+        mainTabs = new QTabWidget;
+        mainTabs->setAccessibleName(QStringLiteral("WiiLand settings"));
+        mainTabs->addTab(buildOverviewTab(mainTabs), QStringLiteral("Overview"));
+        configurationTab = buildConfigTab(mainTabs);
+        mainTabs->addTab(configurationTab, QStringLiteral("Configuration"));
+        mainTabs->addTab(buildValidationTab(mainTabs), QStringLiteral("Validation"));
+        workspace->addWidget(mainTabs);
+        trackConfigChanges(configurationTab);
 
         auto *outputBox = new QGroupBox(QStringLiteral("Command output"));
         auto *outputLayout = new QVBoxLayout(outputBox);
+        auto *outputTools = new QHBoxLayout;
+        auto *outputHint = new QLabel(
+            QStringLiteral("Recent daemon and service activity"), outputBox);
+        outputHint->setAccessibleName(QStringLiteral("Command output description"));
+        copyOutputButton = new QPushButton(QStringLiteral("Copy all"), outputBox);
+        clearOutputButton = new QPushButton(QStringLiteral("Clear"), outputBox);
+        copyOutputButton->setEnabled(false);
+        clearOutputButton->setEnabled(false);
+        outputTools->addWidget(outputHint);
+        outputTools->addStretch(1);
+        outputTools->addWidget(copyOutputButton);
+        outputTools->addWidget(clearOutputButton);
+        outputLayout->addLayout(outputTools);
         output = new QPlainTextEdit(outputBox);
         output->setAccessibleName(QStringLiteral("Command output"));
         output->setReadOnly(true);
         output->setLineWrapMode(QPlainTextEdit::NoWrap);
+        output->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
         output->setMaximumBlockCount(CommandOutputBlockLimit);
         outputLayout->addWidget(output);
+        connect(copyOutputButton, &QPushButton::clicked, this, [this]() {
+            QApplication::clipboard()->setText(output->toPlainText());
+            statusBar()->showMessage(QStringLiteral("Command output copied"), 3000);
+        });
+        connect(clearOutputButton, &QPushButton::clicked, output, &QPlainTextEdit::clear);
+        connect(output, &QPlainTextEdit::textChanged, this, [this]() {
+            const bool hasOutput = !output->toPlainText().isEmpty();
+            copyOutputButton->setEnabled(hasOutput);
+            clearOutputButton->setEnabled(hasOutput);
+        });
         workspace->addWidget(outputBox);
         workspace->setStretchFactor(0, 3);
         workspace->setStretchFactor(1, 1);
-        workspace->setSizes({480, 180});
+        workspace->setSizes({540, 140});
         rootLayout->addWidget(workspace, 1);
 
         setCentralWidget(root);
@@ -174,7 +236,35 @@ public:
         statusBar()->showMessage(QStringLiteral("Ready — Qt display backend: %1").arg(backend));
         loadConfigFromPath(defaultConfigPath(), false);
         refreshServiceStatus();
+        setConfigDirty(false);
     }
+protected:
+    void closeEvent(QCloseEvent *event) override
+    {
+        if (!configDirty) {
+            event->accept();
+            return;
+        }
+
+        QMessageBox message(
+            QMessageBox::Warning,
+            QStringLiteral("Unsaved configuration"),
+            QStringLiteral("Your configuration changes have not been saved."),
+            QMessageBox::NoButton,
+            this);
+        auto *discard = message.addButton(
+            QStringLiteral("Discard changes"), QMessageBox::DestructiveRole);
+        auto *keepEditing = message.addButton(
+            QStringLiteral("Keep editing"), QMessageBox::RejectRole);
+        message.setDefaultButton(qobject_cast<QPushButton *>(keepEditing));
+        message.exec();
+        if (message.clickedButton() == discard)
+            event->accept();
+        else
+            event->ignore();
+    }
+
+public:
 
     bool writeSmokeReport(QTextStream &stream)
     {
@@ -184,11 +274,17 @@ public:
         const bool explicitRestartDisabled = !saveAndRestartButton->isEnabled();
 
         resetConfigForm();
+        setConfigDirty(false);
+        setComboText(profile, QStringLiteral("desktop"));
+        const bool unsavedStateTracked = isWindowModified();
         aimAccelCalibrationEnabled->setChecked(true);
         aimAccelZeroX->setValue(11);
         aimAccelZeroY->setValue(12);
         aimAccelZeroZ->setValue(13);
         const QByteArray config = renderedConfig();
+        const bool canonicalChoiceValues =
+            profile->currentText() == QStringLiteral("Desktop pointer") &&
+            config.contains("profile=desktop\n");
         const bool calibrationSourcesIsolated =
             config.contains("aim-accel-zero-x=11\n") &&
             config.contains("aim-accel-zero-y=12\n") &&
@@ -196,6 +292,48 @@ public:
             !config.contains("aim-motion-plus-bias-");
         const bool outputBounded =
             output->maximumBlockCount() == CommandOutputBlockLimit;
+        const bool outputActionsAvailable =
+            copyOutputButton->isEnabled() && clearOutputButton->isEnabled();
+        resize(minimumSize());
+        mainTabs->setCurrentWidget(configurationTab);
+        QApplication::processEvents();
+        const bool compactLayoutResponsive =
+            configScroll->horizontalScrollBar()->maximum() == 0;
+
+        mainTabs->setCurrentWidget(validationTab);
+        QApplication::processEvents();
+        const bool validationFormVisible =
+            validationMatrix->isVisibleTo(this);
+        const bool validationControlsIdle =
+            startTraceButton->isEnabled() && !stopTraceButton->isEnabled() &&
+            calibrateButton->isEnabled();
+        auto *syntheticTrace = new QProcess(this);
+        traceProcess = syntheticTrace;
+        updateValidationControls();
+        const bool traceControlsCoordinated =
+            !startTraceButton->isEnabled() && stopTraceButton->isEnabled() &&
+            !calibrateButton->isEnabled();
+        traceStopping = true;
+        updateValidationControls();
+        const bool stoppingControlsCoordinated =
+            !stopTraceButton->isEnabled();
+        traceProcess = nullptr;
+        traceStopping = false;
+        delete syntheticTrace;
+        auto *syntheticCalibration = new QProcess(this);
+        calibrationProcess = syntheticCalibration;
+        updateValidationControls();
+        const bool calibrationControlsCoordinated =
+            !startTraceButton->isEnabled() && !stopTraceButton->isEnabled() &&
+            !calibrateButton->isEnabled();
+        calibrationProcess = nullptr;
+        delete syntheticCalibration;
+        updateValidationControls();
+        const bool validationControlsCoordinated =
+            validationControlsIdle && traceControlsCoordinated &&
+            stoppingControlsCoordinated && calibrationControlsCoordinated;
+        mainTabs->setCurrentIndex(0);
+        setConfigDirty(false);
 
         stream << QStringLiteral("qt.platform=%1\n").arg(QGuiApplication::platformName())
                << QStringLiteral("service.restart.explicit-config=%1\n")
@@ -206,16 +344,43 @@ public:
                       .arg(calibrationSourcesIsolated
                                ? QStringLiteral("isolated")
                                : QStringLiteral("coupled"))
+               << QStringLiteral("config.choice-values=%1\n")
+                      .arg(canonicalChoiceValues
+                               ? QStringLiteral("canonical")
+                               : QStringLiteral("display-text"))
+               << QStringLiteral("config.compact-layout=%1\n")
+                      .arg(compactLayoutResponsive
+                               ? QStringLiteral("responsive")
+                               : QStringLiteral("scrolling"))
                << QStringLiteral("config.default-path=%1\n")
                       .arg(defaultPathAbsolute
                                ? QStringLiteral("absolute")
                                : QStringLiteral("invalid"))
+               << QStringLiteral("config.unsaved-state=%1\n")
+                      .arg(unsavedStateTracked
+                               ? QStringLiteral("tracked")
+                               : QStringLiteral("missing"))
+               << QStringLiteral("output.actions=%1\n")
+                      .arg(outputActionsAvailable
+                               ? QStringLiteral("available")
+                               : QStringLiteral("missing"))
                << QStringLiteral("output.buffer=%1\n")
                       .arg(outputBounded
                                ? QStringLiteral("bounded")
-                               : QStringLiteral("unbounded"));
+                               : QStringLiteral("unbounded"))
+               << QStringLiteral("validation.controls=%1\n")
+                      .arg(validationControlsCoordinated
+                               ? QStringLiteral("coordinated")
+                               : QStringLiteral("invalid"))
+               << QStringLiteral("validation.form=%1\n")
+                      .arg(validationFormVisible
+                               ? QStringLiteral("visible")
+                               : QStringLiteral("clipped"));
         return defaultPathAbsolute && explicitRestartDisabled &&
-               calibrationSourcesIsolated && outputBounded;
+               calibrationSourcesIsolated && canonicalChoiceValues &&
+               compactLayoutResponsive && unsavedStateTracked &&
+               outputActionsAvailable && outputBounded &&
+               validationControlsCoordinated && validationFormVisible;
     }
 
 private:
@@ -224,15 +389,15 @@ private:
         auto *tab = new QWidget(parent);
         auto *layout = new QVBoxLayout(tab);
 
-        auto *paths = new QGroupBox(QStringLiteral("Command and configuration"), tab);
+        auto *paths = new QGroupBox(QStringLiteral("Daemon and configuration"), tab);
         auto *form = new QFormLayout(paths);
         wiilanddPath = new QLineEdit(QStringLiteral("wiilandd"), paths);
         configPath = new QLineEdit(defaultConfigPath(), paths);
         configPath->setObjectName(QStringLiteral("configPath"));
-        wiilanddPath->setAccessibleName(QStringLiteral("wiilandd executable"));
+        wiilanddPath->setAccessibleName(QStringLiteral("Daemon executable"));
         wiilanddPath->setPlaceholderText(QStringLiteral("wiilandd or an absolute path"));
         configPath->setAccessibleName(QStringLiteral("Configuration file"));
-        auto *browse = new QPushButton(QStringLiteral("Browse..."), paths);
+        auto *browse = new QPushButton(QStringLiteral("Browse…"), paths);
         auto *configRow = new QWidget(paths);
         auto *configRowLayout = new QHBoxLayout(configRow);
         configRowLayout->setContentsMargins(0, 0, 0, 0);
@@ -240,13 +405,13 @@ private:
         configRowLayout->addWidget(browse);
         configScope = new QLabel(paths);
         configScope->setWordWrap(true);
-        configScope->setAccessibleName(QStringLiteral("Configuration command scope"));
+        configScope->setAccessibleName(QStringLiteral("Configuration scope"));
         auto *backend = new QLabel(displayBackendName(), paths);
-        backend->setAccessibleName(QStringLiteral("Qt display backend"));
-        form->addRow(QStringLiteral("wiilandd executable"), wiilanddPath);
-        form->addRow(QStringLiteral("Config file"), configRow);
-        form->addRow(QStringLiteral("Command scope"), configScope);
-        form->addRow(QStringLiteral("Qt display backend"), backend);
+        backend->setAccessibleName(QStringLiteral("Window system"));
+        form->addRow(QStringLiteral("Daemon executable"), wiilanddPath);
+        form->addRow(QStringLiteral("Configuration file"), configRow);
+        form->addRow(QStringLiteral("Configuration scope"), configScope);
+        form->addRow(QStringLiteral("Window system"), backend);
         layout->addWidget(paths);
 
         connect(browse, &QPushButton::clicked, this, [this]() {
@@ -261,9 +426,9 @@ private:
         connect(configPath, &QLineEdit::textChanged, this, [this]() { updateConfigScope(); });
         updateConfigScope();
 
-        auto *service = new QGroupBox(QStringLiteral("Daemon service"), tab);
+        auto *service = new QGroupBox(QStringLiteral("Background service"), tab);
         auto *serviceLayout = new QHBoxLayout(service);
-        serviceStatus = new QLabel(QStringLiteral("Checking..."), service);
+        serviceStatus = new QLabel(QStringLiteral("Checking…"), service);
         serviceStatus->setAccessibleName(QStringLiteral("wiilandd service status"));
         serviceLayout->addWidget(serviceStatus, 1);
         serviceRefresh = new QPushButton(QStringLiteral("Refresh"), service);
@@ -280,26 +445,28 @@ private:
         connect(serviceRestart, &QPushButton::clicked, this, [this]() { runServiceAction(QStringLiteral("restart")); });
         layout->addWidget(service);
 
-        auto *quick = new QGroupBox(QStringLiteral("Readiness checks"), tab);
+        auto *quick = new QGroupBox(QStringLiteral("Diagnostics and reference"), tab);
         auto *quickLayout = new QGridLayout(quick);
-        const auto addButton = [this, quickLayout](
+        const auto addButton = [this, quick, quickLayout](
                                    const QString &text,
+                                   const QString &toolTip,
                                    const QStringList &args,
                                    bool configSensitive,
                                    int row,
                                    int column) {
-            auto *button = new QPushButton(text);
+            auto *button = new QPushButton(text, quick);
+            button->setToolTip(toolTip);
             quickLayout->addWidget(button, row, column);
             connect(button, &QPushButton::clicked, this, [this, args, configSensitive]() {
                 runCommand(args, configSensitive);
             });
         };
-        addButton(QStringLiteral("Doctor"), {QStringLiteral("--doctor")}, true, 0, 0);
-        addButton(QStringLiteral("Check config"), {QStringLiteral("--check-config")}, true, 0, 1);
-        addButton(QStringLiteral("Dump config"), {QStringLiteral("--dump-config")}, true, 0, 2);
-        addButton(QStringLiteral("List devices"), {QStringLiteral("--list"), QStringLiteral("--verbose")}, false, 1, 0);
-        addButton(QStringLiteral("Axis/button map"), {QStringLiteral("--axis-map")}, false, 1, 1);
-        addButton(QStringLiteral("Validation checklist"), {QStringLiteral("--validation-checklist")}, false, 1, 2);
+        addButton(QStringLiteral("Check readiness"), QStringLiteral("Inspect session, configuration, and uinput access."), {QStringLiteral("--doctor")}, true, 0, 0);
+        addButton(QStringLiteral("Validate configuration"), QStringLiteral("Check the effective configuration without saving it."), {QStringLiteral("--check-config")}, true, 0, 1);
+        addButton(QStringLiteral("Show effective config"), QStringLiteral("Print the exact configuration the daemon will use."), {QStringLiteral("--dump-config")}, true, 0, 2);
+        addButton(QStringLiteral("Find devices"), QStringLiteral("List connected Wii Remotes and their extensions."), {QStringLiteral("--list"), QStringLiteral("--verbose")}, false, 1, 0);
+        addButton(QStringLiteral("View input map"), QStringLiteral("Show virtual buttons and axes exposed to applications."), {QStringLiteral("--axis-map")}, false, 1, 1);
+        addButton(QStringLiteral("View test checklist"), QStringLiteral("Show the required hardware validation matrix."), {QStringLiteral("--validation-checklist")}, false, 1, 2);
         layout->addWidget(quick);
 
         layout->addStretch(1);
@@ -311,9 +478,10 @@ private:
     {
         auto *tab = new QWidget(parent);
         auto *tabLayout = new QVBoxLayout(tab);
-        auto *scroll = new QScrollArea(tab);
+        configScroll = new QScrollArea(tab);
+        auto *scroll = configScroll;
         auto *content = new QWidget(scroll);
-        auto *layout = new QHBoxLayout(content);
+        auto *layout = new QGridLayout(content);
 
         scroll->setWidgetResizable(true);
         scroll->setWidget(content);
@@ -321,15 +489,18 @@ private:
         auto *profileBox = new QGroupBox(QStringLiteral("Profiles and pointer feel"), tab);
         auto *profileForm = new QFormLayout(profileBox);
         profile = new QComboBox(profileBox);
-        profile->addItems({QStringLiteral("gamepad"), QStringLiteral("desktop"), QStringLiteral("both")});
+        addProfileChoices(profile);
         pointerSpeed = spinBox(1, 127, 16, profileBox);
         irSpeed = spinBox(1, 127, 8, profileBox);
         irDeadzone = spinBox(0, 127, 0, profileBox);
         irSmoothing = spinBox(0, 95, 0, profileBox);
         irTracking = new QComboBox(profileBox);
-        irTracking->addItems({QStringLiteral("dual"), QStringLiteral("centroid"), QStringLiteral("first")});
+        addChoice(irTracking, QStringLiteral("Sensor-bar pair"), QStringLiteral("dual"));
+        addChoice(irTracking, QStringLiteral("Visible-point centroid"), QStringLiteral("centroid"));
+        addChoice(irTracking, QStringLiteral("First visible point"), QStringLiteral("first"));
         irAimMapping = new QComboBox(profileBox);
-        irAimMapping->addItems({QStringLiteral("relative"), QStringLiteral("absolute")});
+        addChoice(irAimMapping, QStringLiteral("Relative movement"), QStringLiteral("relative"));
+        addChoice(irAimMapping, QStringLiteral("Absolute screen position"), QStringLiteral("absolute"));
         irScreenCalibrationEnabled = new QCheckBox(profileBox);
         irScreenLeft = spinBox(0, 32767, 0, profileBox);
         irScreenRight = spinBox(0, 32767, 1023, profileBox);
@@ -359,11 +530,19 @@ private:
         auto *aimBox = new QGroupBox(QStringLiteral("Modern motion aiming"), tab);
         auto *aimForm = new QFormLayout(aimBox);
         aimMode = new QComboBox(aimBox);
-        aimMode->addItems({QStringLiteral("off"), QStringLiteral("right-stick"), QStringLiteral("mouse")});
+        addChoice(aimMode, QStringLiteral("Off"), QStringLiteral("off"));
+        addChoice(aimMode, QStringLiteral("Right stick"), QStringLiteral("right-stick"));
+        addChoice(aimMode, QStringLiteral("Mouse pointer"), QStringLiteral("mouse"));
         aimSource = new QComboBox(aimBox);
-        aimSource->addItems({QStringLiteral("auto"), QStringLiteral("ir"), QStringLiteral("motion-plus"), QStringLiteral("accelerometer")});
+        addChoice(aimSource, QStringLiteral("Automatic"), QStringLiteral("auto"));
+        addChoice(aimSource, QStringLiteral("IR sensor"), QStringLiteral("ir"));
+        addChoice(aimSource, QStringLiteral("MotionPlus"), QStringLiteral("motion-plus"));
+        addChoice(aimSource, QStringLiteral("Accelerometer"), QStringLiteral("accelerometer"));
         aimActivation = new QComboBox(aimBox);
-        aimActivation->addItems({QStringLiteral("b"), QStringLiteral("always"), QStringLiteral("z"), QStringLiteral("c")});
+        addChoice(aimActivation, QStringLiteral("B button"), QStringLiteral("b"));
+        addChoice(aimActivation, QStringLiteral("Always active"), QStringLiteral("always"));
+        addChoice(aimActivation, QStringLiteral("Nunchuk Z"), QStringLiteral("z"));
+        addChoice(aimActivation, QStringLiteral("Nunchuk C"), QStringLiteral("c"));
         aimSensitivity = spinBox(1, 127, 16, aimBox);
         aimDeadzone = spinBox(0, 32767, 4, aimBox);
         aimSmoothing = spinBox(0, 95, 25, aimBox);
@@ -425,9 +604,9 @@ private:
         auto *bindingsForm = new QFormLayout(bindingsBox);
         for (const QString &name : desktopBindingNames()) {
             auto *combo = new QComboBox(bindingsBox);
-            combo->addItems(buttonActions());
+            addDesktopActionChoices(combo);
             desktopActions.insert(name, combo);
-            bindingsForm->addRow(QStringLiteral("desktop.") + name, combo);
+            bindingsForm->addRow(desktopBindingLabel(name), combo);
         }
         setComboText(desktopActions.value(QStringLiteral("a")), QStringLiteral("left-click"));
         setComboText(desktopActions.value(QStringLiteral("b")), QStringLiteral("right-click"));
@@ -443,95 +622,128 @@ private:
         rules->setAccessibleName(QStringLiteral("Per-device profile rules"));
         rules->setSelectionBehavior(QAbstractItemView::SelectRows);
         rules->setSelectionMode(QAbstractItemView::SingleSelection);
-        rules->setHorizontalHeaderLabels({QStringLiteral("Kind"), QStringLiteral("Match substring"), QStringLiteral("Profile")});
-        rules->horizontalHeader()->setStretchLastSection(true);
+        rules->setHorizontalHeaderLabels({
+            QStringLiteral("Match kind"),
+            QStringLiteral("Path or device-type substring"),
+            QStringLiteral("Profile"),
+        });
+        rules->horizontalHeader()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
+        rules->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Stretch);
+        rules->horizontalHeader()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
         rules->verticalHeader()->hide();
+        rules->setMinimumHeight(220);
         deviceLayout->addWidget(rules);
         auto *ruleButtons = new QHBoxLayout;
         auto *addRule = new QPushButton(QStringLiteral("Add rule"), deviceBox);
         auto *removeRule = new QPushButton(QStringLiteral("Remove selected"), deviceBox);
+        removeRule->setEnabled(false);
         ruleButtons->addWidget(addRule);
         ruleButtons->addWidget(removeRule);
         ruleButtons->addStretch(1);
         deviceLayout->addLayout(ruleButtons);
-        connect(addRule, &QPushButton::clicked, this, [this]() { appendRule(QStringLiteral("device-type"), QString(), QStringLiteral("gamepad")); });
+        connect(rules, &QTableWidget::itemSelectionChanged, this, [this, removeRule]() {
+            removeRule->setEnabled(rules->currentRow() >= 0);
+        });
+        connect(addRule, &QPushButton::clicked, this, [this]() {
+            appendRule(QStringLiteral("device-type"), QString(), QStringLiteral("gamepad"));
+            markConfigDirty();
+        });
         connect(removeRule, &QPushButton::clicked, this, [this]() {
             const int row = rules->currentRow();
-            if (row >= 0)
+            if (row >= 0) {
                 rules->removeRow(row);
+                markConfigDirty();
+            }
         });
 
-        auto *left = new QVBoxLayout;
-        left->addWidget(profileBox);
-        left->addWidget(aimBox);
-        left->addWidget(bindingsBox);
-        left->addStretch(1);
-        layout->addLayout(left, 1);
-        layout->addWidget(deviceBox, 2);
+        layout->addWidget(profileBox, 0, 0);
+        layout->addWidget(aimBox, 0, 1);
+        layout->addWidget(bindingsBox, 1, 0);
+        layout->addWidget(deviceBox, 1, 1);
+        layout->setColumnStretch(0, 1);
+        layout->setColumnStretch(1, 1);
+        layout->setRowStretch(1, 1);
 
-        auto *actions = new QVBoxLayout;
-        loadButton = new QPushButton(QStringLiteral("Load effective config"), tab);
+        auto *actions = new QHBoxLayout;
+        loadButton = new QPushButton(QStringLiteral("Reload from daemon"), tab);
         saveButton = new QPushButton(QStringLiteral("Validate and save"), tab);
         saveAndRestartButton = new QPushButton(QStringLiteral("Save and restart daemon"), tab);
         saveAndRestartButton->setObjectName(QStringLiteral("saveAndRestartButton"));
         actions->addWidget(loadButton);
+        actions->addStretch(1);
         actions->addWidget(saveButton);
         actions->addWidget(saveAndRestartButton);
-        actions->addStretch(1);
-        layout->addLayout(actions);
+        tabLayout->addLayout(actions);
         connect(loadButton, &QPushButton::clicked, this, [this]() {
             loadConfigFromPath(configPath->text(), true);
         });
         connect(saveButton, &QPushButton::clicked, this, [this]() { saveConfig(false); });
         connect(saveAndRestartButton, &QPushButton::clicked, this, [this]() { saveConfig(true); });
 
-        content->setMinimumSize(content->minimumSizeHint());
+        content->setMinimumWidth(660);
+        content->setMinimumHeight(content->minimumSizeHint().height());
         return tab;
     }
 
     QWidget *buildValidationTab(QWidget *parent)
     {
-        auto *tab = new QWidget(parent);
+        validationTab = new QWidget(parent);
+        auto *tab = validationTab;
         auto *layout = new QVBoxLayout(tab);
 
-        auto *matrix = new QGroupBox(QStringLiteral("Hardware validation capture"), tab);
-        auto *matrixLayout = new QFormLayout(matrix);
-        deviceSelector = new QLineEdit(matrix);
+        validationMatrix = new QGroupBox(QStringLiteral("Live device diagnostics"), tab);
+        auto *matrixLayout = new QFormLayout(validationMatrix);
+        auto *guidance = new QLabel(
+            QStringLiteral("Choose one remote for focused output, or leave the device field blank "
+                           "to observe every connected remote."),
+            validationMatrix);
+        guidance->setWordWrap(true);
+        matrixLayout->addRow(guidance);
+        deviceSelector = new QLineEdit(validationMatrix);
         deviceSelector->setAccessibleName(QStringLiteral("Device number or sysfs path"));
-        deviceSelector->setPlaceholderText(QStringLiteral("1 or /sys/devices/..."));
-        traceFilter = new QComboBox(matrix);
-        traceFilter->addItems({QStringLiteral("all"), QStringLiteral("keys"), QStringLiteral("axes"), QStringLiteral("ir"), QStringLiteral("motion-plus")});
-        traceProfile = new QComboBox(matrix);
+        deviceSelector->setPlaceholderText(QStringLiteral("1 or /sys/devices/…"));
+        traceFilter = new QComboBox(validationMatrix);
+        addChoice(traceFilter, QStringLiteral("All events"), QStringLiteral("all"));
+        addChoice(traceFilter, QStringLiteral("Buttons"), QStringLiteral("keys"));
+        addChoice(traceFilter, QStringLiteral("Axes"), QStringLiteral("axes"));
+        addChoice(traceFilter, QStringLiteral("IR sensor"), QStringLiteral("ir"));
+        addChoice(traceFilter, QStringLiteral("MotionPlus"), QStringLiteral("motion-plus"));
+        traceProfile = new QComboBox(validationMatrix);
         traceProfile->addItem(QStringLiteral("Use effective configuration"), QString());
         traceProfile->addItem(QStringLiteral("Temporarily use gamepad"), QStringLiteral("gamepad"));
         traceProfile->addItem(QStringLiteral("Temporarily use desktop"), QStringLiteral("desktop"));
         traceProfile->addItem(QStringLiteral("Temporarily use both"), QStringLiteral("both"));
         traceProfile->setAccessibleName(QStringLiteral("Temporary trace profile override"));
-        matrixLayout->addRow(QStringLiteral("Device number or /sys path"), deviceSelector);
-        matrixLayout->addRow(QStringLiteral("Trace filter"), traceFilter);
-        matrixLayout->addRow(QStringLiteral("Trace profile"), traceProfile);
+        matrixLayout->addRow(QStringLiteral("Device"), deviceSelector);
+        matrixLayout->addRow(QStringLiteral("Event filter"), traceFilter);
+        matrixLayout->addRow(QStringLiteral("Temporary profile"), traceProfile);
+        layout->addWidget(validationMatrix);
 
         auto *buttons = new QHBoxLayout;
-        auto *startTraceButton = new QPushButton(QStringLiteral("Start dry-run trace"), tab);
-        auto *stopTraceButton = new QPushButton(QStringLiteral("Stop trace"), tab);
-        auto *clear = new QPushButton(QStringLiteral("Clear output"), tab);
-        auto *calibrateButton = new QPushButton(QStringLiteral("Capture flat-surface calibration"), tab);
+        startTraceButton = new QPushButton(QStringLiteral("Start trace"), tab);
+        stopTraceButton = new QPushButton(QStringLiteral("Stop"), tab);
+        calibrateButton = new QPushButton(QStringLiteral("Capture flat-surface calibration"), tab);
+        startTraceButton->setToolTip(
+            QStringLiteral("Run a dry trace without creating virtual input devices."));
+        calibrateButton->setToolTip(
+            QStringLiteral("Keep the selected Wii Remote face down and still during capture."));
         buttons->addWidget(startTraceButton);
         buttons->addWidget(stopTraceButton);
-        buttons->addWidget(clear);
         buttons->addWidget(calibrateButton);
         buttons->addStretch(1);
         layout->addLayout(buttons);
         connect(startTraceButton, &QPushButton::clicked, this, [this]() { startTrace(); });
         connect(stopTraceButton, &QPushButton::clicked, this, [this]() { stopTrace(); });
-        connect(clear, &QPushButton::clicked, this, [this]() { output->clear(); });
         connect(calibrateButton, &QPushButton::clicked, this, [this]() { calibrateAim(); });
+        updateValidationControls();
 
         auto *checklist = new QLabel(
-            QStringLiteral("Suggested coverage: original Wii Remote, external and built-in MotionPlus, "
-                           "Nunchuk, Classic Controller, Wii U Pro Controller, Guitar, Drums, Balance Board, "
-                           "SDL, Wine/Proton, and desktop-profile behavior on Wayland and X11."),
+            QStringLiteral("<b>Suggested coverage:</b> original Wii Remote, external and built-in "
+                           "MotionPlus, Nunchuk, Classic Controller, Wii U Pro Controller, Guitar, "
+                           "Drums, Balance Board, SDL, Wine/Proton, and desktop behavior on "
+                           "Wayland and X11."),
             tab);
+        checklist->setTextFormat(Qt::RichText);
         checklist->setWordWrap(true);
         layout->addWidget(checklist);
         layout->addStretch(1);
@@ -544,6 +756,67 @@ private:
         box->setRange(minimum, maximum);
         box->setValue(value);
         return box;
+    }
+
+    void setConfigDirty(bool dirty)
+    {
+        configDirty = dirty;
+        setWindowModified(dirty);
+    }
+
+    void markConfigDirty()
+    {
+        if (!applyingConfig)
+            setConfigDirty(true);
+    }
+
+    void trackConfigChanges(QWidget *configRoot)
+    {
+        for (auto *combo : configRoot->findChildren<QComboBox *>()) {
+            connect(combo,
+                    qOverload<int>(&QComboBox::currentIndexChanged),
+                    this,
+                    [this]() { markConfigDirty(); });
+        }
+        for (auto *box : configRoot->findChildren<QSpinBox *>()) {
+            connect(box,
+                    qOverload<int>(&QSpinBox::valueChanged),
+                    this,
+                    [this]() { markConfigDirty(); });
+        }
+        for (auto *check : configRoot->findChildren<QCheckBox *>()) {
+            connect(check,
+                    &QCheckBox::toggled,
+                    this,
+                    [this]() { markConfigDirty(); });
+        }
+        connect(rules,
+                &QTableWidget::itemChanged,
+                this,
+                [this]() { markConfigDirty(); });
+    }
+
+    void updateValidationControls()
+    {
+        if (!startTraceButton || !stopTraceButton || !calibrateButton)
+            return;
+
+        const bool traceActive = traceProcess;
+        const bool calibrationActive = calibrationProcess;
+        const bool idle = !traceActive && !calibrationActive;
+        startTraceButton->setEnabled(idle);
+        stopTraceButton->setEnabled(traceActive && !traceStopping);
+        calibrateButton->setEnabled(idle);
+        stopTraceButton->setText(
+            traceStopping ? QStringLiteral("Stopping…") : QStringLiteral("Stop"));
+        calibrateButton->setText(
+            calibrationActive
+                ? QStringLiteral("Capturing calibration…")
+                : QStringLiteral("Capture flat-surface calibration"));
+        deviceSelector->setEnabled(idle);
+        traceFilter->setEnabled(idle);
+        traceProfile->setEnabled(idle);
+        aimCalibrationDuration->setEnabled(!calibrationActive);
     }
 
     void appendOutput(const QString &text)
@@ -591,18 +864,19 @@ private:
         const bool explicitPath = isExplicitConfigPath(configPath->text());
         if (explicitPath) {
             configScope->setText(
-                QStringLiteral("Selected file only — config-sensitive commands use --config; "
-                               "the installed user service does not load this path."));
+                QStringLiteral("Custom file only — diagnostics and saves use this path. "
+                               "The background service does not."));
         } else {
             configScope->setText(
-                QStringLiteral("Effective layered configuration — daemon defaults, system file, then user file."));
+                QStringLiteral("Layered defaults — built-in values, system settings, "
+                               "then this user file."));
         }
 
         if (saveAndRestartButton) {
             saveAndRestartButton->setEnabled(!savingConfig && !explicitPath);
             saveAndRestartButton->setToolTip(
                 explicitPath
-                    ? QStringLiteral("The installed user service only loads the default layered configuration.")
+                    ? QStringLiteral("The background service only loads the default layered configuration.")
                     : QString());
         }
     }
@@ -620,7 +894,7 @@ private:
         if (serviceProcess)
             return;
 
-        serviceStatus->setText(QStringLiteral("Checking..."));
+        serviceStatus->setText(QStringLiteral("Checking…"));
         setServiceControlsEnabled(false, false, false, false);
         auto *process = new QProcess(this);
         serviceProcess = process;
@@ -694,7 +968,7 @@ private:
         if (serviceProcess)
             return;
 
-        serviceStatus->setText(QStringLiteral("%1...").arg(
+        serviceStatus->setText(QStringLiteral("%1…").arg(
             action == QStringLiteral("start") ? QStringLiteral("Starting") :
             action == QStringLiteral("stop") ? QStringLiteral("Stopping") :
                                                QStringLiteral("Restarting")));
@@ -794,12 +1068,15 @@ private:
 
     void startTrace()
     {
-        if (traceProcess) {
-            statusBar()->showMessage(QStringLiteral("A trace is already running or stopping"), 4000);
+        if (traceProcess || calibrationProcess) {
+            statusBar()->showMessage(
+                QStringLiteral("Another live validation task is already running"), 4000);
             return;
         }
         auto *process = new QProcess(this);
         traceProcess = process;
+        traceStopping = false;
+        updateValidationControls();
         process->setProcessChannelMode(QProcess::MergedChannels);
         connect(process, &QProcess::readyReadStandardOutput, this, [this, process]() {
             appendOutput(QString::fromLocal8Bit(process->readAllStandardOutput()));
@@ -810,6 +1087,8 @@ private:
             if (error == QProcess::FailedToStart) {
                 if (traceProcess == process)
                     traceProcess = nullptr;
+                traceStopping = false;
+                updateValidationControls();
                 process->deleteLater();
                 statusBar()->showMessage(QStringLiteral("Trace failed to start"), 4000);
             }
@@ -823,6 +1102,8 @@ private:
                 appendOutputLine(QStringLiteral("trace stopped: exit=%1").arg(code));
             if (traceProcess == process)
                 traceProcess = nullptr;
+            traceStopping = false;
+            updateValidationControls();
             process->deleteLater();
             statusBar()->showMessage(
                 exitStatus == QProcess::NormalExit && code == 0
@@ -833,7 +1114,7 @@ private:
 
         QStringList args{
             QStringLiteral("--dry-run"),
-            QStringLiteral("--trace-events=") + traceFilter->currentText(),
+            QStringLiteral("--trace-events=") + comboValue(traceFilter),
             QStringLiteral("--verbose"),
         };
         const QString temporaryProfile = traceProfile->currentData().toString();
@@ -855,6 +1136,8 @@ private:
 
         if (!process)
             return;
+        traceStopping = true;
+        updateValidationControls();
         process->terminate();
         QTimer::singleShot(1500, process, [process]() {
             if (process->state() != QProcess::NotRunning)
@@ -865,11 +1148,11 @@ private:
 
     void calibrateAim()
     {
-        if (traceProcess) {
+        if (traceProcess || calibrationProcess) {
             QMessageBox::information(
                 this,
-                QStringLiteral("Trace is active"),
-                QStringLiteral("Stop the dry-run trace before capturing calibration."));
+                QStringLiteral("Validation task active"),
+                QStringLiteral("Wait for the current trace or calibration capture to finish."));
             return;
         }
 
@@ -884,6 +1167,8 @@ private:
         args = configuredArguments(args);
 
         auto *process = new QProcess(this);
+        calibrationProcess = process;
+        updateValidationControls();
         auto captured = QSharedPointer<QString>::create();
         process->setProcessChannelMode(QProcess::MergedChannels);
         const QString program = daemonProgram();
@@ -897,6 +1182,9 @@ private:
                 [this, process](QProcess::ProcessError error) {
             appendOutputLine(QStringLiteral("process error: ") + process->errorString());
             if (error == QProcess::FailedToStart) {
+                if (calibrationProcess == process)
+                    calibrationProcess = nullptr;
+                updateValidationControls();
                 process->deleteLater();
                 statusBar()->showMessage(QStringLiteral("Calibration failed to start"), 4000);
             }
@@ -916,6 +1204,9 @@ private:
                 appendOutputLine(QStringLiteral("exit status: %1").arg(code));
                 statusBar()->showMessage(QStringLiteral("Calibration failed (exit %1)").arg(code), 4000);
             }
+            if (calibrationProcess == process)
+                calibrationProcess = nullptr;
+            updateValidationControls();
             process->deleteLater();
         });
         process->start(program, args);
@@ -954,15 +1245,29 @@ private:
         const int row = rules->rowCount();
         rules->insertRow(row);
         auto *kindCombo = new QComboBox(rules);
-        kindCombo->addItems({QStringLiteral("device"), QStringLiteral("device-type")});
+        addChoice(kindCombo, QStringLiteral("Device path"), QStringLiteral("device"));
+        addChoice(kindCombo, QStringLiteral("Device type"), QStringLiteral("device-type"));
         setComboText(kindCombo, kind);
         auto *matchItem = new QTableWidgetItem(match);
         auto *profileCombo = new QComboBox(rules);
-        profileCombo->addItems({QStringLiteral("gamepad"), QStringLiteral("desktop"), QStringLiteral("both")});
+        addProfileChoices(profileCombo);
         setComboText(profileCombo, ruleProfile);
         rules->setCellWidget(row, 0, kindCombo);
         rules->setItem(row, 1, matchItem);
         rules->setCellWidget(row, 2, profileCombo);
+        connect(kindCombo,
+                qOverload<int>(&QComboBox::currentIndexChanged),
+                this,
+                [this]() { markConfigDirty(); });
+        connect(profileCombo,
+                qOverload<int>(&QComboBox::currentIndexChanged),
+                this,
+                [this]() { markConfigDirty(); });
+        if (!applyingConfig) {
+            rules->setCurrentItem(matchItem);
+            rules->scrollToItem(matchItem);
+            rules->editItem(matchItem);
+        }
     }
 
     void resetConfigForm()
@@ -1008,6 +1313,7 @@ private:
 
     void applyDumpedConfig(const QString &text)
     {
+        applyingConfig = true;
         resetConfigForm();
         const QStringList lines = text.split(QLatin1Char('\n'));
         for (QString line : lines) {
@@ -1022,6 +1328,8 @@ private:
                 continue;
             applyConfigValue(line.left(equal).trimmed(), line.mid(equal + 1).trimmed());
         }
+        applyingConfig = false;
+        setConfigDirty(false);
     }
 
     void loadConfigFromPath(const QString &path, bool reportErrors)
@@ -1227,22 +1535,22 @@ private:
         QTextStream out(&text);
         out << "# Generated by wiiland-config.\n";
         out << "backend=uinput\n";
-        out << "profile=" << profile->currentText() << "\n";
+        out << "profile=" << comboValue(profile) << "\n";
         out << "pointer-speed=" << pointerSpeed->value() << "\n";
         out << "ir-speed=" << irSpeed->value() << "\n";
         out << "ir-deadzone=" << irDeadzone->value() << "\n";
         out << "ir-smoothing=" << irSmoothing->value() << "\n";
-        out << "ir-tracking=" << irTracking->currentText() << "\n";
-        out << "ir-aim-mapping=" << irAimMapping->currentText() << "\n";
+        out << "ir-tracking=" << comboValue(irTracking) << "\n";
+        out << "ir-aim-mapping=" << comboValue(irAimMapping) << "\n";
         if (irScreenCalibrationEnabled->isChecked()) {
             out << "ir-screen-left=" << irScreenLeft->value() << "\n";
             out << "ir-screen-right=" << irScreenRight->value() << "\n";
             out << "ir-screen-top=" << irScreenTop->value() << "\n";
             out << "ir-screen-bottom=" << irScreenBottom->value() << "\n";
         }
-        out << "aim-mode=" << aimMode->currentText() << "\n";
-        out << "aim-source=" << aimSource->currentText() << "\n";
-        out << "aim-activation=" << aimActivation->currentText() << "\n";
+        out << "aim-mode=" << comboValue(aimMode) << "\n";
+        out << "aim-source=" << comboValue(aimSource) << "\n";
+        out << "aim-activation=" << comboValue(aimActivation) << "\n";
         out << "aim-sensitivity=" << aimSensitivity->value() << "\n";
         out << "aim-deadzone=" << aimDeadzone->value() << "\n";
         out << "aim-smoothing=" << aimSmoothing->value() << "\n";
@@ -1259,16 +1567,18 @@ private:
         }
         out << "aim-calibration-duration=" << aimCalibrationDuration->value() << "\n";
         out << "aim-invert-y=" << (aimInvertY->isChecked() ? "yes" : "no") << "\n";
-        for (const QString &name : desktopBindingNames())
-            out << "desktop." << name << '=' << desktopActions.value(name)->currentText() << "\n";
+        for (const QString &name : desktopBindingNames()) {
+            out << "desktop." << name << '='
+                << comboValue(desktopActions.value(name)) << "\n";
+        }
         for (int row = 0; row < rules->rowCount(); ++row) {
             auto *kindCombo = qobject_cast<QComboBox *>(rules->cellWidget(row, 0));
             auto *profileCombo = qobject_cast<QComboBox *>(rules->cellWidget(row, 2));
             auto *matchItem = rules->item(row, 1);
             if (!kindCombo || !profileCombo || !matchItem || matchItem->text().trimmed().isEmpty())
                 continue;
-            out << kindCombo->currentText() << '.' << matchItem->text().trimmed()
-                << ".profile=" << profileCombo->currentText() << "\n";
+            out << comboValue(kindCombo) << '.' << matchItem->text().trimmed()
+                << ".profile=" << comboValue(profileCombo) << "\n";
         }
         out.flush();
         return text.toUtf8();
@@ -1428,6 +1738,7 @@ private:
             }
 
             setSaving(false);
+            setConfigDirty(false);
             const bool serviceManagedTarget = !isExplicitConfigPath(target);
             statusBar()->showMessage(
                 serviceManagedTarget
@@ -1474,6 +1785,11 @@ private:
         statusBar()->showMessage(QStringLiteral("Validating configuration before save"));
     }
 
+    QWidget *configurationTab = nullptr;
+    QScrollArea *configScroll = nullptr;
+    QTabWidget *mainTabs = nullptr;
+    QWidget *validationTab = nullptr;
+    QGroupBox *validationMatrix = nullptr;
     QLineEdit *wiilanddPath = nullptr;
     QLineEdit *configPath = nullptr;
     QLineEdit *deviceSelector = nullptr;
@@ -1513,6 +1829,11 @@ private:
     QPushButton *loadButton = nullptr;
     QPushButton *saveButton = nullptr;
     QPushButton *saveAndRestartButton = nullptr;
+    QPushButton *copyOutputButton = nullptr;
+    QPushButton *clearOutputButton = nullptr;
+    QPushButton *startTraceButton = nullptr;
+    QPushButton *stopTraceButton = nullptr;
+    QPushButton *calibrateButton = nullptr;
     QPushButton *serviceRefresh = nullptr;
     QPushButton *serviceStart = nullptr;
     QPushButton *serviceStop = nullptr;
@@ -1521,9 +1842,13 @@ private:
     QTableWidget *rules = nullptr;
     QPlainTextEdit *output = nullptr;
     QProcess *traceProcess = nullptr;
+    QProcess *calibrationProcess = nullptr;
     QProcess *serviceProcess = nullptr;
+    bool applyingConfig = false;
+    bool configDirty = false;
     bool loadingConfig = false;
     bool savingConfig = false;
+    bool traceStopping = false;
 };
 
 int main(int argc, char **argv)

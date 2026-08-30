@@ -42,24 +42,33 @@ hierarchy. The selected path is also the save target. Commands that do not
 consume configuration, such as device listing and axis-map, are not given this
 option.
 .PP
-The form buttons are
-.B Load effective config ,
+The persistent configuration actions are
+.B Reload from daemon ,
 .B Validate and save ,
 and
 .B Save and restart daemon
 .
-Loading replaces the form with the daemon's dumped effective values. Saving
-first writes the rendered form to a temporary file and runs
+They remain available below the scrollable settings at compact window sizes.
+Reloading replaces the form with the daemon's dumped effective values. Display
+labels are human-readable while saved files retain canonical
+.B wiilandd.conf
+tokens. Saving first writes the rendered form to a temporary file and runs
 .B wiilandd --check-config --config
 against that temporary file. Only a successful check permits an atomic replace
 of the selected file; a failed check leaves the existing file unchanged.
+Closing the window with edited form values prompts before discarding them.
 .PP
 Accelerometer and MotionPlus saved calibration are enabled independently.
 Each enabled sensor writes a complete X/Y/Z triple, matching the daemon's
 configuration invariant; calibration for one unavailable sensor does not
-invent zero offsets for the other. The command-output view retains the most
-recent 10,000 text blocks so long-running diagnostics cannot grow its document
-without bound.
+invent zero offsets for the other.
+.PP
+The fixed-width command-output view provides
+.B Copy all
+and
+.B Clear
+actions. It retains the most recent 10,000 text blocks so long-running
+diagnostics cannot grow its document without bound.
 .SH SERVICE CONTROL
 The daemon panel controls the installed
 .B wiilandd.service
@@ -108,6 +117,19 @@ The restart action is therefore disabled, and the control center displays the
 exact
 .B wiilandd --config
 command required to apply the saved file.
+.SH DEVICE VALIDATION
+The validation tab exposes the device selector, event filter, and temporary
+profile before its actions. Leaving the device selector empty observes every
+connected remote; a number or sysfs path focuses one device.
+.PP
+.B Start trace
+runs a dry event trace without creating virtual input devices.
+.B Stop
+is enabled only while a trace can be stopped.
+.B Capture flat-surface calibration
+uses the same selected device and the configured sample duration. Trace and
+calibration capture are mutually exclusive; their fields and actions reflect
+the active or stopping state so output cannot be interleaved accidentally.
 .SH DISPLAY BACKEND
 The interface uses Qt Platform Abstraction (QPA) and contains no X11 or Wayland
 display-server API calls. Qt chooses a platform plugin from the session and its

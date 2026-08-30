@@ -37,15 +37,21 @@ if [ "$status" -ne 0 ]; then
     exit 1
 fi
 if ! {
-    printf '%s\n%s\n%s\n%s\n%s\n' \
+    printf '%s\n' \
         "qt.platform=$expected" \
         'service.restart.explicit-config=disabled' \
         'calibration.partial-source=isolated' \
+        'config.choice-values=canonical' \
+        'config.compact-layout=responsive' \
         'config.default-path=absolute' \
-        'output.buffer=bounded'
+        'config.unsaved-state=tracked' \
+        'output.actions=available' \
+        'output.buffer=bounded' \
+        'validation.controls=coordinated' \
+        'validation.form=visible'
 } | cmp -s - "$capture"; then
     printf '%s\n' \
-        "wiiland-config smoke: unexpected platform or architecture state" >&2
+        "wiiland-config smoke: unexpected platform or UI state" >&2
     printf '%s\n' 'binary standard output:' >&2
     cat "$capture" >&2
     printf '%s\n' 'binary standard error:' >&2
