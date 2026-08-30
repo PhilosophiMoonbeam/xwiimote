@@ -1,6 +1,6 @@
 # Display-neutral udev permissions for wiilandd.
 #
-# wiilandd reads hid-wiimote /dev/input/event* nodes through libxwiimote and
+# wiilandd reads hid-wiimote /dev/input/event* nodes through wiiland-hid and
 # creates virtual evdev controllers through /dev/uinput. TAG+="uaccess" grants
 # the active-seat user access under logind on both Wayland and X.org sessions;
 # GROUP and MODE retain an input-group fallback where active-seat ACLs are

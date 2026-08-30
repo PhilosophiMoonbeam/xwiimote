@@ -1,4 +1,4 @@
-//! Narrow raw bindings used by the xwiimote implementation.
+//! Narrow raw bindings used by the Linux `hid-wiimote` device implementation.
 //! The rest of the crate never owns a libudev object without one of the RAII
 //! wrappers in this module.
 #![allow(non_camel_case_types, dead_code)]

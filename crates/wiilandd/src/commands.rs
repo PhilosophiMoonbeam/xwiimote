@@ -7,8 +7,8 @@ use std::time::{Duration, Instant};
 use wiiland_core::calibration::CalibrationStats;
 use wiiland_core::mapping;
 use wiiland_core::{Config, Profile, TraceEvent, TraceFilter, TracePayload};
-use xwiimote::device::{EVENT_ACCEL, EVENT_MP, Interface, RawEvent};
-use xwiimote::monitor::Monitor;
+use wiiland_hid::decode::EventKind;
+use wiiland_hid::{Interface, Monitor};
 
 use crate::cli::{Action, Cli};
 
@@ -170,8 +170,10 @@ fn calibrate_aim(cli: &Cli) -> Result<(), CommandError> {
             format!("wiilandd: cannot open {}: {}", path.display(), e),
         )
     })?;
-    let available = iface.available() & (0x2 | 0x100);
-    if available == 0 {
+    let available = iface.available()
+        & (wiiland_hid::model::InterfaceMask::ACCEL
+            | wiiland_hid::model::InterfaceMask::MOTION_PLUS);
+    if available.is_empty() {
         return Err(CommandError::new(
             libc::ENODEV,
             "wiilandd: calibration device has no accelerometer or MotionPlus",
@@ -179,7 +181,7 @@ fn calibrate_aim(cli: &Cli) -> Result<(), CommandError> {
     }
     let opened_result = iface.open(available);
     let opened = iface.opened() & available;
-    if opened == 0 {
+    if opened.is_empty() {
         return Err(CommandError::new(
             libc::ENODEV,
             "wiilandd: cannot open calibration interfaces",
@@ -199,20 +201,12 @@ fn calibrate_aim(cli: &Cli) -> Result<(), CommandError> {
     let mut accel = CalibrationStats::new();
     let mut motion = CalibrationStats::new();
     while Instant::now() < deadline {
-        let mut event = RawEvent::default();
-        match iface.dispatch(Some(&mut event)) {
-            Ok(()) => {
-                let sample = [
-                    i32::from_ne_bytes(event.payload[0..4].try_into().unwrap()),
-                    i32::from_ne_bytes(event.payload[4..8].try_into().unwrap()),
-                    i32::from_ne_bytes(event.payload[8..12].try_into().unwrap()),
-                ];
-                if event.kind == EVENT_ACCEL {
-                    accel.add(sample);
-                } else if event.kind == EVENT_MP {
-                    motion.add(sample);
-                }
-            }
+        match iface.dispatch() {
+            Ok(event) => match event.kind {
+                EventKind::Accel(value) => accel.add([value.x, value.y, value.z]),
+                EventKind::MotionPlus(value) => motion.add([value.x, value.y, value.z]),
+                _ => {}
+            },
             Err(e) if e == -libc::EAGAIN => std::thread::sleep(Duration::from_millis(20)),
             Err(e) => {
                 return Err(CommandError::new(

@@ -3,21 +3,14 @@ use std::io;
 use std::path::Path;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind};
-use xwiimote::abi::{
-    CEventAbs, CEventKey, XWII_IFACE_ACCEL, XWII_IFACE_ALL, XWII_IFACE_BALANCE_BOARD,
-    XWII_IFACE_CLASSIC_CONTROLLER, XWII_IFACE_CORE, XWII_IFACE_DRUMS, XWII_IFACE_GUITAR,
-    XWII_IFACE_IR, XWII_IFACE_MOTION_PLUS, XWII_IFACE_NUNCHUK, XWII_IFACE_PRO_CONTROLLER,
-    XWII_IFACE_WRITABLE, XWII_KEY_A, XWII_KEY_B, XWII_KEY_C, XWII_KEY_DOWN, XWII_KEY_FRET_FAR_LOW,
-    XWII_KEY_FRET_FAR_UP, XWII_KEY_FRET_LOW, XWII_KEY_FRET_MID, XWII_KEY_FRET_UP, XWII_KEY_HOME,
-    XWII_KEY_LEFT, XWII_KEY_MINUS, XWII_KEY_ONE, XWII_KEY_PLUS, XWII_KEY_RIGHT,
-    XWII_KEY_STRUM_BAR_DOWN, XWII_KEY_STRUM_BAR_UP, XWII_KEY_TL, XWII_KEY_TR, XWII_KEY_TWO,
-    XWII_KEY_UP, XWII_KEY_X, XWII_KEY_Y, XWII_KEY_Z, XWII_KEY_ZL, XWII_KEY_ZR,
-};
-use xwiimote::device::{
-    EVENT_ACCEL, EVENT_BALANCE, EVENT_CLASSIC_KEY, EVENT_CLASSIC_MOVE, EVENT_DRUMS_KEY,
-    EVENT_DRUMS_MOVE, EVENT_GONE, EVENT_GUITAR_KEY, EVENT_GUITAR_MOVE, EVENT_IR, EVENT_KEY,
-    EVENT_MP, EVENT_NUNCHUK_KEY, EVENT_NUNCHUK_MOVE, EVENT_PRO_KEY, EVENT_PRO_MOVE, EVENT_WATCH,
-    Interface, RawEvent,
+use wiiland_hid::Interface;
+use wiiland_hid::decode::{Event, EventKind};
+use wiiland_hid::model::{
+    Axis3, BUTTON_A, BUTTON_B, BUTTON_C, BUTTON_DOWN, BUTTON_FRET_FAR_LOW, BUTTON_FRET_FAR_UP,
+    BUTTON_FRET_LOW, BUTTON_FRET_MID, BUTTON_FRET_UP, BUTTON_HOME, BUTTON_LEFT, BUTTON_MINUS,
+    BUTTON_ONE, BUTTON_PLUS, BUTTON_RIGHT, BUTTON_STRUM_BAR_DOWN, BUTTON_STRUM_BAR_UP, BUTTON_TL,
+    BUTTON_TR, BUTTON_TWO, BUTTON_UP, BUTTON_X, BUTTON_Y, BUTTON_Z, BUTTON_ZL, BUTTON_ZR,
+    ButtonEvent, InterfaceMask,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -49,8 +42,8 @@ pub struct App {
     pub pro_enabled: bool,
     pub drums_enabled: bool,
     pub guitar_enabled: bool,
-    pub available: u32,
-    pub opened: u32,
+    pub available: InterfaceMask,
+    pub opened: InterfaceMask,
     pub rumble_writable: bool,
     pub rumble: bool,
     pub led_writable: [bool; 4],
@@ -58,15 +51,15 @@ pub struct App {
     pub battery: Option<u8>,
     pub device_type: String,
     pub extension: String,
-    pub accel: CEventAbs,
-    pub ir: [CEventAbs; 4],
-    pub motion_plus: CEventAbs,
-    pub nunchuk: [CEventAbs; 2],
-    pub classic: [CEventAbs; 3],
-    pub balance: [CEventAbs; 4],
-    pub pro: [CEventAbs; 2],
-    pub drums: [CEventAbs; 8],
-    pub guitar: [CEventAbs; 3],
+    pub accel: Axis3,
+    pub ir: [Axis3; 4],
+    pub motion_plus: Axis3,
+    pub nunchuk: [Axis3; 2],
+    pub classic: [Axis3; 3],
+    pub balance: [Axis3; 4],
+    pub pro: [Axis3; 2],
+    pub drums: [Axis3; 8],
+    pub guitar: [Axis3; 3],
     pub key_state: [bool; 28],
     pub nunchuk_keys: [bool; 28],
     pub classic_keys: [bool; 28],
@@ -81,7 +74,7 @@ pub struct App {
 
 impl Default for App {
     fn default() -> Self {
-        let mut ir = [CEventAbs::default(); 4];
+        let mut ir = [Axis3::default(); 4];
         for point in &mut ir {
             point.x = 1023;
             point.y = 1023;
@@ -100,8 +93,8 @@ impl Default for App {
             pro_enabled: false,
             drums_enabled: false,
             guitar_enabled: false,
-            available: 0,
-            opened: 0,
+            available: InterfaceMask::empty(),
+            opened: InterfaceMask::empty(),
             rumble_writable: false,
             rumble: false,
             led_writable: [true; 4],
@@ -109,15 +102,15 @@ impl Default for App {
             battery: None,
             device_type: String::from("N/A"),
             extension: String::from("N/A"),
-            accel: CEventAbs::default(),
+            accel: Axis3::default(),
             ir,
-            motion_plus: CEventAbs::default(),
-            nunchuk: [CEventAbs::default(); 2],
-            classic: [CEventAbs::default(); 3],
-            balance: [CEventAbs::default(); 4],
-            pro: [CEventAbs::default(); 2],
-            drums: [CEventAbs::default(); 8],
-            guitar: [CEventAbs::default(); 3],
+            motion_plus: Axis3::default(),
+            nunchuk: [Axis3::default(); 2],
+            classic: [Axis3::default(); 3],
+            balance: [Axis3::default(); 4],
+            pro: [Axis3::default(); 2],
+            drums: [Axis3::default(); 8],
+            guitar: [Axis3::default(); 3],
             key_state: [false; 28],
             nunchuk_keys: [false; 28],
             classic_keys: [false; 28],
@@ -157,70 +150,42 @@ impl App {
         }
     }
 
-    pub fn apply_raw(&mut self, raw: &RawEvent) -> bool {
-        self.last_event = Some(raw.kind);
-        match raw.kind {
-            EVENT_WATCH => {
+    pub fn apply_event(&mut self, event: &Event) -> bool {
+        self.last_event = Some(event.kind.raw_type());
+        match event.kind {
+            EventKind::Watch => {
                 self.info("Watch event");
                 return true;
             }
-            EVENT_GONE => {
+            EventKind::Gone => {
                 self.gone = true;
-                self.opened = 0;
+                self.opened = InterfaceMask::empty();
                 self.info("Device gone");
                 return false;
             }
             _ if self.frozen => return false,
+            EventKind::Key(key) => set_key(&mut self.key_state, key),
+            EventKind::Accel(value) => self.accel = value,
+            EventKind::Ir(values) => self.ir = values,
+            EventKind::MotionPlus(value) => {
+                self.motion_plus = value;
+                self.mp_position[0] = (self.mp_position[0] + value.x / 100).clamp(0, 10_000);
+                self.mp_position[1] = (self.mp_position[1] + value.z / 100).clamp(0, 10_000);
+            }
+            EventKind::NunchukKey(key) => set_key(&mut self.nunchuk_keys, key),
+            EventKind::NunchukMove(values) => self.nunchuk = values,
+            EventKind::ClassicControllerKey(key) => set_key(&mut self.classic_keys, key),
+            EventKind::ClassicControllerMove(values) => self.classic = values,
+            EventKind::BalanceBoard(values) => self.balance = values,
+            EventKind::ProControllerKey(key) => set_key(&mut self.pro_keys, key),
+            EventKind::ProControllerMove(values) => self.pro = values,
+            EventKind::DrumsKey(key) => set_key(&mut self.drums_keys, key),
+            EventKind::DrumsMove(values) => self.drums = values,
+            EventKind::GuitarKey(key) => set_key(&mut self.guitar_keys, key),
+            EventKind::GuitarMove(values) => self.guitar = values,
             _ => {}
         }
-        let event = match raw.kind {
-            EVENT_KEY => Event::Key(read_key(raw)),
-            EVENT_ACCEL => Event::Accel(read_abs(raw, 0)),
-            EVENT_IR => Event::Ir(read_abs_array::<4>(raw)),
-            EVENT_MP => Event::MotionPlus(read_abs(raw, 0)),
-            EVENT_NUNCHUK_KEY => Event::NunchukKey(read_key(raw)),
-            EVENT_NUNCHUK_MOVE => Event::NunchukMove([read_abs(raw, 0), read_abs(raw, 1)]),
-            EVENT_CLASSIC_KEY => Event::ClassicKey(read_key(raw)),
-            EVENT_CLASSIC_MOVE => {
-                Event::ClassicMove([read_abs(raw, 0), read_abs(raw, 1), read_abs(raw, 2)])
-            }
-            EVENT_BALANCE => Event::Balance(read_abs_array::<4>(raw)),
-            EVENT_PRO_KEY => Event::ProKey(read_key(raw)),
-            EVENT_PRO_MOVE => Event::ProMove([read_abs(raw, 0), read_abs(raw, 1)]),
-            EVENT_DRUMS_KEY => Event::DrumsKey(read_key(raw)),
-            EVENT_DRUMS_MOVE => Event::DrumsMove(read_abs_array::<8>(raw)),
-            EVENT_GUITAR_KEY => Event::GuitarKey(read_key(raw)),
-            EVENT_GUITAR_MOVE => {
-                Event::GuitarMove([read_abs(raw, 0), read_abs(raw, 1), read_abs(raw, 2)])
-            }
-            _ => return false,
-        };
-        self.apply_event(event);
         false
-    }
-
-    fn apply_event(&mut self, event: Event) {
-        match event {
-            Event::Key(key) => set_key(&mut self.key_state, key),
-            Event::Accel(v) => self.accel = v,
-            Event::Ir(v) => self.ir = v,
-            Event::MotionPlus(v) => {
-                self.motion_plus = v;
-                self.mp_position[0] = (self.mp_position[0] + v.x / 100).clamp(0, 10_000);
-                self.mp_position[1] = (self.mp_position[1] + v.z / 100).clamp(0, 10_000);
-            }
-            Event::NunchukKey(key) => set_key(&mut self.nunchuk_keys, key),
-            Event::NunchukMove(v) => self.nunchuk = v,
-            Event::ClassicKey(key) => set_key(&mut self.classic_keys, key),
-            Event::ClassicMove(v) => self.classic = v,
-            Event::Balance(v) => self.balance = v,
-            Event::ProKey(key) => set_key(&mut self.pro_keys, key),
-            Event::ProMove(v) => self.pro = v,
-            Event::DrumsKey(key) => set_key(&mut self.drums_keys, key),
-            Event::DrumsMove(v) => self.drums = v,
-            Event::GuitarKey(key) => set_key(&mut self.guitar_keys, key),
-            Event::GuitarMove(v) => self.guitar = v,
-        }
     }
 
     fn handle_local_command(&mut self, ch: char) -> Option<Action> {
@@ -246,7 +211,7 @@ impl App {
 
     fn finish_mp_calibration(
         &mut self,
-        sample: CEventAbs,
+        sample: Axis3,
         current: ([i32; 3], i32),
     ) -> Option<([i32; 3], i32)> {
         if !self.mp_pending_calibration
@@ -284,10 +249,10 @@ impl App {
             return Ok(action);
         }
         match ch {
-            'k' => self.toggle_interface(iface, XWII_IFACE_CORE, "key events", true),
-            'a' => self.toggle_interface(iface, XWII_IFACE_ACCEL, "accelerometer", false),
-            'i' => self.toggle_interface(iface, XWII_IFACE_IR, "IR", false),
-            'm' => self.toggle_interface(iface, XWII_IFACE_MOTION_PLUS, "Motion Plus", false),
+            'k' => self.toggle_interface(iface, InterfaceMask::CORE, "key events", true),
+            'a' => self.toggle_interface(iface, InterfaceMask::ACCEL, "accelerometer", false),
+            'i' => self.toggle_interface(iface, InterfaceMask::IR, "IR", false),
+            'm' => self.toggle_interface(iface, InterfaceMask::MOTION_PLUS, "Motion Plus", false),
             'n' => {
                 let ([x, y, z], factor) = iface.mp_normalization();
                 if factor == 0 {
@@ -298,17 +263,24 @@ impl App {
                     self.info(format!("Disable MP Norm: ({x}:{y}:{z})"));
                 }
             }
-            'N' => self.toggle_interface(iface, XWII_IFACE_NUNCHUK, "Nunchuk", false),
+            'N' => self.toggle_interface(iface, InterfaceMask::NUNCHUK, "Nunchuk", false),
             'c' => self.toggle_interface(
                 iface,
-                XWII_IFACE_CLASSIC_CONTROLLER,
+                InterfaceMask::CLASSIC_CONTROLLER,
                 "Classic Controller",
                 false,
             ),
-            'b' => self.toggle_interface(iface, XWII_IFACE_BALANCE_BOARD, "Balance Board", false),
-            'p' => self.toggle_interface(iface, XWII_IFACE_PRO_CONTROLLER, "Pro Controller", false),
-            'g' => self.toggle_interface(iface, XWII_IFACE_GUITAR, "Guitar controller", false),
-            'd' => self.toggle_interface(iface, XWII_IFACE_DRUMS, "Drums controller", false),
+            'b' => {
+                self.toggle_interface(iface, InterfaceMask::BALANCE_BOARD, "Balance Board", false)
+            }
+            'p' => self.toggle_interface(
+                iface,
+                InterfaceMask::PRO_CONTROLLER,
+                "Pro Controller",
+                false,
+            ),
+            'g' => self.toggle_interface(iface, InterfaceMask::GUITAR, "Guitar controller", false),
+            'd' => self.toggle_interface(iface, InterfaceMask::DRUMS, "Drums controller", false),
             'r' => self.toggle_rumble(iface),
             '1'..='4' => self.toggle_led(iface, (ch as usize) - ('1' as usize)),
             _ => {}
@@ -316,18 +288,30 @@ impl App {
         Ok(Action::Continue)
     }
 
-    fn toggle_interface(&mut self, iface: &mut Interface, bit: u32, label: &str, writable: bool) {
-        if iface.opened() & bit != 0 {
+    fn toggle_interface(
+        &mut self,
+        iface: &mut Interface,
+        bit: InterfaceMask,
+        label: &str,
+        writable: bool,
+    ) {
+        if iface.opened().contains(bit) {
             iface.close(bit);
             self.opened = iface.opened();
-            if bit == XWII_IFACE_CORE {
+            if bit == InterfaceMask::CORE {
                 self.keys_enabled = false;
-                self.rumble_writable = self.opened & XWII_IFACE_PRO_CONTROLLER != 0;
+                self.rumble_writable = self.opened.contains(InterfaceMask::PRO_CONTROLLER);
             }
             self.info(format!("Disable {label}"));
             return;
         }
-        let result = iface.open(bit | if writable { XWII_IFACE_WRITABLE } else { 0 });
+        let result = iface.open(
+            bit | if writable {
+                InterfaceMask::WRITABLE
+            } else {
+                InterfaceMask::empty()
+            },
+        );
         let mut readable = result.is_ok();
         if result.is_err() && writable {
             readable = iface.open(bit).is_ok();
@@ -348,18 +332,18 @@ impl App {
         }
     }
 
-    fn set_enabled(&mut self, bit: u32, value: bool) {
+    fn set_enabled(&mut self, bit: InterfaceMask, value: bool) {
         match bit {
-            XWII_IFACE_CORE => self.keys_enabled = value,
-            XWII_IFACE_ACCEL => self.accel_enabled = value,
-            XWII_IFACE_IR => self.ir_enabled = value,
-            XWII_IFACE_MOTION_PLUS => self.motion_plus_enabled = value,
-            XWII_IFACE_NUNCHUK => self.nunchuk_enabled = value,
-            XWII_IFACE_CLASSIC_CONTROLLER => self.classic_enabled = value,
-            XWII_IFACE_BALANCE_BOARD => self.balance_enabled = value,
-            XWII_IFACE_PRO_CONTROLLER => self.pro_enabled = value,
-            XWII_IFACE_DRUMS => self.drums_enabled = value,
-            XWII_IFACE_GUITAR => self.guitar_enabled = value,
+            InterfaceMask::CORE => self.keys_enabled = value,
+            InterfaceMask::ACCEL => self.accel_enabled = value,
+            InterfaceMask::IR => self.ir_enabled = value,
+            InterfaceMask::MOTION_PLUS => self.motion_plus_enabled = value,
+            InterfaceMask::NUNCHUK => self.nunchuk_enabled = value,
+            InterfaceMask::CLASSIC_CONTROLLER => self.classic_enabled = value,
+            InterfaceMask::BALANCE_BOARD => self.balance_enabled = value,
+            InterfaceMask::PRO_CONTROLLER => self.pro_enabled = value,
+            InterfaceMask::DRUMS => self.drums_enabled = value,
+            InterfaceMask::GUITAR => self.guitar_enabled = value,
             _ => {}
         }
     }
@@ -402,40 +386,40 @@ impl App {
 
     pub fn open_available(&mut self, iface: &mut Interface) {
         self.available = iface.available();
-        let controls = XWII_IFACE_CORE | XWII_IFACE_PRO_CONTROLLER;
-        if iface.opened() & controls == 0 {
+        let controls = InterfaceMask::CORE | InterfaceMask::PRO_CONTROLLER;
+        if (iface.opened() & controls).is_empty() {
             self.rumble_writable = false;
         }
-        for bit in [XWII_IFACE_CORE, XWII_IFACE_PRO_CONTROLLER] {
-            if self.available & bit != 0
-                && iface.opened() & bit == 0
-                && iface.open(bit | XWII_IFACE_WRITABLE).is_ok()
+        for bit in [InterfaceMask::CORE, InterfaceMask::PRO_CONTROLLER] {
+            if self.available.contains(bit)
+                && !iface.opened().contains(bit)
+                && iface.open(bit | InterfaceMask::WRITABLE).is_ok()
             {
                 self.rumble_writable = true;
             }
         }
-        if let Err(e) = iface.open(self.available & XWII_IFACE_ALL) {
-            let missing = self.available & XWII_IFACE_ALL & !iface.opened();
-            if missing != 0 {
+        if let Err(e) = iface.open(self.available & InterfaceMask::ALL) {
+            let missing = self.available & InterfaceMask::ALL & !iface.opened();
+            if !missing.is_empty() {
                 self.error(format!("Cannot open some readable interfaces: {e}"));
             }
         }
         self.opened = iface.opened();
         for bit in [
-            XWII_IFACE_CORE,
-            XWII_IFACE_ACCEL,
-            XWII_IFACE_IR,
-            XWII_IFACE_MOTION_PLUS,
-            XWII_IFACE_NUNCHUK,
-            XWII_IFACE_CLASSIC_CONTROLLER,
-            XWII_IFACE_BALANCE_BOARD,
-            XWII_IFACE_PRO_CONTROLLER,
-            XWII_IFACE_DRUMS,
-            XWII_IFACE_GUITAR,
+            InterfaceMask::CORE,
+            InterfaceMask::ACCEL,
+            InterfaceMask::IR,
+            InterfaceMask::MOTION_PLUS,
+            InterfaceMask::NUNCHUK,
+            InterfaceMask::CLASSIC_CONTROLLER,
+            InterfaceMask::BALANCE_BOARD,
+            InterfaceMask::PRO_CONTROLLER,
+            InterfaceMask::DRUMS,
+            InterfaceMask::GUITAR,
         ] {
-            self.set_enabled(bit, self.opened & bit != 0);
+            self.set_enabled(bit, self.opened.contains(bit));
         }
-        if (self.available & controls != 0) && !self.rumble_writable {
+        if !(self.available & controls).is_empty() && !self.rumble_writable {
             self.info("Read-only input; rumble is unavailable");
         }
         self.refresh_static(iface);
@@ -468,50 +452,7 @@ fn read_attr(iface: &Interface, name: &str) -> String {
         .unwrap_or_else(|| String::from("N/A"))
 }
 
-#[derive(Clone, Copy)]
-enum Event {
-    Key(CEventKey),
-    Accel(CEventAbs),
-    Ir([CEventAbs; 4]),
-    MotionPlus(CEventAbs),
-    NunchukKey(CEventKey),
-    NunchukMove([CEventAbs; 2]),
-    ClassicKey(CEventKey),
-    ClassicMove([CEventAbs; 3]),
-    Balance([CEventAbs; 4]),
-    ProKey(CEventKey),
-    ProMove([CEventAbs; 2]),
-    DrumsKey(CEventKey),
-    DrumsMove([CEventAbs; 8]),
-    GuitarKey(CEventKey),
-    GuitarMove([CEventAbs; 3]),
-}
-fn read_u32(raw: &RawEvent, offset: usize) -> u32 {
-    let mut bytes = [0; 4];
-    bytes.copy_from_slice(&raw.payload[offset..offset + 4]);
-    u32::from_ne_bytes(bytes)
-}
-fn read_i32(raw: &RawEvent, offset: usize) -> i32 {
-    read_u32(raw, offset) as i32
-}
-fn read_key(raw: &RawEvent) -> CEventKey {
-    CEventKey {
-        code: read_u32(raw, 0),
-        state: read_u32(raw, 4),
-    }
-}
-fn read_abs(raw: &RawEvent, index: usize) -> CEventAbs {
-    let off = index.saturating_mul(12);
-    CEventAbs {
-        x: read_i32(raw, off),
-        y: read_i32(raw, off + 4),
-        z: read_i32(raw, off + 8),
-    }
-}
-fn read_abs_array<const N: usize>(raw: &RawEvent) -> [CEventAbs; N] {
-    std::array::from_fn(|i| read_abs(raw, i))
-}
-fn set_key(keys: &mut [bool; 28], key: CEventKey) {
+fn set_key(keys: &mut [bool; 28], key: ButtonEvent) {
     if (key.code as usize) < keys.len() {
         keys[key.code as usize] = key.state != 0;
     }
@@ -519,34 +460,34 @@ fn set_key(keys: &mut [bool; 28], key: CEventKey) {
 
 pub fn key_name(code: u32) -> &'static str {
     match code {
-        XWII_KEY_LEFT => "LEFT",
-        XWII_KEY_RIGHT => "RIGHT",
-        XWII_KEY_UP => "UP",
-        XWII_KEY_DOWN => "DOWN",
-        XWII_KEY_A => "A",
-        XWII_KEY_B => "B",
-        XWII_KEY_PLUS => "PLUS",
-        XWII_KEY_MINUS => "MINUS",
-        XWII_KEY_HOME => "HOME",
-        XWII_KEY_ONE => "1",
-        XWII_KEY_TWO => "2",
-        XWII_KEY_X => "X",
-        XWII_KEY_Y => "Y",
-        XWII_KEY_TL => "TL",
-        XWII_KEY_TR => "TR",
-        XWII_KEY_ZL => "ZL",
-        XWII_KEY_ZR => "ZR",
-        xwiimote::abi::XWII_KEY_THUMBL => "THUMBL",
-        xwiimote::abi::XWII_KEY_THUMBR => "THUMBR",
-        XWII_KEY_C => "C",
-        XWII_KEY_Z => "Z",
-        XWII_KEY_STRUM_BAR_UP => "STRUM_UP",
-        XWII_KEY_STRUM_BAR_DOWN => "STRUM_DOWN",
-        XWII_KEY_FRET_FAR_UP => "FRET_FAR_UP",
-        XWII_KEY_FRET_UP => "FRET_UP",
-        XWII_KEY_FRET_MID => "FRET_MID",
-        XWII_KEY_FRET_LOW => "FRET_LOW",
-        XWII_KEY_FRET_FAR_LOW => "FRET_FAR_LOW",
+        BUTTON_LEFT => "LEFT",
+        BUTTON_RIGHT => "RIGHT",
+        BUTTON_UP => "UP",
+        BUTTON_DOWN => "DOWN",
+        BUTTON_A => "A",
+        BUTTON_B => "B",
+        BUTTON_PLUS => "PLUS",
+        BUTTON_MINUS => "MINUS",
+        BUTTON_HOME => "HOME",
+        BUTTON_ONE => "1",
+        BUTTON_TWO => "2",
+        BUTTON_X => "X",
+        BUTTON_Y => "Y",
+        BUTTON_TL => "TL",
+        BUTTON_TR => "TR",
+        BUTTON_ZL => "ZL",
+        BUTTON_ZR => "ZR",
+        wiiland_hid::model::BUTTON_THUMBL => "THUMBL",
+        wiiland_hid::model::BUTTON_THUMBR => "THUMBR",
+        BUTTON_C => "C",
+        BUTTON_Z => "Z",
+        BUTTON_STRUM_BAR_UP => "STRUM_UP",
+        BUTTON_STRUM_BAR_DOWN => "STRUM_DOWN",
+        BUTTON_FRET_FAR_UP => "FRET_FAR_UP",
+        BUTTON_FRET_UP => "FRET_UP",
+        BUTTON_FRET_MID => "FRET_MID",
+        BUTTON_FRET_LOW => "FRET_LOW",
+        BUTTON_FRET_FAR_LOW => "FRET_FAR_LOW",
         _ => "UNKNOWN",
     }
 }
@@ -574,13 +515,12 @@ pub enum Selector<'a> {
 }
 
 pub fn poll_interface(iface: &mut Interface, app: &mut App) -> Result<bool, i32> {
-    let mut raw = RawEvent::default();
-    match iface.dispatch(Some(&mut raw)) {
-        Ok(()) => {
-            let reopen = app.apply_raw(&raw);
-            if raw.kind == EVENT_MP
+    match iface.dispatch() {
+        Ok(event) => {
+            let reopen = app.apply_event(&event);
+            if let EventKind::MotionPlus(sample) = event.kind
                 && let Some((offsets, factor)) =
-                    app.finish_mp_calibration(read_abs(&raw, 0), iface.mp_normalization())
+                    app.finish_mp_calibration(sample, iface.mp_normalization())
             {
                 iface.set_mp_normalization(offsets[0], offsets[1], offsets[2], factor);
             }
@@ -598,47 +538,45 @@ pub fn poll_interface(iface: &mut Interface, app: &mut App) -> Result<bool, i32>
 mod tests {
     use super::*;
 
-    fn raw_abs(kind: u32, x: i32, y: i32, z: i32) -> RawEvent {
-        let mut raw = RawEvent {
+    fn event(kind: EventKind) -> Event {
+        Event {
+            time: libc::timeval {
+                tv_sec: 0,
+                tv_usec: 0,
+            },
             kind,
-            ..RawEvent::default()
-        };
-        raw.abs(0, x, y, z);
-        raw
+        }
     }
 
     #[test]
     fn frozen_values_stay_fixed_while_lifecycle_events_request_reopen_and_mark_gone() {
         let mut app = App {
             frozen: true,
-            opened: XWII_IFACE_CORE | XWII_IFACE_ACCEL,
-            accel: CEventAbs { x: 1, y: 2, z: 3 },
+            opened: InterfaceMask::CORE | InterfaceMask::ACCEL,
+            accel: Axis3 { x: 1, y: 2, z: 3 },
             ..App::default()
         };
-        app.key_state[XWII_KEY_A as usize] = true;
+        app.key_state[BUTTON_A as usize] = true;
 
-        assert!(!app.apply_raw(&raw_abs(EVENT_ACCEL, 10, 20, 30)));
-        let mut key = RawEvent {
-            kind: EVENT_KEY,
-            ..RawEvent::default()
-        };
-        key.key(XWII_KEY_A, 0);
-        assert!(!app.apply_raw(&key));
-        assert_eq!(app.accel, CEventAbs { x: 1, y: 2, z: 3 });
-        assert!(app.key_state[XWII_KEY_A as usize]);
-
-        assert!(app.apply_raw(&RawEvent {
-            kind: EVENT_WATCH,
-            ..RawEvent::default()
+        assert!(!app.apply_event(&event(EventKind::Accel(Axis3 {
+            x: 10,
+            y: 20,
+            z: 30,
+        }))));
+        let key = event(EventKind::Key(ButtonEvent {
+            code: BUTTON_A,
+            state: 0,
         }));
+        assert!(!app.apply_event(&key));
+        assert_eq!(app.accel, Axis3 { x: 1, y: 2, z: 3 });
+        assert!(app.key_state[BUTTON_A as usize]);
+
+        assert!(app.apply_event(&event(EventKind::Watch)));
         assert_eq!(app.status.back().map(String::as_str), Some("Watch event"));
 
-        assert!(!app.apply_raw(&RawEvent {
-            kind: EVENT_GONE,
-            ..RawEvent::default()
-        }));
+        assert!(!app.apply_event(&event(EventKind::Gone)));
         assert!(app.gone);
-        assert_eq!(app.opened, 0);
+        assert!(app.opened.is_empty());
         assert_eq!(app.status.back().map(String::as_str), Some("Device gone"));
     }
 
@@ -646,7 +584,7 @@ mod tests {
     fn s_starts_flat_calibration_and_stable_sample_preserves_normalization_factor() {
         let mut app = App {
             frozen: true,
-            motion_plus: CEventAbs {
+            motion_plus: Axis3 {
                 x: 91,
                 y: 92,
                 z: 93,
@@ -656,15 +594,15 @@ mod tests {
 
         assert_eq!(app.handle_local_command('s'), Some(Action::Continue));
         assert!(app.mp_pending_calibration);
-        let sample = CEventAbs {
+        let sample = Axis3 {
             x: 120,
             y: -80,
             z: 40,
         };
-        assert!(!app.apply_raw(&raw_abs(EVENT_MP, sample.x, sample.y, sample.z)));
+        assert!(!app.apply_event(&event(EventKind::MotionPlus(sample))));
         assert_eq!(
             app.motion_plus,
-            CEventAbs {
+            Axis3 {
                 x: 91,
                 y: 92,
                 z: 93
@@ -678,7 +616,7 @@ mod tests {
 
         assert_eq!(app.handle_local_command('s'), Some(Action::Continue));
         assert_eq!(
-            app.finish_mp_calibration(CEventAbs { x: 1, y: 2, z: 3 }, ([1120, -2080, 3040], 0)),
+            app.finish_mp_calibration(Axis3 { x: 1, y: 2, z: 3 }, ([1120, -2080, 3040], 0)),
             Some(([1121, -2078, 3043], 0))
         );
     }
@@ -690,7 +628,7 @@ mod tests {
 
         assert_eq!(
             app.finish_mp_calibration(
-                CEventAbs {
+                Axis3 {
                     x: 4999,
                     y: -5000,
                     z: 0
@@ -702,7 +640,7 @@ mod tests {
         assert!(app.mp_pending_calibration);
         assert_eq!(
             app.finish_mp_calibration(
-                CEventAbs {
+                Axis3 {
                     x: i32::MIN,
                     y: 0,
                     z: 0

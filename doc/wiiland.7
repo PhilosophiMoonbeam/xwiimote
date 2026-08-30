@@ -7,11 +7,11 @@
 WiiLand \- Linux Wii Remote input stack for Wayland and X.org sessions
 .
 .SH DESCRIPTION
-WiiLand connects Nintendo Wii Remotes to Linux through the kernel
+WiiLand connects Nintendo Wii Remotes to Linux through BlueZ, the kernel
 .B hid-wiimote
-driver, BlueZ, and the Rust
-.B xwiimote
-compatibility library.  The
+driver, and the native Rust
+.B wiiland-hid
+device library.  The
 .B wiilandd (1)
 daemon reads those interfaces and publishes display-neutral Linux
 .B uinput
@@ -21,9 +21,8 @@ sessions; X.org is not a legacy-only path.
 .SS Layered input path
 The path is:
 .IP 1. 4
-hid-wiimote and BlueZ expose the paired remote; xwiimote supplies decoded
+hid-wiimote and BlueZ expose the paired remote; wiiland-hid supplies decoded
 buttons, extension data, accelerometer, MotionPlus, IR, and Balance Board data.
-The library also provides the public libxwiimote C ABI.
 .IP 2. 4
 wiilandd creates virtual devices through /dev/uinput.  The gamepad profile is
 named
@@ -49,7 +48,7 @@ For a native X.org installation, the X.org integration provides
 .B res/50-xorg-fix-wiiland.conf
 with InputClass rules that suppress matching raw Nintendo Wii Remote event
 nodes.  This prevents duplicate pointer input from raw accelerometer/IR axes.
-It does not block libxwiimote or wiilandd, and it does not suppress devices
+It does not block wiiland-hid or wiilandd, and it does not suppress devices
 named
 .B "WiiLand Virtual Controller"
 or
@@ -211,28 +210,16 @@ the release profile with:
 .B "  --features gui,tui,integrations"
 .RE
 .PP
-The xtask build compiles the
-.B xwiimote
-crate's
-.B rlib
-and
-.B staticlib ,
-then final-links the versioned shared object with the root
-.B libxwiimote.sym
-ABI map and SONAME
-.B libxwiimote.so.2 .
+The xtask build compiles the selected Cargo workspace binaries and libraries
+into the requested target profile.
 .PP
 Pass
 .B --destdir PATH
 to stage the same logical tree.  The typed xtask manifest installs
 .B wiilandd ,
 .B wiilandd-hardware-report ,
-optional frontend binaries, the libxwiimote shared library and static archive,
-the public C header, pkg-config metadata, configuration, documentation, and
-manual pages.  The compatibility library retains SONAME
-.B libxwiimote.so.2
-and the static archive is
-.B libxwiimote.a .
+optional frontend binaries, configuration, documentation, manual pages, and
+selected integration assets.
 .PP
 The integration options
 .B --with-udev-rules-dir ,
@@ -242,9 +229,8 @@ and
 each accept
 .B auto ,
 .B no ,
-or an absolute destination.  Generated service and pkg-config content uses
-logical paths; DESTDIR is not embedded in those files.  The default logical
-prefix is /usr/local.
+or an absolute destination.  Generated service content uses logical paths;
+DESTDIR is not embedded in it.  The default logical prefix is /usr/local.
 .
 .SH VALIDATION
 Hardware-free checks are:
@@ -292,11 +278,10 @@ external MotionPlus; Wii Remote Plus; Nunchuk; Classic Controller; Wii U Pro
 Controller; Guitar; Drums; and Balance Board.  For each applicable profile,
 validate native Wayland, native X.org, XWayland, SDL, one Steam Input game, one
 native or XWayland non-Steam game, and one Wine/Proton game.  Exercise desktop
-pointer/buttons and both motion modes where applicable.  Record kernel,
-libxwiimote, wiilandd version, distribution, Bluetooth adapter, devtype,
-extension state, session, consumer, and observed pass/fail details.  A source
-checkout or hardware-free run does not constitute physical hardware
-validation.
+pointer/buttons and both motion modes where applicable.  Record kernel and
+wiilandd versions, distribution, Bluetooth adapter, devtype, extension state,
+session, consumer, and observed pass/fail details.  A source checkout or
+hardware-free run does not constitute physical hardware validation.
 .
 .SH BUGS
 If a remote is absent, inspect
@@ -313,6 +298,5 @@ David Herrmann <dh.herrmann@googlemail.com>
 The WiiLand Project: https://github.com/PhilosophiMoonbeam/wiiland
 .
 .SH "SEE ALSO"
-.BR libxwiimote (7),
 .BR wiilandd (1),
 .BR wiiland-config (1)

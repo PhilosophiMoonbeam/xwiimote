@@ -1,4 +1,4 @@
-use xwiimote::monitor::Monitor;
+use wiiland_hid::Monitor;
 
 #[test]
 fn enumeration_has_a_single_boundary_and_stays_exhausted() {

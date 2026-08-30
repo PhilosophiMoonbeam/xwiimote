@@ -181,7 +181,7 @@ pub fn scale_unsigned_axis(value: i32, source_max: i32, target_max: i32) -> i32 
     (i64::from(value) * i64::from(target_max) / i64::from(source_max)) as i32
 }
 
-/// xwiimote `enum xwii_event_keys` identifiers, which are contiguous by ABI.
+/// Internal Wii button identifiers, contiguous for table indexing.
 pub fn map_key(code: u32) -> Option<u16> {
     Some(match code {
         0 => BTN_DPAD_LEFT,
@@ -337,9 +337,8 @@ impl MappedMotion {
     }
 }
 
-/// Translate one legacy absolute event payload. `values` uses the same
-/// fixed-array layout as xwiimote's event union; only fields required by
-/// `kind` are read.
+/// Translate one absolute event payload. `values` uses fixed logical slots;
+/// only fields required by `kind` are read.
 pub fn map_motion(kind: MotionKind, values: [Abs3; 8]) -> MappedMotion {
     let mut out = MappedMotion::default();
     match kind {

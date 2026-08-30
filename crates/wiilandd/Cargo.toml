@@ -20,4 +20,4 @@ path = "src/bin/wiilandd-hardware-report.rs"
 [dependencies]
 libc.workspace = true
 wiiland-core = { path = "../wiiland-core" }
-xwiimote = { path = "../xwiimote" }
+wiiland-hid = { path = "../wiiland-hid" }

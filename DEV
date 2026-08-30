@@ -23,8 +23,8 @@ The repository pins Rust 1.98.0 in `rust-toolchain.toml`.  The Cargo workspace
 uses resolver 3, edition 2024, and package version 2.0.0.  The principal
 packages are:
 
-* `crates/xwiimote` — safe device/monitor ownership plus the `libxwiimote`
-  C ABI (`rlib` and `staticlib`).
+* `crates/wiiland-hid` — native Rust ownership, decoding, and control of
+  devices exposed by Linux `hid-wiimote`.
 * `crates/wiiland-core` — pure configuration, mapping, pointer, aim, and trace
   logic.
 * `crates/wiilandd` — the `wiilandd` daemon and
@@ -49,9 +49,7 @@ Use the repository's Cargo alias for the xtask package:
 
 The `gui`, `tui`, and `integrations` feature names select the optional
 frontends and installed integration assets where supported. `cargo xtask build`
-places profile outputs in `target/debug` or `target/release`, then final-links
-the versioned `libxwiimote` shared object from `libxwiimote.a` using the root
-`libxwiimote.sym` ABI map and SONAME `libxwiimote.so.2`.
+places profile outputs in `target/debug` or `target/release`.
 
 The focused workspace checks are:
 
@@ -59,9 +57,9 @@ The focused workspace checks are:
   cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
   cargo test --workspace --all-features --locked
 
-Do not add a C or C++ implementation path: `xwiimote` is the single
-implementation for both safe Rust users and the compatibility C ABI. Keep
-`lib/xwiimote.h` and the root `libxwiimote.sym` synchronized with that ABI.
+Keep device ingestion aligned with the kernel `hid-wiimote` contract: udev and
+sysfs topology, exact evdev node names and codes, LEDs, rumble, and
+`SYN_DROPPED` recovery. The project does not publish a C ABI.
 
 == Install and distribution ==
 
@@ -73,16 +71,16 @@ corresponding Cargo target directory:
     --features gui,tui,integrations
 
 For packaging, pass `--destdir PATH`; it prefixes staged destinations without
-appearing in generated service or pkg-config files:
+appearing in generated service files:
 
   cargo xtask install --release --destdir "$DESTDIR" \
     --prefix /usr --sysconfdir /etc \
     --features gui,tui,integrations
 
 Logical directory options include `--prefix`, `--exec-prefix`, `--bindir`,
-`--sbindir`, `--libdir`, `--includedir`, `--datadir`, `--docdir`, and
-`--mandir`. `--sysconfdir` is accepted only as `/etc`, matching the runtime's
-canonical system configuration path. Integration destinations independently
+`--datadir`, `--docdir`, and `--mandir`. `--sysconfdir` is accepted only as
+`/etc`, matching the runtime's canonical system configuration path.
+Integration destinations independently accept
 `auto`, `no`, or an absolute path:
 `--with-udev-rules-dir`, `--with-systemd-user-unit-dir`, and
 `--with-xorg-conf-dir`. `cargo xtask uninstall` reads its ownership marker and

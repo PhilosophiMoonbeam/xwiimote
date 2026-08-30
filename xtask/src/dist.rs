@@ -18,8 +18,6 @@ const SOURCE_FILES: &[&str] = &[
     "DEV",
     "LICENSE",
     "README.md",
-    "lib/xwiimote.h",
-    "libxwiimote.sym",
     "rust-toolchain.toml",
 ];
 
@@ -353,23 +351,15 @@ mod tests {
         let output = source.path().join("res/custom-output");
         fs::write(&output, b"old archive").unwrap();
         fs::write(source.path().join("root-debris"), b"debris").unwrap();
-        fs::write(source.path().join("configure.ac"), b"legacy").unwrap();
-        fs::write(source.path().join("lib/legacy.c"), b"legacy").unwrap();
         fs::create_dir(source.path().join("src")).unwrap();
-        fs::write(source.path().join("src/legacy.c"), b"legacy").unwrap();
+        fs::write(source.path().join("src/excluded.c"), b"excluded").unwrap();
 
         let files = collect_sources(source.path(), &output).unwrap();
 
         assert!(files.contains(&PathBuf::from(".omp/config.json")));
-        assert!(files.contains(&PathBuf::from("lib/xwiimote.h")));
+        assert!(files.contains(&PathBuf::from("Cargo.toml")));
         assert!(files.contains(&PathBuf::from("res/kept.txt")));
-        for excluded in [
-            "res/custom-output",
-            "root-debris",
-            "configure.ac",
-            "lib/legacy.c",
-            "src/legacy.c",
-        ] {
+        for excluded in ["res/custom-output", "root-debris", "src/excluded.c"] {
             assert!(
                 !files.contains(&PathBuf::from(excluded)),
                 "unexpected source archive entry: {excluded}"
@@ -430,7 +420,7 @@ mod tests {
         let valid = [
             "wiiland-2/",
             "wiiland-2/.omp/config.json",
-            "wiiland-2/lib/xwiimote.h",
+            "wiiland-2/Cargo.toml",
         ]
         .map(str::to_owned);
         assert!(validate_names(&valid).is_ok());

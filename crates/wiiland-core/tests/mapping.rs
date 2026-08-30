@@ -149,7 +149,7 @@ fn public_wii_guitar_keys_emit_dedicated_virtual_codes() {
 }
 
 #[test]
-fn key_mapping_covers_every_legacy_key_and_rejects_unknown() {
+fn key_mapping_covers_every_internal_button_and_rejects_unknown() {
     let code_to_key = [
         BTN_DPAD_LEFT,
         BTN_DPAD_RIGHT,
@@ -186,7 +186,7 @@ fn key_mapping_covers_every_legacy_key_and_rejects_unknown() {
     assert_eq!(map_key(28), None);
     assert_eq!(map_key(u32::MAX), None);
 
-    let legacy_capability_order = [
+    let expected_capability_order = [
         BTN_DPAD_LEFT,
         BTN_DPAD_RIGHT,
         BTN_DPAD_UP,
@@ -217,7 +217,7 @@ fn key_mapping_covers_every_legacy_key_and_rejects_unknown() {
         BTN_FRET_FAR_LOW,
     ];
     assert_eq!(CORE_KEYS.len(), 28);
-    assert_eq!(CORE_KEYS, legacy_capability_order);
+    assert_eq!(CORE_KEYS, expected_capability_order);
 }
 
 #[test]

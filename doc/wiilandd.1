@@ -10,8 +10,8 @@ wiilandd \- bridge Wii Remote input to Linux virtual evdev devices
 .RI [ OPTIONS ]
 .SH DESCRIPTION
 .B wiilandd
-reads hid-wiimote events through libxwiimote and exposes the selected Wii
-Remote inputs through Linux
+reads Linux hid-wiimote events through the native wiiland-hid device library
+and exposes the selected Wii Remote inputs through Linux
 .BR uinput .
 The resulting devices are named
 .B "WiiLand Virtual Controller"
@@ -391,5 +391,4 @@ Kernel uinput device used by the daemon.
 .SH SEE ALSO
 .BR wiiland-config (1),
 .BR xwiishow (1),
-.BR wiiland (7),
-.BR libxwiimote (7)
+.BR wiiland (7)

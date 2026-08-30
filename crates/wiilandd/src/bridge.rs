@@ -11,8 +11,9 @@ use wiiland_core::pointer::{
 use wiiland_core::{
     AbsPayload, Config, KeyPayload, Profile, TraceEvent, TraceFilter, TracePayload,
 };
-use xwiimote::abi;
-use xwiimote::device::{Interface, RawEvent};
+use wiiland_hid::Interface;
+use wiiland_hid::decode::{Abs, Event, EventKind, Key};
+use wiiland_hid::model;
 
 pub const MAX_EVENTS_PER_DRAIN: usize = 256;
 pub const PROFILE_GAMEPAD: u8 = Profile::GAMEPAD.bits();
@@ -57,8 +58,8 @@ impl TraceContext {
         }
     }
 
-    fn emit(&mut self, syspath: &Path, event: &RawEvent) {
-        if !self.filter.matches(event.kind) {
+    fn emit(&mut self, syspath: &Path, event: &Event) {
+        if !self.filter.matches(event.kind.raw_type()) {
             return;
         }
         let sequence = self.sequence.get() + 1;
@@ -77,8 +78,8 @@ pub struct BridgeDevice<B: Backend + Clone = crate::uinput::SystemBackend> {
     pub desktop: Option<VirtualDevice<B>>,
     pub pointer: PointerState,
     pub aim: AimState,
-    pub opened_ifaces: u32,
-    pub pending_ifaces: u32,
+    pub opened_ifaces: model::InterfaceMask,
+    pub pending_ifaces: model::InterfaceMask,
     trace: Option<TraceContext>,
     config: Config,
     backend: B,
@@ -109,7 +110,7 @@ impl<B: Backend + Clone> BridgeDevice<B> {
         let mut pending = requested;
         let opened_result = iface.open(requested);
         let opened = iface.opened();
-        if opened == 0 {
+        if opened.is_empty() {
             opened_result?;
         }
         pending &= !opened;
@@ -154,14 +155,14 @@ impl<B: Backend + Clone> BridgeDevice<B> {
         &self.syspath
     }
     pub fn retry_open(&mut self) -> Result<(), i32> {
-        if self.pending_ifaces == 0 {
+        if self.pending_ifaces.is_empty() {
             return Ok(());
         }
         let result = self.iface.open(self.pending_ifaces);
         self.opened_ifaces = self.iface.opened();
         self.pending_ifaces &= !self.opened_ifaces;
-        if self.opened_ifaces & requested_interfaces(self.profile, &self.config) != 0 {
-            if result.is_err() && self.pending_ifaces != 0 {
+        if !(self.opened_ifaces & requested_interfaces(self.profile, &self.config)).is_empty() {
+            if result.is_err() && !self.pending_ifaces.is_empty() {
                 return Ok(());
             }
             return Ok(());
@@ -171,7 +172,7 @@ impl<B: Backend + Clone> BridgeDevice<B> {
     pub fn handle_watch(&mut self) -> Result<(), i32> {
         let opened = self.iface.opened();
         let lost = self.opened_ifaces & !opened;
-        if lost != 0 {
+        if !lost.is_empty() {
             self.gamepad.take();
             self.desktop.take();
             self.pointer.reset();
@@ -195,11 +196,10 @@ impl<B: Backend + Clone> BridgeDevice<B> {
     }
     pub fn drain(&mut self) -> Result<BridgeAction, i32> {
         for _ in 0..MAX_EVENTS_PER_DRAIN {
-            let mut raw = RawEvent::default();
-            match self.iface.dispatch(Some(&mut raw)) {
-                Ok(()) => {
-                    self.trace(&raw);
-                    match self.handle_event(&raw)? {
+            match self.iface.dispatch() {
+                Ok(event) => {
+                    self.trace(&event);
+                    match self.handle_event(&event)? {
                         BridgeAction::Continue => {}
                         BridgeAction::Gone => return Ok(BridgeAction::Gone),
                     }
@@ -212,120 +212,124 @@ impl<B: Backend + Clone> BridgeDevice<B> {
         }
         Ok(BridgeAction::Continue)
     }
-    fn trace(&mut self, event: &RawEvent) {
+    fn trace(&mut self, event: &Event) {
         if let Some(trace) = self.trace.as_mut() {
             trace.emit(&self.syspath, event);
         }
     }
-    pub fn handle_event(&mut self, event: &RawEvent) -> Result<BridgeAction, i32> {
+    pub fn handle_event(&mut self, event: &Event) -> Result<BridgeAction, i32> {
         match event.kind {
-            abi::XWII_EVENT_GONE => return Ok(BridgeAction::Gone),
-            abi::XWII_EVENT_WATCH => {
+            EventKind::Gone => return Ok(BridgeAction::Gone),
+            EventKind::Watch => {
                 self.handle_watch()?;
-                return Ok(BridgeAction::Continue);
             }
-            _ => {}
-        }
-        let values = decode_abs(event);
-        let (code, state) = decode_key(event);
-        match event.kind {
-            abi::XWII_EVENT_KEY
-            | abi::XWII_EVENT_NUNCHUK_KEY
-            | abi::XWII_EVENT_CLASSIC_CONTROLLER_KEY
-            | abi::XWII_EVENT_PRO_CONTROLLER_KEY
-            | abi::XWII_EVENT_GUITAR_KEY
-            | abi::XWII_EVENT_DRUMS_KEY => {
-                if needs_gamepad(self.profile, &self.config)
-                    && self.outputs_enabled
-                    && let Some(mapped) = mapping::map_key(code)
-                    && let Some(out) = self.gamepad.as_mut()
-                {
-                    out.emit_key(mapped, state)?;
-                }
-                if has_desktop_profile(self.profile) {
-                    self.desktop_key(code, state)?;
-                    self.pointer_key(code, state)?;
-                }
-                let a = self.aim.activation_key(code, state != 0);
-                self.emit_aim(a)?;
+            EventKind::Key(key)
+            | EventKind::NunchukKey(key)
+            | EventKind::ClassicControllerKey(key)
+            | EventKind::ProControllerKey(key)
+            | EventKind::GuitarKey(key)
+            | EventKind::DrumsKey(key) => {
+                self.handle_key(key)?;
             }
-            abi::XWII_EVENT_ACCEL
-            | abi::XWII_EVENT_NUNCHUK_MOVE
-            | abi::XWII_EVENT_CLASSIC_CONTROLLER_MOVE
-            | abi::XWII_EVENT_PRO_CONTROLLER_MOVE
-            | abi::XWII_EVENT_GUITAR_MOVE
-            | abi::XWII_EVENT_DRUMS_MOVE
-            | abi::XWII_EVENT_BALANCE_BOARD
-            | abi::XWII_EVENT_MOTION_PLUS => {
-                if needs_gamepad(self.profile, &self.config) && self.outputs_enabled {
-                    let kind = match event.kind {
-                        abi::XWII_EVENT_ACCEL => MotionKind::Accel,
-                        abi::XWII_EVENT_NUNCHUK_MOVE => MotionKind::Nunchuk,
-                        abi::XWII_EVENT_CLASSIC_CONTROLLER_MOVE => MotionKind::Classic,
-                        abi::XWII_EVENT_PRO_CONTROLLER_MOVE => MotionKind::Pro,
-                        abi::XWII_EVENT_GUITAR_MOVE => MotionKind::Guitar,
-                        abi::XWII_EVENT_DRUMS_MOVE => MotionKind::Drums,
-                        abi::XWII_EVENT_BALANCE_BOARD => MotionKind::Balance,
-                        _ => MotionKind::MotionPlus,
-                    };
-                    let mapped = mapping::map_motion(kind, values);
-                    if let Some(out) = self.gamepad.as_mut() {
-                        for axis in mapped.axes.iter().take(mapped.count) {
-                            out.emit_abs(axis.code, axis.value)?;
-                        }
-                        out.syn()?;
-                    }
-                }
-                let result = match event.kind {
-                    abi::XWII_EVENT_ACCEL => {
-                        self.aim
-                            .process_accelerometer([values[0].x, values[0].y, values[0].z])
-                    }
-                    abi::XWII_EVENT_MOTION_PLUS => {
-                        self.aim
-                            .process_motion_plus([values[0].x, values[0].y, values[0].z])
-                    }
-                    _ => Default::default(),
-                };
+            EventKind::Accel(value) => {
+                self.handle_motion(MotionKind::Accel, &[value])?;
+                let result = self.aim.process_accelerometer([value.x, value.y, value.z]);
                 self.emit_aim(result)?;
             }
-            abi::XWII_EVENT_IR => {
+            EventKind::MotionPlus(value) => {
+                self.handle_motion(MotionKind::MotionPlus, &[value])?;
+                let result = self.aim.process_motion_plus([value.x, value.y, value.z]);
+                self.emit_aim(result)?;
+            }
+            EventKind::NunchukMove(values) => {
+                self.handle_motion(MotionKind::Nunchuk, &values)?;
+            }
+            EventKind::ClassicControllerMove(values) => {
+                self.handle_motion(MotionKind::Classic, &values)?;
+            }
+            EventKind::ProControllerMove(values) => {
+                self.handle_motion(MotionKind::Pro, &values)?;
+            }
+            EventKind::GuitarMove(values) => {
+                self.handle_motion(MotionKind::Guitar, &values)?;
+            }
+            EventKind::DrumsMove(values) => {
+                self.handle_motion(MotionKind::Drums, &values)?;
+            }
+            EventKind::BalanceBoard(values) => {
+                self.handle_motion(MotionKind::Balance, &values)?;
+            }
+            EventKind::Ir(values) => {
                 let mut frame = IrFrame::default();
-                for (i, v) in values.iter().take(4).enumerate() {
-                    frame.points[i] = IrPoint {
-                        valid: abi::xwii_event_ir_is_valid(&abi::CEventAbs {
-                            x: v.x,
-                            y: v.y,
-                            z: v.z,
-                        }),
-                        x: v.x,
-                        y: v.y,
+                for (point, value) in frame.points.iter_mut().zip(values) {
+                    *point = IrPoint {
+                        valid: model::is_valid_ir_point(&value),
+                        x: value.x,
+                        y: value.y,
                     };
                 }
                 let point = self.pointer.select_ir(&frame);
                 if has_desktop_profile(self.profile) {
-                    let d = self.pointer.update_ir_frame(&frame);
-                    self.emit_pointer(d.dx, d.dy)?;
+                    let delta = self.pointer.update_ir_frame(&frame);
+                    self.emit_pointer(delta.dx, delta.dy)?;
                 }
-                let a = self.aim.process_ir(point);
-                self.emit_aim(a)?;
+                let result = self.aim.process_ir(point);
+                self.emit_aim(result)?;
             }
             _ => {}
         }
         Ok(BridgeAction::Continue)
+    }
+
+    fn handle_key(&mut self, key: Key) -> Result<(), i32> {
+        if needs_gamepad(self.profile, &self.config)
+            && self.outputs_enabled
+            && let Some(mapped) = mapping::map_key(key.code)
+            && let Some(out) = self.gamepad.as_mut()
+        {
+            out.emit_key(mapped, key.state)?;
+        }
+        if has_desktop_profile(self.profile) {
+            self.desktop_key(key.code, key.state)?;
+            self.pointer_key(key.code, key.state)?;
+        }
+        let result = self.aim.activation_key(key.code, key.state != 0);
+        self.emit_aim(result)
+    }
+
+    fn handle_motion(&mut self, kind: MotionKind, values: &[Abs]) -> Result<(), i32> {
+        if !needs_gamepad(self.profile, &self.config) || !self.outputs_enabled {
+            return Ok(());
+        }
+        let mut axes = [Abs3 { x: 0, y: 0, z: 0 }; 8];
+        for (target, source) in axes.iter_mut().zip(values) {
+            *target = Abs3 {
+                x: source.x,
+                y: source.y,
+                z: source.z,
+            };
+        }
+        let mapped = mapping::map_motion(kind, axes);
+        if let Some(out) = self.gamepad.as_mut() {
+            for axis in mapped.axes.iter().take(mapped.count) {
+                out.emit_abs(axis.code, axis.value)?;
+            }
+            out.syn()?;
+        }
+        Ok(())
     }
     fn desktop_key(&mut self, code: u32, state: u32) -> Result<(), i32> {
         if !self.outputs_enabled {
             return Ok(());
         }
         let action = match code {
-            abi::XWII_KEY_A => self.config.desktop_bindings.a,
-            abi::XWII_KEY_B => self.config.desktop_bindings.b,
-            abi::XWII_KEY_PLUS => self.config.desktop_bindings.plus,
-            abi::XWII_KEY_MINUS => self.config.desktop_bindings.minus,
-            abi::XWII_KEY_HOME => self.config.desktop_bindings.home,
-            abi::XWII_KEY_ONE => self.config.desktop_bindings.one,
-            abi::XWII_KEY_TWO => self.config.desktop_bindings.two,
+            model::BUTTON_A => self.config.desktop_bindings.a,
+            model::BUTTON_B => self.config.desktop_bindings.b,
+            model::BUTTON_PLUS => self.config.desktop_bindings.plus,
+            model::BUTTON_MINUS => self.config.desktop_bindings.minus,
+            model::BUTTON_HOME => self.config.desktop_bindings.home,
+            model::BUTTON_ONE => self.config.desktop_bindings.one,
+            model::BUTTON_TWO => self.config.desktop_bindings.two,
             _ => wiiland_core::DesktopAction::Disabled,
         };
         let code = match action {
@@ -346,10 +350,10 @@ impl<B: Backend + Clone> BridgeDevice<B> {
     }
     fn pointer_key(&mut self, code: u32, state: u32) -> Result<(), i32> {
         let bit = match code {
-            abi::XWII_KEY_LEFT => POINTER_LEFT,
-            abi::XWII_KEY_RIGHT => POINTER_RIGHT,
-            abi::XWII_KEY_UP => POINTER_UP,
-            abi::XWII_KEY_DOWN => POINTER_DOWN,
+            model::BUTTON_LEFT => POINTER_LEFT,
+            model::BUTTON_RIGHT => POINTER_RIGHT,
+            model::BUTTON_UP => POINTER_UP,
+            model::BUTTON_DOWN => POINTER_DOWN,
             _ => return Ok(()),
         };
         let d = self.pointer.update_key(bit, state != 0);
@@ -452,47 +456,55 @@ fn create_outputs<B: Backend + Clone>(
     };
     Ok((gamepad, desktop))
 }
-pub fn requested_interfaces(p: Profile, c: &Config) -> u32 {
-    let mut f = 0;
+pub fn requested_interfaces(p: Profile, c: &Config) -> model::InterfaceMask {
+    let mut interfaces = model::InterfaceMask::empty();
     if p.contains(Profile::GAMEPAD) {
-        f = abi::XWII_IFACE_ALL & !abi::XWII_IFACE_IR;
+        interfaces = model::InterfaceMask::ALL & !model::InterfaceMask::IR;
     }
     if p.contains(Profile::DESKTOP) {
-        f |= abi::XWII_IFACE_CORE | abi::XWII_IFACE_IR;
+        interfaces |= model::InterfaceMask::CORE | model::InterfaceMask::IR;
     }
     if c.aim_mode != wiiland_core::AimMode::Off {
-        f |= match c.aim_source {
-            wiiland_core::AimSource::Ir => abi::XWII_IFACE_IR,
-            wiiland_core::AimSource::MotionPlus => abi::XWII_IFACE_MOTION_PLUS,
-            wiiland_core::AimSource::Accelerometer => abi::XWII_IFACE_ACCEL,
+        interfaces |= match c.aim_source {
+            wiiland_core::AimSource::Ir => model::InterfaceMask::IR,
+            wiiland_core::AimSource::MotionPlus => model::InterfaceMask::MOTION_PLUS,
+            wiiland_core::AimSource::Accelerometer => model::InterfaceMask::ACCEL,
             wiiland_core::AimSource::Auto => {
-                abi::XWII_IFACE_IR | abi::XWII_IFACE_MOTION_PLUS | abi::XWII_IFACE_ACCEL
+                model::InterfaceMask::IR
+                    | model::InterfaceMask::MOTION_PLUS
+                    | model::InterfaceMask::ACCEL
             }
         };
         if matches!(
             c.aim_activation,
             wiiland_core::AimActivation::Z | wiiland_core::AimActivation::C
         ) {
-            f |= abi::XWII_IFACE_NUNCHUK;
+            interfaces |= model::InterfaceMask::NUNCHUK;
         }
     }
-    f
+    interfaces
 }
-fn decode_key(event: &RawEvent) -> (u32, u32) {
-    (
-        u32::from_ne_bytes(event.payload[0..4].try_into().unwrap()),
-        u32::from_ne_bytes(event.payload[4..8].try_into().unwrap()),
-    )
-}
-fn decode_abs(event: &RawEvent) -> [Abs3; 8] {
-    let mut out = [Abs3 { x: 0, y: 0, z: 0 }; 8];
-    for (i, v) in out.iter_mut().enumerate() {
-        let o = i * 12;
-        v.x = i32::from_ne_bytes(event.payload[o..o + 4].try_into().unwrap());
-        v.y = i32::from_ne_bytes(event.payload[o + 4..o + 8].try_into().unwrap());
-        v.z = i32::from_ne_bytes(event.payload[o + 8..o + 12].try_into().unwrap());
+fn key_event(kind: EventKind) -> Option<Key> {
+    match kind {
+        EventKind::Key(key)
+        | EventKind::NunchukKey(key)
+        | EventKind::ClassicControllerKey(key)
+        | EventKind::ProControllerKey(key)
+        | EventKind::GuitarKey(key)
+        | EventKind::DrumsKey(key) => Some(key),
+        _ => None,
     }
-    out
+}
+
+fn axis_events(kind: &EventKind) -> &[Abs] {
+    match kind {
+        EventKind::Accel(value) | EventKind::MotionPlus(value) => std::slice::from_ref(value),
+        EventKind::Ir(values) | EventKind::BalanceBoard(values) => values,
+        EventKind::NunchukMove(values) | EventKind::ProControllerMove(values) => values,
+        EventKind::ClassicControllerMove(values) | EventKind::GuitarMove(values) => values,
+        EventKind::DrumsMove(values) => values,
+        _ => &[],
+    }
 }
 
 fn monotonic_time_us() -> i64 {
@@ -508,30 +520,34 @@ fn monotonic_time_us() -> i64 {
         .saturating_add(now.tv_nsec / 1_000)
 }
 
-fn format_trace_line(sequence: u64, monotonic_us: i64, syspath: &Path, event: &RawEvent) -> String {
-    let payload = if wiiland_core::is_key_event(event.kind) {
-        let (code, state) = decode_key(event);
-        TracePayload::Key(KeyPayload { code, state })
-    } else if wiiland_core::is_abs_event(event.kind) {
-        TracePayload::Axes(
-            decode_abs(event)
-                .into_iter()
-                .map(|value| AbsPayload {
-                    x: value.x,
-                    y: value.y,
-                    z: value.z,
-                })
-                .collect(),
-        )
+fn format_trace_line(sequence: u64, monotonic_us: i64, syspath: &Path, event: &Event) -> String {
+    let payload = if let Some(key) = key_event(event.kind) {
+        TracePayload::Key(KeyPayload {
+            code: key.code,
+            state: key.state,
+        })
     } else {
-        TracePayload::None
+        let axes = axis_events(&event.kind);
+        if axes.is_empty() {
+            TracePayload::None
+        } else {
+            TracePayload::Axes(
+                axes.iter()
+                    .map(|value| AbsPayload {
+                        x: value.x,
+                        y: value.y,
+                        z: value.z,
+                    })
+                    .collect(),
+            )
+        }
     };
 
     let mut line = TraceEvent::new(
         sequence,
         Some(monotonic_us),
         syspath.to_string_lossy(),
-        event.kind,
+        event.kind.raw_type(),
         payload,
     )
     .format_line();
@@ -625,9 +641,9 @@ mod tests {
                 aim_activation: activation,
                 ..Config::default()
             };
-            assert_ne!(
-                requested_interfaces(config.profile, &config) & abi::XWII_IFACE_NUNCHUK,
-                0
+            assert!(
+                requested_interfaces(config.profile, &config)
+                    .contains(model::InterfaceMask::NUNCHUK)
             );
         }
 
@@ -638,9 +654,8 @@ mod tests {
             aim_activation: AimActivation::B,
             ..Config::default()
         };
-        assert_eq!(
-            requested_interfaces(config.profile, &config) & abi::XWII_IFACE_NUNCHUK,
-            0
+        assert!(
+            !requested_interfaces(config.profile, &config).contains(model::InterfaceMask::NUNCHUK)
         );
     }
 
@@ -668,15 +683,16 @@ mod tests {
 
     #[test]
     fn trace_lines_use_emission_time_and_include_name_type_and_key_payload() {
-        let mut event = RawEvent {
+        let event = Event {
             time: libc::timeval {
                 tv_sec: 99,
                 tv_usec: 999,
             },
-            kind: abi::XWII_EVENT_NUNCHUK_KEY,
-            ..RawEvent::default()
+            kind: EventKind::NunchukKey(Key {
+                code: model::BUTTON_Z,
+                state: 1,
+            }),
         };
-        event.key(abi::XWII_KEY_Z, 1);
 
         assert_eq!(
             format_trace_line(7, 12_000_034, Path::new("/sys/wii0"), &event),
@@ -686,18 +702,22 @@ mod tests {
 
     #[test]
     fn trace_lines_include_all_eight_absolute_payloads() {
-        let mut event = RawEvent {
-            kind: abi::XWII_EVENT_IR,
-            ..RawEvent::default()
+        let event = Event {
+            time: libc::timeval {
+                tv_sec: 0,
+                tv_usec: 0,
+            },
+            kind: EventKind::DrumsMove(std::array::from_fn(|i| Abs {
+                x: i as i32,
+                y: -(i as i32),
+                z: (i * 10) as i32,
+            })),
         };
-        for i in 0..8 {
-            event.abs(i, i as i32, -(i as i32), (i * 10) as i32);
-        }
 
         assert_eq!(
             format_trace_line(8, 1_000_002, Path::new("/sys/wii1"), &event),
             concat!(
-                "time=1.000002 seq=8 /sys/wii1 ir type=2",
+                "time=1.000002 seq=8 /sys/wii1 drums-move type=13",
                 " abs0=0,0,0 abs1=1,-1,10 abs2=2,-2,20 abs3=3,-3,30",
                 " abs4=4,-4,40 abs5=5,-5,50 abs6=6,-6,60 abs7=7,-7,70"
             )
@@ -734,13 +754,19 @@ mod tests {
                 move |line| lines.borrow_mut().push(line.to_owned())
             },
         );
-        let watch = RawEvent {
-            kind: abi::XWII_EVENT_WATCH,
-            ..RawEvent::default()
+        let watch = Event {
+            time: libc::timeval {
+                tv_sec: 0,
+                tv_usec: 0,
+            },
+            kind: EventKind::Watch,
         };
-        let gone = RawEvent {
-            kind: abi::XWII_EVENT_GONE,
-            ..RawEvent::default()
+        let gone = Event {
+            time: libc::timeval {
+                tv_sec: 0,
+                tv_usec: 0,
+            },
+            kind: EventKind::Gone,
         };
 
         now.set(41_000_007);

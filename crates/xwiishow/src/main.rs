@@ -13,8 +13,7 @@ use crossterm::execute;
 use crossterm::terminal::{self, EnterAlternateScreen, LeaveAlternateScreen};
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
-use xwiimote::device::Interface;
-use xwiimote::monitor::Monitor;
+use wiiland_hid::{Interface, Monitor};
 
 use app::{Action, App, Selector, parse_selector, poll_interface};
 

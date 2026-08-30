@@ -16,9 +16,6 @@ pub struct LogicalDirs {
     pub prefix: PathBuf,
     pub exec_prefix: PathBuf,
     pub bindir: PathBuf,
-    pub sbindir: PathBuf,
-    pub libdir: PathBuf,
-    pub includedir: PathBuf,
     pub datadir: PathBuf,
     pub sysconfdir: PathBuf,
     pub docdir: PathBuf,
@@ -30,9 +27,6 @@ pub struct LogicalDirOverrides {
     pub prefix: Option<PathBuf>,
     pub exec_prefix: Option<PathBuf>,
     pub bindir: Option<PathBuf>,
-    pub sbindir: Option<PathBuf>,
-    pub libdir: Option<PathBuf>,
-    pub includedir: Option<PathBuf>,
     pub datadir: Option<PathBuf>,
     pub sysconfdir: Option<PathBuf>,
     pub docdir: Option<PathBuf>,
@@ -47,9 +41,6 @@ impl LogicalDirOverrides {
         let datadir = self.datadir.unwrap_or_else(|| prefix.join("share"));
         LogicalDirs {
             bindir: self.bindir.unwrap_or_else(|| exec_prefix.join("bin")),
-            sbindir: self.sbindir.unwrap_or_else(|| exec_prefix.join("sbin")),
-            libdir: self.libdir.unwrap_or_else(|| exec_prefix.join("lib")),
-            includedir: self.includedir.unwrap_or_else(|| prefix.join("include")),
             sysconfdir: self.sysconfdir.unwrap_or(defaults.sysconfdir),
             docdir: self.docdir.unwrap_or_else(|| datadir.join("doc/wiiland")),
             mandir: self.mandir.unwrap_or_else(|| datadir.join("man")),
@@ -66,9 +57,6 @@ impl Default for LogicalDirs {
         let exec_prefix = prefix.clone();
         Self {
             bindir: exec_prefix.join("bin"),
-            sbindir: exec_prefix.join("sbin"),
-            libdir: exec_prefix.join("lib"),
-            includedir: prefix.join("include"),
             datadir: prefix.join("share"),
             sysconfdir: PathBuf::from("/etc"),
             docdir: prefix.join("share/doc/wiiland"),
@@ -85,9 +73,6 @@ impl LogicalDirs {
             ("prefix", &self.prefix),
             ("exec_prefix", &self.exec_prefix),
             ("bindir", &self.bindir),
-            ("sbindir", &self.sbindir),
-            ("libdir", &self.libdir),
-            ("includedir", &self.includedir),
             ("datadir", &self.datadir),
             ("sysconfdir", &self.sysconfdir),
             ("docdir", &self.docdir),
@@ -187,8 +172,6 @@ pub enum ItemSource {
     Root(PathBuf),
     Built(PathBuf),
     GeneratedService,
-    GeneratedPkgConfig,
-    Symlink(&'static str),
 }
 
 #[derive(Clone, Debug)]
@@ -277,36 +260,6 @@ impl Manifest {
         }
 
         items.push(Item {
-            source: built("libxwiimote.so"),
-            destination: self.dirs.libdir.join("libxwiimote.so.2.0.0"),
-            mode: 0o755,
-        });
-        items.push(Item {
-            source: ItemSource::Symlink("libxwiimote.so.2.0.0"),
-            destination: self.dirs.libdir.join("libxwiimote.so.2"),
-            mode: 0o777,
-        });
-        items.push(Item {
-            source: ItemSource::Symlink("libxwiimote.so.2"),
-            destination: self.dirs.libdir.join("libxwiimote.so"),
-            mode: 0o777,
-        });
-        items.push(Item {
-            source: built("libxwiimote.a"),
-            destination: self.dirs.libdir.join("libxwiimote.a"),
-            mode: 0o644,
-        });
-        items.push(Item {
-            source: root("lib/xwiimote.h"),
-            destination: self.dirs.includedir.join("xwiimote.h"),
-            mode: 0o644,
-        });
-        items.push(Item {
-            source: ItemSource::GeneratedPkgConfig,
-            destination: self.dirs.libdir.join("pkgconfig/libxwiimote.pc"),
-            mode: 0o644,
-        });
-        items.push(Item {
             source: root("res/wiilandd.conf"),
             destination: self.dirs.sysconfdir.join("wiiland/wiilandd.conf"),
             mode: 0o644,
@@ -317,11 +270,7 @@ impl Manifest {
             mode: 0o644,
         });
 
-        for (name, section) in [
-            ("wiiland.7", "7"),
-            ("libxwiimote.7", "7"),
-            ("wiilandd.1", "1"),
-        ] {
+        for (name, section) in [("wiiland.7", "7"), ("wiilandd.1", "1")] {
             items.push(Item {
                 source: root(&format!("doc/{name}")),
                 destination: self.dirs.mandir.join(format!("man{section}/{name}")),

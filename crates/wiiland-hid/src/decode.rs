@@ -4,11 +4,11 @@
 //! [`InputEvent`] values and, after a SYN_DROPPED, the current key/absolute
 //! state to [`RecoveryState`].
 
-use crate::abi::*;
+use crate::model::*;
 use libc::timeval;
 
-pub type Abs = CEventAbs;
-pub type Key = CEventKey;
+pub type Abs = Axis3;
+pub type Key = ButtonEvent;
 
 /// Typed event discriminant with an explicit future-value case.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -36,45 +36,45 @@ pub enum EventType {
 impl EventType {
     pub const fn from_raw(value: u32) -> Self {
         match value {
-            XWII_EVENT_KEY => Self::Key,
-            XWII_EVENT_ACCEL => Self::Accel,
-            XWII_EVENT_IR => Self::Ir,
-            XWII_EVENT_BALANCE_BOARD => Self::BalanceBoard,
-            XWII_EVENT_MOTION_PLUS => Self::MotionPlus,
-            XWII_EVENT_PRO_CONTROLLER_KEY => Self::ProControllerKey,
-            XWII_EVENT_PRO_CONTROLLER_MOVE => Self::ProControllerMove,
-            XWII_EVENT_WATCH => Self::Watch,
-            XWII_EVENT_CLASSIC_CONTROLLER_KEY => Self::ClassicControllerKey,
-            XWII_EVENT_CLASSIC_CONTROLLER_MOVE => Self::ClassicControllerMove,
-            XWII_EVENT_NUNCHUK_KEY => Self::NunchukKey,
-            XWII_EVENT_NUNCHUK_MOVE => Self::NunchukMove,
-            XWII_EVENT_DRUMS_KEY => Self::DrumsKey,
-            XWII_EVENT_DRUMS_MOVE => Self::DrumsMove,
-            XWII_EVENT_GUITAR_KEY => Self::GuitarKey,
-            XWII_EVENT_GUITAR_MOVE => Self::GuitarMove,
-            XWII_EVENT_GONE => Self::Gone,
+            EVENT_CODE_KEY => Self::Key,
+            EVENT_CODE_ACCEL => Self::Accel,
+            EVENT_CODE_IR => Self::Ir,
+            EVENT_CODE_BALANCE_BOARD => Self::BalanceBoard,
+            EVENT_CODE_MOTION_PLUS => Self::MotionPlus,
+            EVENT_CODE_PRO_CONTROLLER_KEY => Self::ProControllerKey,
+            EVENT_CODE_PRO_CONTROLLER_MOVE => Self::ProControllerMove,
+            EVENT_CODE_WATCH => Self::Watch,
+            EVENT_CODE_CLASSIC_CONTROLLER_KEY => Self::ClassicControllerKey,
+            EVENT_CODE_CLASSIC_CONTROLLER_MOVE => Self::ClassicControllerMove,
+            EVENT_CODE_NUNCHUK_KEY => Self::NunchukKey,
+            EVENT_CODE_NUNCHUK_MOVE => Self::NunchukMove,
+            EVENT_CODE_DRUMS_KEY => Self::DrumsKey,
+            EVENT_CODE_DRUMS_MOVE => Self::DrumsMove,
+            EVENT_CODE_GUITAR_KEY => Self::GuitarKey,
+            EVENT_CODE_GUITAR_MOVE => Self::GuitarMove,
+            EVENT_CODE_GONE => Self::Gone,
             other => Self::Unknown(other),
         }
     }
     pub const fn raw(self) -> u32 {
         match self {
-            Self::Key => XWII_EVENT_KEY,
-            Self::Accel => XWII_EVENT_ACCEL,
-            Self::Ir => XWII_EVENT_IR,
-            Self::BalanceBoard => XWII_EVENT_BALANCE_BOARD,
-            Self::MotionPlus => XWII_EVENT_MOTION_PLUS,
-            Self::ProControllerKey => XWII_EVENT_PRO_CONTROLLER_KEY,
-            Self::ProControllerMove => XWII_EVENT_PRO_CONTROLLER_MOVE,
-            Self::Watch => XWII_EVENT_WATCH,
-            Self::ClassicControllerKey => XWII_EVENT_CLASSIC_CONTROLLER_KEY,
-            Self::ClassicControllerMove => XWII_EVENT_CLASSIC_CONTROLLER_MOVE,
-            Self::NunchukKey => XWII_EVENT_NUNCHUK_KEY,
-            Self::NunchukMove => XWII_EVENT_NUNCHUK_MOVE,
-            Self::DrumsKey => XWII_EVENT_DRUMS_KEY,
-            Self::DrumsMove => XWII_EVENT_DRUMS_MOVE,
-            Self::GuitarKey => XWII_EVENT_GUITAR_KEY,
-            Self::GuitarMove => XWII_EVENT_GUITAR_MOVE,
-            Self::Gone => XWII_EVENT_GONE,
+            Self::Key => EVENT_CODE_KEY,
+            Self::Accel => EVENT_CODE_ACCEL,
+            Self::Ir => EVENT_CODE_IR,
+            Self::BalanceBoard => EVENT_CODE_BALANCE_BOARD,
+            Self::MotionPlus => EVENT_CODE_MOTION_PLUS,
+            Self::ProControllerKey => EVENT_CODE_PRO_CONTROLLER_KEY,
+            Self::ProControllerMove => EVENT_CODE_PRO_CONTROLLER_MOVE,
+            Self::Watch => EVENT_CODE_WATCH,
+            Self::ClassicControllerKey => EVENT_CODE_CLASSIC_CONTROLLER_KEY,
+            Self::ClassicControllerMove => EVENT_CODE_CLASSIC_CONTROLLER_MOVE,
+            Self::NunchukKey => EVENT_CODE_NUNCHUK_KEY,
+            Self::NunchukMove => EVENT_CODE_NUNCHUK_MOVE,
+            Self::DrumsKey => EVENT_CODE_DRUMS_KEY,
+            Self::DrumsMove => EVENT_CODE_DRUMS_MOVE,
+            Self::GuitarKey => EVENT_CODE_GUITAR_KEY,
+            Self::GuitarMove => EVENT_CODE_GUITAR_MOVE,
+            Self::Gone => EVENT_CODE_GONE,
             Self::Unknown(v) => v,
         }
     }
@@ -111,7 +111,7 @@ pub enum EventKind {
     NunchukKey(Key),
     NunchukMove([Abs; 2]),
     DrumsKey(Key),
-    DrumsMove([Abs; XWII_DRUMS_ABS_NUM]),
+    DrumsMove([Abs; DRUM_SLOT_COUNT]),
     GuitarKey(Key),
     GuitarMove([Abs; 3]),
     Gone,
@@ -121,23 +121,23 @@ pub enum EventKind {
 impl EventKind {
     pub const fn raw_type(self) -> u32 {
         match self {
-            Self::Key(_) => XWII_EVENT_KEY,
-            Self::Accel(_) => XWII_EVENT_ACCEL,
-            Self::Ir(_) => XWII_EVENT_IR,
-            Self::BalanceBoard(_) => XWII_EVENT_BALANCE_BOARD,
-            Self::MotionPlus(_) => XWII_EVENT_MOTION_PLUS,
-            Self::ProControllerKey(_) => XWII_EVENT_PRO_CONTROLLER_KEY,
-            Self::ProControllerMove(_) => XWII_EVENT_PRO_CONTROLLER_MOVE,
-            Self::Watch => XWII_EVENT_WATCH,
-            Self::ClassicControllerKey(_) => XWII_EVENT_CLASSIC_CONTROLLER_KEY,
-            Self::ClassicControllerMove(_) => XWII_EVENT_CLASSIC_CONTROLLER_MOVE,
-            Self::NunchukKey(_) => XWII_EVENT_NUNCHUK_KEY,
-            Self::NunchukMove(_) => XWII_EVENT_NUNCHUK_MOVE,
-            Self::DrumsKey(_) => XWII_EVENT_DRUMS_KEY,
-            Self::DrumsMove(_) => XWII_EVENT_DRUMS_MOVE,
-            Self::GuitarKey(_) => XWII_EVENT_GUITAR_KEY,
-            Self::GuitarMove(_) => XWII_EVENT_GUITAR_MOVE,
-            Self::Gone => XWII_EVENT_GONE,
+            Self::Key(_) => EVENT_CODE_KEY,
+            Self::Accel(_) => EVENT_CODE_ACCEL,
+            Self::Ir(_) => EVENT_CODE_IR,
+            Self::BalanceBoard(_) => EVENT_CODE_BALANCE_BOARD,
+            Self::MotionPlus(_) => EVENT_CODE_MOTION_PLUS,
+            Self::ProControllerKey(_) => EVENT_CODE_PRO_CONTROLLER_KEY,
+            Self::ProControllerMove(_) => EVENT_CODE_PRO_CONTROLLER_MOVE,
+            Self::Watch => EVENT_CODE_WATCH,
+            Self::ClassicControllerKey(_) => EVENT_CODE_CLASSIC_CONTROLLER_KEY,
+            Self::ClassicControllerMove(_) => EVENT_CODE_CLASSIC_CONTROLLER_MOVE,
+            Self::NunchukKey(_) => EVENT_CODE_NUNCHUK_KEY,
+            Self::NunchukMove(_) => EVENT_CODE_NUNCHUK_MOVE,
+            Self::DrumsKey(_) => EVENT_CODE_DRUMS_KEY,
+            Self::DrumsMove(_) => EVENT_CODE_DRUMS_MOVE,
+            Self::GuitarKey(_) => EVENT_CODE_GUITAR_KEY,
+            Self::GuitarMove(_) => EVENT_CODE_GUITAR_MOVE,
+            Self::Gone => EVENT_CODE_GONE,
             Self::Unknown(v) => v,
         }
     }
@@ -215,7 +215,7 @@ fn normalize_axis(value: i32, offset: &mut i32, factor: i32) -> i32 {
 
 const KEY_WORDS: usize = 12; // KEY_MAX is 0x2ff on Linux (768 bits).
 
-/// State needed to reproduce libxwiimote's SYN_DROPPED recovery ordering.
+/// State needed to preserve deterministic `SYN_DROPPED` recovery ordering.
 #[derive(Clone, Debug)]
 pub struct RecoveryState {
     key_state: [u64; KEY_WORDS],
@@ -341,7 +341,7 @@ pub struct CacheState {
     pub classic: [Abs; 3],
     pub balance_board: [Abs; 4],
     pub pro: [Abs; 2],
-    pub drums: [Abs; XWII_DRUMS_ABS_NUM],
+    pub drums: [Abs; DRUM_SLOT_COUNT],
     pub guitar: [Abs; 3],
 }
 impl Default for CacheState {
@@ -359,7 +359,7 @@ impl Default for CacheState {
             classic: [Abs::default(); 3],
             balance_board: [Abs::default(); 4],
             pro: [Abs::default(); 2],
-            drums: [Abs::default(); XWII_DRUMS_ABS_NUM],
+            drums: [Abs::default(); DRUM_SLOT_COUNT],
             guitar: [Abs::default(); 3],
         }
     }
@@ -491,7 +491,7 @@ impl Decoder {
         })
     }
     /// Update one cached axis and report whether the code belongs to this
-    /// interface. Unknown ABS codes are ignored exactly like libxwiimote.
+    /// interface. Unknown ABS codes from the kernel are ignored.
     pub fn update_abs_cache(&mut self, code: u16, value: i32) -> bool {
         if !known_abs(self.interface, code) {
             return false;
@@ -615,87 +615,87 @@ fn known_abs(interface: InterfaceKind, code: u16) -> bool {
 
 pub fn map_core_key(c: u16) -> Option<u32> {
     Some(match c {
-        KEY_LEFT => XWII_KEY_LEFT,
-        KEY_RIGHT => XWII_KEY_RIGHT,
-        KEY_UP => XWII_KEY_UP,
-        KEY_DOWN => XWII_KEY_DOWN,
-        KEY_NEXT => XWII_KEY_PLUS,
-        KEY_PREVIOUS => XWII_KEY_MINUS,
-        BTN_1 => XWII_KEY_ONE,
-        BTN_2 => XWII_KEY_TWO,
-        BTN_A => XWII_KEY_A,
-        BTN_B => XWII_KEY_B,
-        BTN_MODE => XWII_KEY_HOME,
+        KEY_LEFT => BUTTON_LEFT,
+        KEY_RIGHT => BUTTON_RIGHT,
+        KEY_UP => BUTTON_UP,
+        KEY_DOWN => BUTTON_DOWN,
+        KEY_NEXT => BUTTON_PLUS,
+        KEY_PREVIOUS => BUTTON_MINUS,
+        BTN_1 => BUTTON_ONE,
+        BTN_2 => BUTTON_TWO,
+        BTN_A => BUTTON_A,
+        BTN_B => BUTTON_B,
+        BTN_MODE => BUTTON_HOME,
         _ => return None,
     })
 }
 pub fn map_nunchuk_key(c: u16) -> Option<u32> {
     Some(match c {
-        BTN_C => XWII_KEY_C,
-        BTN_Z => XWII_KEY_Z,
+        BTN_C => BUTTON_C,
+        BTN_Z => BUTTON_Z,
         _ => return None,
     })
 }
 pub fn map_classic_key(c: u16) -> Option<u32> {
     Some(match c {
-        BTN_A => XWII_KEY_A,
-        BTN_B => XWII_KEY_B,
-        BTN_X => XWII_KEY_X,
-        BTN_Y => XWII_KEY_Y,
-        KEY_NEXT => XWII_KEY_PLUS,
-        KEY_PREVIOUS => XWII_KEY_MINUS,
-        BTN_MODE => XWII_KEY_HOME,
-        KEY_LEFT => XWII_KEY_LEFT,
-        KEY_RIGHT => XWII_KEY_RIGHT,
-        KEY_UP => XWII_KEY_UP,
-        KEY_DOWN => XWII_KEY_DOWN,
-        BTN_TL => XWII_KEY_TL,
-        BTN_TR => XWII_KEY_TR,
-        BTN_TL2 => XWII_KEY_ZL,
-        BTN_TR2 => XWII_KEY_ZR,
+        BTN_A => BUTTON_A,
+        BTN_B => BUTTON_B,
+        BTN_X => BUTTON_X,
+        BTN_Y => BUTTON_Y,
+        KEY_NEXT => BUTTON_PLUS,
+        KEY_PREVIOUS => BUTTON_MINUS,
+        BTN_MODE => BUTTON_HOME,
+        KEY_LEFT => BUTTON_LEFT,
+        KEY_RIGHT => BUTTON_RIGHT,
+        KEY_UP => BUTTON_UP,
+        KEY_DOWN => BUTTON_DOWN,
+        BTN_TL => BUTTON_TL,
+        BTN_TR => BUTTON_TR,
+        BTN_TL2 => BUTTON_ZL,
+        BTN_TR2 => BUTTON_ZR,
         _ => return None,
     })
 }
 pub fn map_pro_key(c: u16) -> Option<u32> {
     Some(match c {
-        BTN_EAST => XWII_KEY_A,
-        BTN_SOUTH => XWII_KEY_B,
-        BTN_NORTH => XWII_KEY_X,
-        BTN_WEST => XWII_KEY_Y,
-        BTN_START => XWII_KEY_PLUS,
-        BTN_SELECT => XWII_KEY_MINUS,
-        BTN_MODE => XWII_KEY_HOME,
-        BTN_DPAD_LEFT => XWII_KEY_LEFT,
-        BTN_DPAD_RIGHT => XWII_KEY_RIGHT,
-        BTN_DPAD_UP => XWII_KEY_UP,
-        BTN_DPAD_DOWN => XWII_KEY_DOWN,
-        BTN_TL => XWII_KEY_TL,
-        BTN_TR => XWII_KEY_TR,
-        BTN_TL2 => XWII_KEY_ZL,
-        BTN_TR2 => XWII_KEY_ZR,
-        BTN_THUMBL => XWII_KEY_THUMBL,
-        BTN_THUMBR => XWII_KEY_THUMBR,
+        BTN_EAST => BUTTON_A,
+        BTN_SOUTH => BUTTON_B,
+        BTN_NORTH => BUTTON_X,
+        BTN_WEST => BUTTON_Y,
+        BTN_START => BUTTON_PLUS,
+        BTN_SELECT => BUTTON_MINUS,
+        BTN_MODE => BUTTON_HOME,
+        BTN_DPAD_LEFT => BUTTON_LEFT,
+        BTN_DPAD_RIGHT => BUTTON_RIGHT,
+        BTN_DPAD_UP => BUTTON_UP,
+        BTN_DPAD_DOWN => BUTTON_DOWN,
+        BTN_TL => BUTTON_TL,
+        BTN_TR => BUTTON_TR,
+        BTN_TL2 => BUTTON_ZL,
+        BTN_TR2 => BUTTON_ZR,
+        BTN_THUMBL => BUTTON_THUMBL,
+        BTN_THUMBR => BUTTON_THUMBR,
         _ => return None,
     })
 }
 pub fn map_drums_key(c: u16) -> Option<u32> {
     Some(match c {
-        BTN_START => XWII_KEY_PLUS,
-        BTN_SELECT => XWII_KEY_MINUS,
+        BTN_START => BUTTON_PLUS,
+        BTN_SELECT => BUTTON_MINUS,
         _ => return None,
     })
 }
 pub fn map_guitar_key(c: u16) -> Option<u32> {
     Some(match c {
-        BTN_1 => XWII_KEY_FRET_FAR_UP,
-        BTN_2 => XWII_KEY_FRET_UP,
-        BTN_3 => XWII_KEY_FRET_MID,
-        BTN_4 => XWII_KEY_FRET_LOW,
-        BTN_5 => XWII_KEY_FRET_FAR_LOW,
-        BTN_DPAD_UP => XWII_KEY_STRUM_BAR_UP,
-        BTN_DPAD_DOWN => XWII_KEY_STRUM_BAR_DOWN,
-        BTN_START => XWII_KEY_PLUS,
-        BTN_SELECT => XWII_KEY_MINUS,
+        BTN_1 => BUTTON_FRET_FAR_UP,
+        BTN_2 => BUTTON_FRET_UP,
+        BTN_3 => BUTTON_FRET_MID,
+        BTN_4 => BUTTON_FRET_LOW,
+        BTN_5 => BUTTON_FRET_FAR_LOW,
+        BTN_DPAD_UP => BUTTON_STRUM_BAR_UP,
+        BTN_DPAD_DOWN => BUTTON_STRUM_BAR_DOWN,
+        BTN_START => BUTTON_PLUS,
+        BTN_SELECT => BUTTON_MINUS,
         _ => return None,
     })
 }

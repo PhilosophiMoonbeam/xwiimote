@@ -1,7 +1,6 @@
 mod dist;
 mod install;
 mod manifest;
-mod shared_object;
 
 use install::{InstallOptions, install, uninstall};
 use manifest::{Features, LogicalDirOverrides, LogicalDirs, Manifest, OptionalDir};
@@ -43,7 +42,7 @@ enum Command {
 fn usage() -> &'static str {
     "usage: cargo xtask <build|check|install|uninstall|docs|dist|verify-dist> [options]\n\n\
 build options: --features gui,tui,integrations --all-features --release\n\
-install options: --destdir PATH --prefix PATH --exec-prefix PATH --bindir PATH --sbindir PATH\n  --libdir PATH --includedir PATH --datadir PATH --sysconfdir PATH --docdir PATH --mandir PATH\n  --with-udev-rules-dir auto|no|PATH --with-systemd-user-unit-dir auto|no|PATH\n  --with-xorg-conf-dir auto|no|PATH --features gui,tui,integrations --debug\n"
+install options: --destdir PATH --prefix PATH --exec-prefix PATH --bindir PATH\n  --datadir PATH --sysconfdir PATH --docdir PATH --mandir PATH\n  --with-udev-rules-dir auto|no|PATH --with-systemd-user-unit-dir auto|no|PATH\n  --with-xorg-conf-dir auto|no|PATH --features gui,tui,integrations --debug\n"
 }
 
 fn parse_features(value: &str) -> io::Result<Features> {
@@ -142,18 +141,6 @@ fn parse(args: &[String]) -> io::Result<Command> {
                         dir_overrides.bindir =
                             Some(PathBuf::from(take_value(args, &mut i, "--bindir")?))
                     }
-                    "--sbindir" => {
-                        dir_overrides.sbindir =
-                            Some(PathBuf::from(take_value(args, &mut i, "--sbindir")?))
-                    }
-                    "--libdir" => {
-                        dir_overrides.libdir =
-                            Some(PathBuf::from(take_value(args, &mut i, "--libdir")?))
-                    }
-                    "--includedir" => {
-                        dir_overrides.includedir =
-                            Some(PathBuf::from(take_value(args, &mut i, "--includedir")?))
-                    }
                     "--datadir" => {
                         dir_overrides.datadir =
                             Some(PathBuf::from(take_value(args, &mut i, "--datadir")?))
@@ -229,18 +216,6 @@ fn parse(args: &[String]) -> io::Result<Command> {
                         dir_overrides.bindir =
                             Some(PathBuf::from(take_value(args, &mut i, "--bindir")?))
                     }
-                    "--sbindir" => {
-                        dir_overrides.sbindir =
-                            Some(PathBuf::from(take_value(args, &mut i, "--sbindir")?))
-                    }
-                    "--libdir" => {
-                        dir_overrides.libdir =
-                            Some(PathBuf::from(take_value(args, &mut i, "--libdir")?))
-                    }
-                    "--includedir" => {
-                        dir_overrides.includedir =
-                            Some(PathBuf::from(take_value(args, &mut i, "--includedir")?))
-                    }
                     "--datadir" => {
                         dir_overrides.datadir =
                             Some(PathBuf::from(take_value(args, &mut i, "--datadir")?))
@@ -308,7 +283,7 @@ fn root() -> PathBuf {
         .to_path_buf()
 }
 
-const BASE_BUILD_PACKAGES: [&str; 3] = ["xwiimote", "wiilandd", "xwiidump"];
+const BASE_BUILD_PACKAGES: [&str; 3] = ["wiiland-hid", "wiilandd", "xwiidump"];
 
 fn build_packages(features: Features) -> Vec<&'static str> {
     let mut packages = BASE_BUILD_PACKAGES.to_vec();
@@ -355,13 +330,7 @@ fn run_cargo(command: &str, release: bool) -> io::Result<()> {
 fn main_result() -> io::Result<()> {
     let command = parse(&env::args().skip(1).collect::<Vec<_>>())?;
     match command {
-        Command::Build { release, features } => {
-            let root = root();
-            let profile = if release { "release" } else { "debug" };
-            shared_object::invalidate(&root, profile)?;
-            run_build(release, features)?;
-            shared_object::link(&root, profile)
-        }
+        Command::Build { release, features } => run_build(release, features),
         Command::Check { all_features } => {
             let mut process = ProcessCommand::new("cargo");
             process
@@ -457,27 +426,6 @@ mod tests {
     #[test]
     fn logical_directory_overrides_are_independent_of_argument_order() {
         for command in ["install", "uninstall"] {
-            let libdir_before_prefix = parsed_dirs(&[
-                command,
-                "--libdir",
-                "/srv/lib64",
-                "--prefix",
-                "/opt/wiiland",
-            ]);
-            let prefix_before_libdir = parsed_dirs(&[
-                command,
-                "--prefix",
-                "/opt/wiiland",
-                "--libdir",
-                "/srv/lib64",
-            ]);
-            assert_eq!(libdir_before_prefix, prefix_before_libdir);
-            assert_eq!(libdir_before_prefix.libdir, Path::new("/srv/lib64"));
-            assert_eq!(
-                libdir_before_prefix.includedir,
-                Path::new("/opt/wiiland/include")
-            );
-
             let prefix_before_exec = parsed_dirs(&[
                 command,
                 "--prefix",
@@ -497,14 +445,6 @@ mod tests {
                 prefix_before_exec.bindir,
                 Path::new("/opt/wiiland/host/bin")
             );
-            assert_eq!(
-                prefix_before_exec.sbindir,
-                Path::new("/opt/wiiland/host/sbin")
-            );
-            assert_eq!(
-                prefix_before_exec.libdir,
-                Path::new("/opt/wiiland/host/lib")
-            );
             assert_eq!(prefix_before_exec.datadir, Path::new("/opt/wiiland/share"));
             assert_eq!(prefix_before_exec.sysconfdir, Path::new("/etc"));
         }
@@ -519,7 +459,7 @@ mod tests {
 
         assert_eq!(
             build_packages(features),
-            vec!["xwiimote", "wiilandd", "xwiidump", "wiiland-config"]
+            vec!["wiiland-hid", "wiilandd", "xwiidump", "wiiland-config"]
         );
         assert_eq!(
             build_packages(Features {
@@ -540,7 +480,7 @@ mod tests {
         assert_eq!(
             build_packages(features),
             vec![
-                "xwiimote",
+                "wiiland-hid",
                 "wiilandd",
                 "xwiidump",
                 "wiiland-config",

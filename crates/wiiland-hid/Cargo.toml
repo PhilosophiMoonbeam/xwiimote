@@ -1,0 +1,12 @@
+[package]
+name = "wiiland-hid"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "Native Rust support for Wii controllers exposed by Linux hid-wiimote"
+
+[lib]
+name = "wiiland_hid"
+
+[dependencies]
+libc.workspace = true

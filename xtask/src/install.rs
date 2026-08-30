@@ -2,7 +2,7 @@ use crate::manifest::{Item, ItemSource, Manifest};
 use std::collections::BTreeSet;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
-use std::os::unix::fs::{PermissionsExt, symlink};
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process;
 
@@ -65,7 +65,6 @@ fn hash_bytes(bytes: &[u8]) -> u64 {
 fn source_bytes(item: &Item, manifest: &Manifest) -> io::Result<Vec<u8>> {
     match &item.source {
         ItemSource::Root(path) | ItemSource::Built(path) => fs::read(path),
-        ItemSource::GeneratedPkgConfig => Ok(format!("prefix={}\nexec_prefix={}\nlibdir={}\nincludedir={}\n\nName: libxwiimote\nDescription: WiiLand compatibility library to control Nintendo Wii Remotes\nRequires.private: libudev\nVersion: 2.0.0\nLibs: -L${{libdir}} -lxwiimote\nLibs.private: -ldl -lpthread -lm\nCflags: -I${{includedir}}\n", manifest.dirs.prefix.display(), manifest.dirs.exec_prefix.display(), manifest.dirs.libdir.display(), manifest.dirs.includedir.display()).into_bytes()),
         ItemSource::GeneratedService => Ok(format!(
             "[Unit]\n\
              Description=WiiLand input bridge\n\
@@ -91,7 +90,6 @@ fn source_bytes(item: &Item, manifest: &Manifest) -> io::Result<Vec<u8>> {
             manifest.dirs.bindir.display()
         )
         .into_bytes()),
-        ItemSource::Symlink(_) => Err(io::Error::other("symlink has no file bytes")),
     }
 }
 
@@ -164,20 +162,11 @@ fn read_records(marker: &Path) -> io::Result<Option<Vec<OwnershipRecord>>> {
 }
 
 fn record_matches(target: &Path, expected: &str) -> bool {
-    let metadata = match fs::symlink_metadata(target) {
-        Ok(metadata) => metadata,
-        Err(_) => return false,
-    };
-    if let Some(link) = expected.strip_prefix("link:") {
-        metadata.file_type().is_symlink()
-            && fs::read_link(target).ok().as_deref() == Some(Path::new(link))
-    } else if metadata.file_type().is_file() {
-        fs::read(target)
-            .map(|bytes| format!("{:016x}", hash_bytes(&bytes)) == expected)
-            .unwrap_or(false)
-    } else {
-        false
-    }
+    fs::symlink_metadata(target)
+        .ok()
+        .filter(|metadata| metadata.file_type().is_file())
+        .and_then(|_| fs::read(target).ok())
+        .is_some_and(|bytes| format!("{:016x}", hash_bytes(&bytes)) == expected)
 }
 
 fn install_items(manifest: &Manifest, options: &InstallOptions, items: &[Item]) -> io::Result<()> {
@@ -203,18 +192,9 @@ fn install_items(manifest: &Manifest, options: &InstallOptions, items: &[Item]) 
     for item in items {
         ensure_parent_dirs(&options.destdir, &item.destination, &mut owned_dirs)?;
         let target = staged(&options.destdir, &item.destination);
-        let expected = match &item.source {
-            ItemSource::Symlink(link) => {
-                let _ = fs::remove_file(&target);
-                symlink(link, &target)?;
-                format!("link:{link}")
-            }
-            _ => {
-                let bytes = source_bytes(item, manifest)?;
-                atomic_write(&target, &bytes, item.mode)?;
-                format!("{:016x}", hash_bytes(&bytes))
-            }
-        };
+        let bytes = source_bytes(item, manifest)?;
+        atomic_write(&target, &bytes, item.mode)?;
+        let expected = format!("{:016x}", hash_bytes(&bytes));
         records.push(format!("file\t{}\t{expected}", item.destination.display()));
     }
     for (logical, expected) in prior_files {
@@ -340,24 +320,16 @@ mod tests {
     }
 
     #[test]
-    fn generated_files_use_only_logical_paths() {
+    fn generated_service_uses_only_logical_paths() {
         let temp = TestDir::new("generated");
         let manifest = manifest(temp.path());
         let options = options(&temp.path().join("stage"));
         let service_destination = PathBuf::from("/opt/wiiland/lib/systemd/user/wiilandd.service");
-        let pkg_config_destination = PathBuf::from("/opt/wiiland/lib/pkgconfig/libxwiimote.pc");
-        let items = [
-            Item {
-                source: ItemSource::GeneratedService,
-                destination: service_destination.clone(),
-                mode: 0o644,
-            },
-            Item {
-                source: ItemSource::GeneratedPkgConfig,
-                destination: pkg_config_destination.clone(),
-                mode: 0o644,
-            },
-        ];
+        let items = [Item {
+            source: ItemSource::GeneratedService,
+            destination: service_destination.clone(),
+            mode: 0o644,
+        }];
 
         install_items(&manifest, &options, &items).unwrap();
 
@@ -385,26 +357,8 @@ mod tests {
              [Install]\n\
              WantedBy=default.target\n"
         );
-        let pkg_config =
-            fs::read_to_string(staged(&options.destdir, &pkg_config_destination)).unwrap();
-        assert_eq!(
-            pkg_config,
-            "prefix=/opt/wiiland\n\
-             exec_prefix=/opt/wiiland\n\
-             libdir=/opt/wiiland/lib\n\
-             includedir=/opt/wiiland/include\n\
-             \n\
-             Name: libxwiimote\n\
-             Description: WiiLand compatibility library to control Nintendo Wii Remotes\n\
-             Requires.private: libudev\n\
-             Version: 2.0.0\n\
-             Libs: -L${libdir} -lxwiimote\n\
-             Libs.private: -ldl -lpthread -lm\n\
-             Cflags: -I${includedir}\n"
-        );
         let destdir = options.destdir.to_string_lossy();
         assert!(!service.contains(destdir.as_ref()));
-        assert!(!pkg_config.contains(destdir.as_ref()));
     }
 
     #[test]
@@ -453,7 +407,7 @@ mod tests {
     }
 
     #[test]
-    fn install_marker_records_content_hashes_and_link_targets() {
+    fn install_marker_records_content_hashes() {
         let temp = TestDir::new("marker");
         let manifest = manifest(temp.path());
         let options = options(&temp.path().join("stage"));
@@ -461,19 +415,11 @@ mod tests {
         let contents = b"installed contents\n";
         fs::write(&source, contents).unwrap();
         let file_destination = PathBuf::from("/opt/wiiland/bin/wiilandd");
-        let link_destination = PathBuf::from("/opt/wiiland/bin/wiiland");
-        let items = [
-            Item {
-                source: ItemSource::Root(source),
-                destination: file_destination.clone(),
-                mode: 0o755,
-            },
-            Item {
-                source: ItemSource::Symlink("wiilandd"),
-                destination: link_destination.clone(),
-                mode: 0o777,
-            },
-        ];
+        let items = [Item {
+            source: ItemSource::Root(source),
+            destination: file_destination,
+            mode: 0o755,
+        }];
 
         install_items(&manifest, &options, &items).unwrap();
 
@@ -486,14 +432,9 @@ mod tests {
                  dir\t/opt\n\
                  dir\t/opt/wiiland\n\
                  dir\t/opt/wiiland/bin\n\
-                 file\t/opt/wiiland/bin/wiiland\tlink:wiilandd\n\
                  file\t/opt/wiiland/bin/wiilandd\t{:016x}\n",
                 hash_bytes(contents)
             )
-        );
-        assert_eq!(
-            fs::read_link(staged(&options.destdir, &link_destination)).unwrap(),
-            Path::new("wiilandd")
         );
     }
 
@@ -617,7 +558,6 @@ mod tests {
         fs::write(&modified_source, b"original\n").unwrap();
         let owned_destination = PathBuf::from("/opt/wiiland/bin/owned");
         let modified_destination = PathBuf::from("/opt/wiiland/bin/modified");
-        let link_destination = PathBuf::from("/opt/wiiland/bin/owned-link");
         let items = [
             Item {
                 source: ItemSource::Root(owned_source),
@@ -629,16 +569,10 @@ mod tests {
                 destination: modified_destination.clone(),
                 mode: 0o644,
             },
-            Item {
-                source: ItemSource::Symlink("owned"),
-                destination: link_destination.clone(),
-                mode: 0o777,
-            },
         ];
         install_items(&manifest, &options, &items).unwrap();
         let owned = staged(&options.destdir, &owned_destination);
         let modified = staged(&options.destdir, &modified_destination);
-        let link = staged(&options.destdir, &link_destination);
         let sentinel = staged(
             &options.destdir,
             Path::new("/opt/wiiland/bin/foreign-sentinel"),
@@ -650,10 +584,6 @@ mod tests {
 
         assert_eq!(
             fs::symlink_metadata(&owned).unwrap_err().kind(),
-            io::ErrorKind::NotFound
-        );
-        assert_eq!(
-            fs::symlink_metadata(&link).unwrap_err().kind(),
             io::ErrorKind::NotFound
         );
         assert_eq!(fs::read(&modified).unwrap(), b"locally modified\n");

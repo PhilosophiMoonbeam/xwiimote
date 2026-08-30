@@ -24,7 +24,6 @@ fn deduplicate_initial(initial: &mut Option<Box<Initial>>, action: &[u8], path: 
     false
 }
 pub struct Monitor {
-    pub(crate) refcount: usize,
     udev: UdevContext,
     enumerate: *mut sys::udev_enumerate,
     entry: *mut sys::udev_list_entry,
@@ -84,7 +83,6 @@ impl Monitor {
             }
         }
         Some(Self {
-            refcount: 1,
             udev,
             enumerate: en,
             entry,

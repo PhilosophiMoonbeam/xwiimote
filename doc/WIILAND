@@ -7,12 +7,10 @@ Linux installation that supports Wayland and X.org sessions equally.
 
 WiiLand is a display-neutral input stack with four layers:
 
-1.  The kernel hid-wiimote driver and BlueZ expose the paired Wii Remote as
-    input interfaces.  The Rust `xwiimote` crate provides safe ownership and
-    the `libxwiimote` compatibility library, preserving the public C header,
-    symbol map, SONAME, event layouts, and error conventions.  It supplies
-    core buttons, extension buttons and axes, accelerometer, MotionPlus, IR,
-    and Balance Board data.
+1.  The kernel `hid-wiimote` driver and BlueZ expose the paired Wii Remote as
+    input interfaces.  The native Rust `wiiland-hid` crate owns and decodes
+    those interfaces, including core and extension buttons and axes,
+    accelerometer, MotionPlus, IR, and Balance Board data.
 
 2.  `wiilandd` consumes those interfaces and creates Linux uinput virtual
     evdev devices.  The gamepad profile creates one device named
@@ -122,9 +120,8 @@ resolver 3, edition 2024, and package version 2.0.0.  Build optional
 applications and integration assets with:
     cargo xtask build --release --features gui,tui,integrations
 
-The xtask build compiles the `xwiimote` `rlib` and `staticlib`, then final-links
-the versioned `libxwiimote` shared object with the root `libxwiimote.sym` ABI map
-and SONAME `libxwiimote.so.2`.
+The xtask build compiles the selected Cargo workspace binaries and libraries
+into the requested target profile.
 
 The typed install workflow accepts logical GNU-style paths and stages them
 with `--destdir`:
@@ -139,10 +136,8 @@ destination.  With integrations enabled, installation provides
 `70-udev-wiiland.rules`, `70-wiiland-uinput.rules`, `wiilandd.service`, and
 `50-xorg-fix-wiiland.conf` in their selected system directories.  It installs
 `wiilandd`, `wiilandd-hardware-report`, optional `wiiland-config` and
-`xwiishow`, the `libxwiimote.so.2` and static library, `xwiimote.h`, pkg-config
-metadata, `res/wiilandd.conf`, this documentation, and the applicable manual
-pages.  The compatibility library keeps SONAME `libxwiimote.so.2`; the static
-archive is `libxwiimote.a`.
+`xwiishow`, `res/wiilandd.conf`, this documentation, and the applicable manual
+pages.
 
 The default logical prefix is `/usr/local`, while the system configuration
 path remains `/etc`; `--sysconfdir` rejects any other path.  Distribution
@@ -155,10 +150,11 @@ root and removes only files that still match the recorded content.
 For a native X.org installation, the X.org integration provides
 `res/50-xorg-fix-wiiland.conf` InputClass rules that suppress matching raw
 Nintendo Wii Remote event nodes so X.org does not create duplicate pointer
-input from accelerometer/IR axes.  The rules do not block `libxwiimote` access,
-`wiilandd`, or devices named "WiiLand Virtual Controller" and "WiiLand Virtual
-Desktop".  The Classic Controller and Pro Controller exceptions in that file
-remain enabled.  This policy has no role in a Wayland session.
+input from accelerometer/IR axes.  The rules do not block `wiiland-hid` or
+`wiilandd`, and do not suppress devices named "WiiLand Virtual Controller" or
+"WiiLand Virtual Desktop".  The Classic Controller and Pro Controller
+exceptions in that file remain enabled.  This policy has no role in a Wayland
+session.
 
 == Reproducible validation ==
 
@@ -175,12 +171,11 @@ hardware.  First perform deterministic, hardware-free checks:
     wiilandd-hardware-report
 
 The report records schema version, host and UTC time, distribution, session
-type/compositor, Bluetooth controller, hid-wiimote parameters, permissions,
-libxwiimote and wiilandd versions, commit/dirty state, resolved config, axis
-map, checklist, doctor diagnostics, device list, devtype, extension, sysfs
-identity, battery, event-node access, and manual-validation fields.  It exits
-with a failure status for core diagnostic failures; manual fields remain
-explicit acceptance fields.
+type/compositor, Bluetooth controller, `hid-wiimote` parameters, permissions,
+wiilandd version, commit/dirty state, resolved config, axis map, checklist,
+doctor diagnostics, device list, devtype, extension, sysfs identity, battery,
+event-node access, and manual-validation fields. It exits with a failure status
+for core diagnostic failures; manual fields remain explicit acceptance fields.
 
 With a paired device, use the device number from `--list` or its sysfs path:
 
@@ -196,10 +191,9 @@ user service if it is running and create live devices with:
     wiilandd --device N --profile both
 
 Alternatively, set `profile=both` in the effective configuration and restart
-the user service.  Record the following paired matrix.  Each row records
-kernel, libxwiimote, wiilandd version, distribution, Bluetooth adapter,
-devtype, extension state, session, consumer, expected result, and pass/fail
-details.
+the user service. Record the following paired matrix. Each row records kernel
+and wiilandd versions, distribution, Bluetooth adapter, devtype, extension
+state, session, consumer, expected result, and pass/fail details.
 
 Hardware coverage:
 
@@ -236,4 +230,4 @@ for paired hardware evidence.
 Protocol history and device captures remain available in `doc/PROTOCOL`,
 `doc/DEVICES`, `doc/DEV_REMOTE`, `doc/eeprom.dump`, and `doc/rdesc.dump`.
 They document the hardware and wire-level lineage; the Rust implementation and
-the public C ABI are authoritative for current behavior.
+the Linux `hid-wiimote` interface are authoritative for current behavior.

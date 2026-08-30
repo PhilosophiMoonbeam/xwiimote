@@ -18,7 +18,6 @@ jobs:
           set -eu
           sudo apt-get update
           sudo apt-get install -y \
-            binutils \
             desktop-file-utils \
             groff \
             libegl1-mesa-dev \
@@ -81,72 +80,9 @@ jobs:
           grep -F 'report.status=ok' \
             "$RUNNER_TEMP/wiiland-hardware-report" >/dev/null
 
-      - name: Build the release workspace and compatibility library
+      - name: Build the release workspace
         run: cargo xtask build --release --features gui,tui,integrations
 
-      - name: Check the Rust ABI and compatibility library
-        run: |
-          set -eu
-          cargo test --locked -p xwiimote --test abi
-          library="$PWD/target/release/libxwiimote.so"
-          test -f "$library"
-          readelf -d "$library" | grep -F 'SONAME' | \
-            grep -F 'libxwiimote.so.2' >/dev/null
-          readelf --version-info "$library" | \
-            grep -F 'LIBXWIIMOTE_2' >/dev/null
-          readelf --version-info "$library" | \
-            grep -F 'LIBXWIIMOTE_3' >/dev/null
-          symbols='
-            xwii_iface_new xwii_iface_ref xwii_iface_unref
-            xwii_iface_get_syspath xwii_iface_get_fd xwii_iface_watch
-            xwii_iface_open xwii_iface_close xwii_iface_opened
-            xwii_iface_available xwii_iface_poll xwii_iface_dispatch
-            xwii_iface_rumble xwii_iface_get_led xwii_iface_set_led
-            xwii_iface_get_battery xwii_iface_get_devtype
-            xwii_iface_get_extension xwii_iface_set_mp_normalization
-            xwii_iface_get_mp_normalization xwii_monitor_new
-            xwii_monitor_ref xwii_monitor_unref xwii_monitor_get_fd
-            xwii_monitor_poll xwii_get_iface_name
-          '
-          for symbol in $symbols; do
-            nm -D --defined-only "$library" | \
-              grep -Eq "[[:space:]]${symbol}(@|$)" || {
-                echo "missing ABI symbol: $symbol" >&2
-                exit 1
-              }
-          done
-
-      - name: Compile and run external C ABI consumers
-        run: |
-          set -eu
-          fixture="$PWD/.github/fixtures/xwiimote-abi-smoke.c"
-          stage="$RUNNER_TEMP/xwiimote-abi-stage"
-          abi_dir="$RUNNER_TEMP/xwiimote-c-abi"
-          cargo xtask install --release --destdir "$stage" \
-            --prefix /usr \
-            --features default \
-            --with-udev-rules-dir no \
-            --with-systemd-user-unit-dir no \
-            --with-xorg-conf-dir no
-          mkdir "$abi_dir"
-          export PKG_CONFIG_PATH="$stage/usr/lib/pkgconfig"
-          export PKG_CONFIG_SYSROOT_DIR="$stage"
-          test "$(pkg-config --modversion libxwiimote)" = 2.0.0
-          read -r -a shared_flags <<< "$(pkg-config --cflags --libs libxwiimote)"
-          cc -std=c11 -Wall -Wextra -Werror \
-            "$fixture" "${shared_flags[@]}" \
-            -o "$abi_dir/shared-smoke"
-          LD_LIBRARY_PATH="$stage/usr/lib" "$abi_dir/shared-smoke"
-          rm "$stage/usr/lib/libxwiimote.so"
-          read -r -a static_flags <<< "$(pkg-config --static --cflags --libs libxwiimote)"
-          cc -std=c11 -Wall -Wextra -Werror \
-            "$fixture" "${static_flags[@]}" \
-            -o "$abi_dir/static-smoke"
-          if readelf -d "$abi_dir/static-smoke" | grep -F 'libxwiimote.so' >/dev/null; then
-            echo "static consumer unexpectedly depends on libxwiimote.so" >&2
-            exit 1
-          fi
-          "$abi_dir/static-smoke"
 
       - name: Smoke GUI under X11
         run: |
@@ -235,6 +171,9 @@ jobs:
           test -x "$stage/usr/bin/wiilandd-hardware-report"
           test -x "$stage/usr/bin/wiiland-config"
           test -x "$stage/usr/bin/xwiishow"
+          test ! -e "$stage/usr/include/xwiimote.h"
+          test ! -e "$stage/usr/lib/libxwiimote.so.2"
+          test ! -e "$stage/usr/lib/pkgconfig/libxwiimote.pc"
           for rule in "$stage/usr/lib/udev/rules.d/"*.rules; do
             test -s "$rule"
             udevadm verify "$rule"

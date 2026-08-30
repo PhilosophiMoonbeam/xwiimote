@@ -118,7 +118,7 @@ fn sensor_calibration_requires_exactly_all_three_axes() {
 }
 
 #[test]
-fn event_names_and_classification_cover_all_legacy_event_types() {
+fn event_names_and_classification_cover_all_trace_event_types() {
     let expected = [
         (EventType::Key, "key", true, false),
         (EventType::Accelerometer, "accelerometer", false, true),

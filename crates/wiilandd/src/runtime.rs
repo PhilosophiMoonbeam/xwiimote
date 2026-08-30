@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 use wiiland_core::{Config, TraceConfig};
-use xwiimote::monitor::Monitor;
+use wiiland_hid::Monitor;
 
 pub const MAX_DEVICES: usize = 32;
 pub const POINTER_TICK: Duration = Duration::from_micros(16_000);

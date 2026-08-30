@@ -22,10 +22,10 @@ kernel's `hid-wiimote` driver and emits ordinary `uinput`/`evdev` devices—no
 compositor API, XWayland dependency, or application-specific driver.
 
 ```text
-Wii hardware → hid-wiimote → libxwiimote → wiilandd → uinput/evdev
-                                                    ├─ Wayland / libinput
-                                                    ├─ X.org
-                                                    └─ SDL, Steam, Wine/Proton, native apps
+Wii hardware → hid-wiimote → wiiland-hid → wiilandd → uinput/evdev
+                                                  ├─ Wayland / libinput
+                                                  ├─ X.org
+                                                  └─ SDL, Steam, Wine/Proton, native apps
 ```
 
 | | |
@@ -34,7 +34,7 @@ Wii hardware → hid-wiimote → libxwiimote → wiilandd → uinput/evdev
 | **Outputs** | `WiiLand Virtual Controller`, `WiiLand Virtual Desktop` |
 | **Profiles** | `gamepad`, `desktop`, `both` |
 | **Frontends** | `wiiland-config` (eframe/egui, Wayland/X11), `xwiishow` (ratatui/crossterm) |
-| **Driver path** | Linux `hid-wiimote` → Rust `xwiimote`/`libxwiimote` → `wiilandd` |
+| **Driver path** | Linux `hid-wiimote` → Rust `wiiland-hid` → `wiilandd` |
 
 ## Quick start
 
@@ -65,15 +65,12 @@ cargo xtask install --release --destdir "$DESTDIR" \
   --features gui,tui,integrations
 ```
 
-`cargo xtask install` uses the typed install manifest. It installs the binaries,
-the `libxwiimote` shared/static libraries and C header, configuration,
-manual pages, and documentation. The shared object is final-linked by
-`cargo xtask build` from `libxwiimote.a` with the root `libxwiimote.sym` ABI map
-and SONAME `libxwiimote.so.2`. Integrations are selected independently:
+`cargo xtask install` uses the typed install manifest. It installs the selected
+binaries, configuration, manual pages, documentation, and integration assets.
 `--with-udev-rules-dir`, `--with-systemd-user-unit-dir`, and
 `--with-xorg-conf-dir` each accept `auto`, `no`, or an absolute destination.
-`DESTDIR` prefixes staged files only; generated service and pkg-config content
-contains the logical (unstaged) paths.
+`DESTDIR` prefixes staged files only; generated service content contains the
+logical (unstaged) paths.
 
 After installing udev rules, reload them and reconnect the controller:
 
@@ -219,7 +216,7 @@ wiilandd-hardware-report N
 
 ## Development
 
-The workspace contains the Rust `xwiimote` compatibility library, pure
+The workspace contains the native Rust `wiiland-hid` device library, pure
 `wiiland-core` mapping/configuration logic, the `wiilandd` daemon and report
 binary, the optional `wiiland-config` and `xwiishow` applications, and the
 developer-only `xwiidump` utility. Use the repository's Cargo alias for xtask:
@@ -231,9 +228,9 @@ cargo xtask check --all-features
 cargo xtask docs
 ```
 
-The build compiles the `xwiimote` `rlib` and `staticlib`, then final-links the
-versioned shared object with the root `libxwiimote.sym` ABI map and SONAME
-`libxwiimote.so.2`.
+`wiiland-hid` deliberately targets the Linux `hid-wiimote` kernel interface,
+including its udev/sysfs topology, evdev node identities and codes, force
+feedback, LEDs, and `SYN_DROPPED` recovery. It does not provide a C ABI.
 
 The normal workspace gates are:
 
@@ -261,7 +258,6 @@ device type, session, and consumer results.
 - [`doc/wiilandd.1`](doc/wiilandd.1) — daemon and command reference
 - [`doc/wiiland-config.1`](doc/wiiland-config.1) — control center reference
 - [`doc/wiiland.7`](doc/wiiland.7) — installed overview
-- [`doc/libxwiimote.7`](doc/libxwiimote.7) — compatibility library overview
 - [`doc/DEVICES`](doc/DEVICES) and [`doc/PROTOCOL`](doc/PROTOCOL) — hardware model and archival protocol notes
 - [`DEV`](DEV) — contributor build and packaging notes
 

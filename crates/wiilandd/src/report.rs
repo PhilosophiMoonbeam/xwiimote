@@ -40,7 +40,7 @@ impl std::fmt::Display for ArgError {
 
 /// Parse the report's positional device and the arguments forwarded to the trace.
 ///
-/// This intentionally mirrors the small legacy scanner: only an initial `--help` is
+/// This intentionally mirrors the established scanner: only an initial `--help` is
 /// help, value-taking options consume their next argument, and all other unknown
 /// options are passed through to the daemon.
 pub fn parse_args(args: &[String]) -> Result<ParsedArgs, ArgError> {
@@ -533,25 +533,6 @@ fn report_git(out: &mut String, repo: &Path) {
     let _ = writeln!(out, "git.dirty={dirty}");
 }
 
-fn pkg_version(out: &mut String, package: &str) {
-    let prefix = format!("optional.{package}.pkg-config.version=");
-    if !command_available("pkg-config") {
-        let _ = writeln!(out, "{prefix}unavailable");
-        return;
-    }
-    let output = Command::new("pkg-config")
-        .args(["--modversion", package])
-        .stderr(Stdio::null())
-        .output();
-    let value = output
-        .ok()
-        .filter(|o| o.status.success())
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_owned())
-        .filter(|v| !v.is_empty())
-        .unwrap_or_else(|| "unavailable".to_owned());
-    let _ = writeln!(out, "{prefix}{value}");
-}
-
 fn append_optional_output(out: &mut String, shown: &str, output: &std::process::Output) -> bool {
     out.push_str(&String::from_utf8_lossy(&output.stdout));
     if output.status.success() {
@@ -688,7 +669,6 @@ pub fn run() -> i32 {
     bluetooth(&mut out);
     run_optional(&mut out, "modinfo", &["hid-wiimote"]);
     report_module_parameters(&mut out, &environment.module_dir);
-    pkg_version(&mut out, "libxwiimote");
     if env::var_os("XDG_SESSION_ID").is_some() && command_available("loginctl") {
         let id = env::var("XDG_SESSION_ID").unwrap_or_default();
         run_optional(
