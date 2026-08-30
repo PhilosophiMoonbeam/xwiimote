@@ -32,8 +32,8 @@ packages are:
 * `crates/wiiland-ipc` — source-level, `rlib`-only Rust DTOs and blocking
   versioned Unix-socket `Client` for daemon consumers.
 * `crates/wiiland-config` — optional eframe/egui Wayland/X11 control center.
-* `crates/xwiishow` — optional ratatui/crossterm diagnostic TUI.
-* `crates/xwiidump` — non-installed EEPROM diagnostic.
+* `crates/wiiland-show` — optional ratatui/crossterm diagnostic TUI.
+* `crates/wiiland-dump` — non-installed EEPROM diagnostic.
 * `xtask` — typed build, install, documentation, and distribution workflows.
 
 The supported integration boundary has two mutually exclusive ownership paths:

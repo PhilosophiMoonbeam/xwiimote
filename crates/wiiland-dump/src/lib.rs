@@ -1,6 +1,6 @@
 //! Reader and formatter for Wii Remote EEPROM dumps.
 //!
-//! The output format intentionally follows the historical `xwiidump` utility:
+//! The output format intentionally follows the historical EEPROM dump format:
 //! eight bytes are emitted per line, while an EOF marker is emitted without a
 //! trailing newline.  The generic dump function keeps the byte stream logic
 //! independently testable from the command-line process.
@@ -38,7 +38,7 @@ pub fn read_retry<R: Read>(reader: &mut R, buffer: &mut [u8]) -> io::Result<usiz
 /// Return an errno description in the form used by `strerror(3)`.
 ///
 /// Rust's `io::Error` display adds ` (os error N)` to platform errors, while
-/// the historical utility prints only the libc description.
+/// the historical EEPROM dump utility prints only the libc description.
 pub fn error_description(error: &io::Error) -> String {
     let text = error.to_string();
     let Some(errno) = error.raw_os_error() else {
@@ -49,7 +49,7 @@ pub fn error_description(error: &io::Error) -> String {
         .map_or_else(|| text.clone(), str::to_owned)
 }
 
-/// Dump an EEPROM stream to the historical xwiidump text format.
+/// Dump an EEPROM stream to the historical EEPROM dump text format.
 ///
 /// The returned boolean is `true` for a complete stream (including an empty
 /// stream) and `false` for a partial record or read failure.  Diagnostics are
@@ -65,8 +65,8 @@ pub fn dump<R: Read, O: Write, E: Write>(
     let mut byte = [0u8; 1];
 
     loop {
-        // The original utility uses `%zu` here (decimal), retaining that
-        // detail rather than formatting this as a hexadecimal offset.
+        // The historical EEPROM dump utility uses `%zu` here (decimal),
+        // retaining that detail rather than formatting this as hexadecimal.
         write!(stdout, "0x{offset:08}:")?;
 
         for index in 0..RECORD_SIZE {

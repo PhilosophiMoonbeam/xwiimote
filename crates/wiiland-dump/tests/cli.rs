@@ -7,10 +7,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 static NEXT_ID: AtomicU64 = AtomicU64::new(0);
 
 fn invoke(arguments: &[&str]) -> std::process::Output {
-    Command::new(env!("CARGO_BIN_EXE_xwiidump"))
+    Command::new(env!("CARGO_BIN_EXE_wiiland-dump"))
         .args(arguments)
         .output()
-        .expect("run xwiidump")
+        .expect("run wiiland-dump")
 }
 
 fn temporary_file(label: &str, contents: &[u8]) -> PathBuf {
@@ -20,7 +20,7 @@ fn temporary_file(label: &str, contents: &[u8]) -> PathBuf {
         .as_nanos();
     let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
     let path = std::env::temp_dir().join(format!(
-        "xwiidump-cli-{label}-{}-{timestamp}-{id}",
+        "wiiland-dump-cli-{label}-{}-{timestamp}-{id}",
         std::process::id()
     ));
     fs::write(&path, contents).expect("write EEPROM fixture");
@@ -36,7 +36,7 @@ fn help_is_stdout_only_and_exact() {
     let output = invoke(&["--help"]);
     assert!(output.status.success());
     assert_eq!(output.stderr, b"");
-    let program = env!("CARGO_BIN_EXE_xwiidump");
+    let program = env!("CARGO_BIN_EXE_wiiland-dump");
     let expected = format!(
         "Usage: {program} FILE\nRead a Wii Remote EEPROM file and write its contents to stdout.\n"
     );
@@ -50,7 +50,7 @@ fn arity_errors_use_stderr() {
         let output = invoke(arguments);
         assert!(!output.status.success());
         assert_eq!(output.stdout, b"");
-        let program = env!("CARGO_BIN_EXE_xwiidump");
+        let program = env!("CARGO_BIN_EXE_wiiland-dump");
         let expected = format!(
             "Usage: {program} FILE\nRead a Wii Remote EEPROM file and write its contents to stdout.\n"
         );
@@ -99,7 +99,7 @@ fn partial_record_reports_hex_offset_and_failure() {
 #[test]
 fn missing_file_reports_open_error_without_stdout() {
     let path = std::env::temp_dir().join(format!(
-        "xwiidump-cli-missing-{}-{}",
+        "wiiland-dump-cli-missing-{}-{}",
         std::process::id(),
         NEXT_ID.fetch_add(1, Ordering::Relaxed)
     ));

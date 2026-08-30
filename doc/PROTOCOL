@@ -106,7 +106,7 @@ is used to communicate with the wiimote.
 
       ==== SDP Information ====
       When a low-level connection is established, you may query the SDP
-      server of the xwiimote which returns a great deal of information:
+      server of the Wii Remote which returns a great deal of information:
        * Name: "Nintendo RVL-CNT-01"
        * PnP: VendorID: 0x057e ProductID: 0x0306
       And a lot more PnP, SDP and HID related information.

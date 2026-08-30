@@ -1,18 +1,18 @@
-.TH XWIISHOW 1 "August 2026" "wiiland" "WiiLand Manual"
+.TH WIILAND-SHOW 1 "August 2026" "wiiland" "WiiLand Manual"
 .SH NAME
-xwiishow \- inspect and exercise a connected Wii Remote
+wiiland-show \- inspect and exercise a connected Wii Remote
 .SH SYNOPSIS
-.B xwiishow --help
+.B wiiland-show --help
 .br
-.B xwiishow list
+.B wiiland-show list
 .br
-.B xwiishow
+.B wiiland-show
 .I positive-ordinal
 .br
-.B xwiishow
+.B wiiland-show
 .I /sys/path/to/device
 .SH DESCRIPTION
-.B xwiishow list
+.B wiiland-show list
 enumerates connected Wii Remotes and writes one tab-separated positive ordinal
 and sysfs path per line.  It is intended for pipelines and does not require a
 terminal.  An empty list is successful and produces no lines.
@@ -108,7 +108,7 @@ status area; readable interfaces remain usable when optional writable controls
 cannot be opened.
 .SH NON-INTERACTIVE USE
 For redirected or piped output use
-.BR "xwiishow list" .
+.BR "wiiland-show list" .
 For an ordinal or path selection, the resolved-device line is printed before
 terminal checks.  If standard input is not a terminal, the program then emits
 an error that interactive UI requires a terminal on stdin; if standard output
@@ -130,21 +130,21 @@ runtime or terminal-restoration failure.
 List devices for a pipeline:
 .PP
 .nf
-$ xwiishow list
+$ wiiland-show list
 1	/sys/devices/platform/example/0005:057E:0306.0001
 .fi
 .PP
 Open the first listed device:
 .PP
 .nf
-$ xwiishow 1
+$ wiiland-show 1
 Using Wii Remote: /sys/devices/platform/example/0005:057E:0306.0001
 .fi
 .PP
 Open the same device by path:
 .PP
 .nf
-$ xwiishow /sys/devices/platform/example/0005:057E:0306.0001
+$ wiiland-show /sys/devices/platform/example/0005:057E:0306.0001
 .fi
 .SH SEE ALSO
 .BR wiilandd (1),

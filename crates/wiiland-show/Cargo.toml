@@ -1,12 +1,13 @@
 [package]
-name = "xwiishow"
+name = "wiiland-show"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
+license-file.workspace = true
 description = "Interactive Wii Remote diagnostic display"
 
 [[bin]]
-name = "xwiishow"
+name = "wiiland-show"
 path = "src/main.rs"
 
 [dependencies]

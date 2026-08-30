@@ -17,7 +17,14 @@ use wiiland_hid::{Interface, Monitor, MonitorMode};
 
 use app::{Action, App, Selector, parse_selector, poll_interface};
 
-const HELP: &str = "Usage:\n  xwiishow -h|--help\n  xwiishow list\n  xwiishow <positive-ordinal>\n  xwiishow /sys/path/to/device\nUI commands:\n  q: Quit application\n  f: Freeze/Unfreeze screen\n  s: Refresh static values and recalibrate MotionPlus\n  k: Toggle key events\n  r: Toggle rumble motor (when writable)\n  a: Toggle accelerometer\n  i: Toggle IR camera\n  m: Toggle motion plus\n  n: Toggle normalization for motion plus\n  N: Toggle Nunchuk\n  c: Toggle Classic Controller\n  b: Toggle balance board\n  p: Toggle pro controller\n  g: Toggle guitar controller\n  d: Toggle drums controller\n  1-4: Toggle LEDs (when writable)\n";
+const UI_HELP: &str = "UI commands:\n  q: Quit application\n  f: Freeze/Unfreeze screen\n  s: Refresh static values and recalibrate MotionPlus\n  k: Toggle key events\n  r: Toggle rumble motor (when writable)\n  a: Toggle accelerometer\n  i: Toggle IR camera\n  m: Toggle motion plus\n  n: Toggle normalization for motion plus\n  N: Toggle Nunchuk\n  c: Toggle Classic Controller\n  b: Toggle balance board\n  p: Toggle pro controller\n  g: Toggle guitar controller\n  d: Toggle drums controller\n  1-4: Toggle LEDs (when writable)\n";
+
+fn write_help(mut output: impl Write, program: &str) {
+    let _ = write!(
+        output,
+        "Usage:\n  {program} -h|--help\n  {program} list\n  {program} <positive-ordinal>\n  {program} /sys/path/to/device\n{UI_HELP}"
+    );
+}
 
 fn main() {
     process::exit(run(env::args_os()));
@@ -31,19 +38,19 @@ where
     let program = args
         .first()
         .map(|s| s.to_string_lossy())
-        .unwrap_or_else(|| std::borrow::Cow::Borrowed("xwiishow"));
+        .unwrap_or_else(|| std::borrow::Cow::Borrowed("wiiland-show"));
     if args.len() == 2 && (args[1] == "-h" || args[1] == "--help") {
-        print!("{HELP}");
+        write_help(io::stdout().lock(), &program);
         return 0;
     }
     if args.len() != 2 {
         eprintln!("{program}: expected exactly one selector");
-        eprint!("{HELP}");
+        write_help(io::stderr().lock(), &program);
         return 1;
     }
     let selector_arg = args[1].to_string_lossy().into_owned();
     if selector_arg == "list" {
-        return list_devices();
+        return list_devices(&program);
     }
     let selector = match parse_selector(&selector_arg) {
         Ok(value) => value,
@@ -58,7 +65,7 @@ where
     };
     let path = match selector {
         Selector::Path(path) => path.to_path_buf(),
-        Selector::Ordinal(n) => match ordinal_path(n) {
+        Selector::Ordinal(n) => match ordinal_path(n, &program) {
             Some(path) => path,
             None => return 1,
         },
@@ -76,13 +83,13 @@ where
     let _ = io::stdout().flush();
     if unsafe { libc::isatty(libc::STDIN_FILENO) } == 0 {
         eprintln!(
-            "{program}: interactive UI requires a terminal on stdin; use 'xwiishow list' for pipelines"
+            "{program}: interactive UI requires a terminal on stdin; use '{program} list' for pipelines"
         );
         return 1;
     }
     if unsafe { libc::isatty(libc::STDOUT_FILENO) } == 0 {
         eprintln!(
-            "{program}: interactive UI requires a terminal on stdout; use 'xwiishow list' for redirected output"
+            "{program}: interactive UI requires a terminal on stdout; use '{program} list' for redirected output"
         );
         return 1;
     }
@@ -108,11 +115,11 @@ where
     }
 }
 
-fn list_devices() -> i32 {
+fn list_devices(program: &str) -> i32 {
     let mut monitor = match Monitor::new(MonitorMode::Enumerate) {
         Ok(monitor) => monitor,
         Err(error) => {
-            eprintln!("xwiishow: cannot create device monitor: {error}");
+            eprintln!("{program}: cannot create device monitor: {error}");
             return 1;
         }
     };
@@ -125,7 +132,7 @@ fn list_devices() -> i32 {
             }
             Ok(None) => break,
             Err(error) => {
-                eprintln!("xwiishow: cannot enumerate devices: {error}");
+                eprintln!("{program}: cannot enumerate devices: {error}");
                 return 1;
             }
         }
@@ -133,11 +140,11 @@ fn list_devices() -> i32 {
     0
 }
 
-fn ordinal_path(ordinal: usize) -> Option<PathBuf> {
+fn ordinal_path(ordinal: usize, program: &str) -> Option<PathBuf> {
     let mut monitor = match Monitor::new(MonitorMode::Enumerate) {
         Ok(monitor) => monitor,
         Err(error) => {
-            eprintln!("xwiishow: cannot create device monitor: {error}");
+            eprintln!("{program}: cannot create device monitor: {error}");
             return None;
         }
     };
@@ -152,12 +159,12 @@ fn ordinal_path(ordinal: usize) -> Option<PathBuf> {
             }
             Ok(None) => break,
             Err(error) => {
-                eprintln!("xwiishow: cannot enumerate devices: {error}");
+                eprintln!("{program}: cannot enumerate devices: {error}");
                 return None;
             }
         }
     }
-    eprintln!("xwiishow: no device with ordinal {ordinal}");
+    eprintln!("{program}: no device with ordinal {ordinal}");
     None
 }
 

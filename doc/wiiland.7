@@ -59,8 +59,9 @@ This policy has no effect on a Wayland session.
 .SH PAIRING
 Pair from the desktop Bluetooth UI or with the current
 .B bluetoothctl
-workflow.  The obsolete xwiibind workflow is not used.  The hid-wiimote driver
-requires no additional kernel configuration.  Use
+workflow.  BlueZ manages pairing and the kernel
+.B hid-wiimote
+driver exposes paired remotes; no additional kernel configuration is required.
 .PP
 .RS
 .B wiilandd --list --verbose
@@ -124,7 +125,7 @@ and calibration actions are mutually exclusive.  Fixed-width command output
 retains the most recent 10,000 text blocks.
 .PP
 The optional
-.B xwiishow
+.B wiiland-show
 diagnostic is a ratatui/crossterm TUI.  It supports 80x24 minimum and 160x48
 extended layouts, full controller displays, and terminal cleanup on exit.
 .

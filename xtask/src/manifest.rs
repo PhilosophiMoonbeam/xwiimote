@@ -246,8 +246,8 @@ impl Manifest {
         });
         if self.features.tui {
             items.push(Item {
-                source: built("xwiishow"),
-                destination: self.dirs.bindir.join("xwiishow"),
+                source: built("wiiland-show"),
+                destination: self.dirs.bindir.join("wiiland-show"),
                 mode: 0o755,
             });
         }
@@ -270,6 +270,14 @@ impl Manifest {
             mode: 0o644,
         });
 
+        for name in ["LICENSE", "COPYING"] {
+            items.push(Item {
+                source: root(name),
+                destination: self.dirs.docdir.join(name),
+                mode: 0o644,
+            });
+        }
+
         for (name, section) in [("wiiland.7", "7"), ("wiilandd.1", "1")] {
             items.push(Item {
                 source: root(&format!("doc/{name}")),
@@ -279,8 +287,8 @@ impl Manifest {
         }
         if self.features.tui {
             items.push(Item {
-                source: root("doc/xwiishow.1"),
-                destination: self.dirs.mandir.join("man1/xwiishow.1"),
+                source: root("doc/wiiland-show.1"),
+                destination: self.dirs.mandir.join("man1/wiiland-show.1"),
                 mode: 0o644,
             });
         }

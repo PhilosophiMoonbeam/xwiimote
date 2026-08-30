@@ -6,13 +6,14 @@ members = [
     "crates/wiilandd",
     "crates/wiiland-config",
     "crates/wiiland-ipc",
-    "crates/xwiishow",
-    "crates/xwiidump",
+    "crates/wiiland-show",
+    "crates/wiiland-dump",
     "xtask",
 ]
 
 [workspace.package]
 version = "2.0.0"
+license-file = "LICENSE"
 edition = "2024"
 rust-version = "1.98"
 

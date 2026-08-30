@@ -1,10 +1,18 @@
+use std::os::unix::process::CommandExt;
 use std::process::Command;
 
-fn run(args: &[&str]) -> std::process::Output {
-    Command::new(env!("CARGO_BIN_EXE_xwiishow"))
+const PROGRAM: &str = "wiiland-show";
+
+fn run_as(program: &str, args: &[&str]) -> std::process::Output {
+    Command::new(env!("CARGO_BIN_EXE_wiiland-show"))
+        .arg0(program)
         .args(args)
         .output()
-        .expect("xwiishow binary")
+        .expect("wiiland-show binary")
+}
+
+fn run(args: &[&str]) -> std::process::Output {
+    run_as(PROGRAM, args)
 }
 
 #[test]
@@ -33,8 +41,8 @@ fn help_is_stdout_only_and_lists_every_live_key() {
     ] {
         assert!(help.contains(command), "help omitted {command}");
     }
-    assert!(help.contains("xwiishow <positive-ordinal>"));
-    assert!(help.contains("xwiishow /sys/path/to/device"));
+    assert!(help.contains("wiiland-show <positive-ordinal>"));
+    assert!(help.contains("wiiland-show /sys/path/to/device"));
 }
 
 #[test]
@@ -45,8 +53,26 @@ fn missing_and_surplus_selectors_are_strict() {
         assert!(output.stdout.is_empty());
         let error = String::from_utf8_lossy(&output.stderr);
         assert!(error.contains("expected exactly one selector"));
-        assert!(error.contains("xwiishow list"));
+        assert!(error.contains("wiiland-show list"));
     }
+}
+
+#[test]
+fn help_and_errors_use_the_argv_program_name() {
+    const ALTERNATE_PROGRAM: &str = "alternate-wiiland-show";
+
+    let output = run_as(ALTERNATE_PROGRAM, &["--help"]);
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let help = String::from_utf8_lossy(&output.stdout);
+    assert!(help.contains(&format!("{ALTERNATE_PROGRAM} list")));
+
+    let output = run_as(ALTERNATE_PROGRAM, &[]);
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let error = String::from_utf8_lossy(&output.stderr);
+    assert!(error.starts_with(&format!("{ALTERNATE_PROGRAM}:")));
+    assert!(error.contains(&format!("{ALTERNATE_PROGRAM} list")));
 }
 
 #[test]

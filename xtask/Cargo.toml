@@ -4,6 +4,7 @@ version = "2.0.0"
 edition = "2024"
 rust-version = "1.98"
 publish = false
+license-file.workspace = true
 
 [[bin]]
 name = "xtask"

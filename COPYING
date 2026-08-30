@@ -6,12 +6,11 @@ shipped with this distribution. If a specific file has no license header, the
 header in LICENSE shall apply. If a file has a license header which differs from
 LICENSE, then the license terms specified in this file shall apply.
 
-== Developers ==
+== Provenance ==
 
-This software is written by:
-  David Herrmann - dh.herrmann@gmail.com
-  WiiLand fork and Wayland/uinput integration:
-  PhilosophiMoonbeam - https://github.com/PhilosophiMoonbeam
+WiiLand is a ground-up rewrite and extension maintained by PhilosophiMoonbeam
+(https://github.com/PhilosophiMoonbeam), derived from the xwiimote project
+originally written by David Herrmann (dh.herrmann@gmail.com).
 
 == Contributors ==
 

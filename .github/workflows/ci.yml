@@ -61,8 +61,8 @@ jobs:
           set -eu
           daemon="$PWD/target/debug/wiilandd"
           report="$PWD/target/debug/wiilandd-hardware-report"
-          tui="$PWD/target/debug/xwiishow"
-          dump="$PWD/target/debug/xwiidump"
+          tui="$PWD/target/debug/wiiland-show"
+          dump="$PWD/target/debug/wiiland-dump"
           "$daemon" --help >/dev/null
           "$daemon" --no-config --self-test
           "$daemon" --no-config --check-config >/dev/null
@@ -249,7 +249,7 @@ jobs:
             wiiland-config \
             wiilandd \
             wiilandd-hardware-report \
-            xwiishow \
+            wiiland-show \
             | sort >"$expected_bins"
           find "$bindir" -mindepth 1 -maxdepth 1 -printf '%f\n' \
             | sort >"$actual_bins"
@@ -261,8 +261,6 @@ jobs:
             test -f "$bindir/$binary"
             test -x "$bindir/$binary"
           done <"$expected_bins"
-          test ! -e "$stage/usr/lib/libxwiimote.so.2"
-          test ! -e "$stage/usr/lib/pkgconfig/libxwiimote.pc"
           forbidden="$(find "$stage" \( -type f -o -type l \) \( \
             -name '*.h' -o \
             -name '*.a' -o \
@@ -288,6 +286,31 @@ jobs:
           done
           desktop="$stage/usr/share/applications/io.github.philosophimoonbeam.wiiland-config.desktop"
           desktop-file-validate "$desktop"
+          docdir="$stage/usr/share/doc/wiiland"
+          test -f "$docdir/LICENSE"
+          test -f "$docdir/COPYING"
+          expected_man1="$RUNNER_TEMP/wiiland-staged-man1.expected"
+          actual_man1="$RUNNER_TEMP/wiiland-staged-man1.actual"
+          printf '%s\n' \
+            wiiland-config.1 \
+            wiiland-show.1 \
+            wiilandd.1 \
+            | sort >"$expected_man1"
+          find "$stage/usr/share/man/man1" -mindepth 1 -maxdepth 1 -printf '%f\n' \
+            | sort >"$actual_man1"
+          if ! diff -u "$expected_man1" "$actual_man1"; then
+            echo "staged man1 directory must contain exactly the three expected manuals" >&2
+            exit 1
+          fi
+          expected_man7="$RUNNER_TEMP/wiiland-staged-man7.expected"
+          actual_man7="$RUNNER_TEMP/wiiland-staged-man7.actual"
+          printf '%s\n' wiiland.7 >"$expected_man7"
+          find "$stage/usr/share/man/man7" -mindepth 1 -maxdepth 1 -printf '%f\n' \
+            | sort >"$actual_man7"
+          if ! diff -u "$expected_man7" "$actual_man7"; then
+            echo "staged man7 directory must contain exactly the expected manual" >&2
+            exit 1
+          fi
           for manual in "$stage/usr/share/man/man1/"*.1 \
               "$stage/usr/share/man/man7/"*.7; do
             test -s "$manual"
@@ -297,7 +320,7 @@ jobs:
           test -s "$stage/usr/share/X11/xorg.conf.d/50-xorg-fix-wiiland.conf"
           test -s "$stage/usr/share/icons/hicolor/scalable/apps/io.github.philosophimoonbeam.wiiland.svg"
           "$stage/usr/bin/wiilandd" --no-config --self-test
-          "$stage/usr/bin/xwiishow" --help >/dev/null
+          "$stage/usr/bin/wiiland-show" --help >/dev/null
           WIILANDD="$stage/usr/bin/wiilandd" WIILAND_REPO_DIR="$PWD" \
             "$stage/usr/bin/wiilandd-hardware-report" --help >/dev/null
 

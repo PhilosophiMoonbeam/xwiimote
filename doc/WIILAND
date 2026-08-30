@@ -37,11 +37,14 @@ change how the Wii Remote is decoded.
 
 == Pairing and operating the bridge ==
 
-Pair a remote with the desktop Bluetooth UI or with the current `bluetoothctl`
-command-line workflow.  The obsolete xwiibind workflow is not part of WiiLand.
-The hid-wiimote driver must be available; no kernel-driver configuration is
-needed.  `wiilandd --list --verbose` shows connected devices, devtypes, and
-extension attributes without creating virtual devices.
+Pair a remote with the desktop Bluetooth UI or the current `bluetoothctl`
+command-line workflow.  Press the remote's sync button, then run `power on`,
+`agent on`, `default-agent`, `scan on`, `pair <address>`, `trust <address>`,
+`connect <address>`, `scan off`, and `quit` in `bluetoothctl`, replacing
+`<address>` with the device shown by `scan on`.  The hid-wiimote driver must be
+available; no kernel-driver configuration is needed.  `wiilandd --list --verbose`
+shows connected devices, devtypes, and extension attributes without creating
+virtual devices.
 
 The daemon defaults to `backend=uinput` and `profile=gamepad`.  Use
 `wiilandd --profile desktop` for pointer/keyboard output or
@@ -108,9 +111,9 @@ calibration remain independent, with complete X/Y/Z triples for each enabled
 sensor.  Fixed-width command output can be copied or cleared and retains the
 most recent 10,000 text blocks.
 
-The optional `xwiishow` diagnostic is a ratatui/crossterm TUI.  It supports the
+The optional `wiiland-show` diagnostic is a ratatui/crossterm TUI.  It supports the
 80x24 minimum and 160x48 extended layouts, full controller displays, and
-terminal cleanup on exit.  `xwiidump` is a developer-only utility and is not
+terminal cleanup on exit.  `wiiland-dump` is a developer-only utility and is not
 installed.
 
 == Build, installation, and artifacts ==
@@ -136,7 +139,7 @@ destination.  With integrations enabled, installation provides
 `70-udev-wiiland.rules`, `70-wiiland-uinput.rules`, `wiilandd.service`, and
 `50-xorg-fix-wiiland.conf` in their selected system directories.  It installs
 `wiilandd`, `wiilandd-hardware-report`, optional `wiiland-config` and
-`xwiishow`, `res/wiilandd.conf`, this documentation, and the applicable manual
+`wiiland-show`, `res/wiilandd.conf`, this documentation, and the applicable manual
 pages.
 
 The default logical prefix is `/usr/local`, while the system configuration

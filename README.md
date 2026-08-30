@@ -33,7 +33,7 @@ Wii hardware → hid-wiimote → wiiland-hid
 | **Sessions** | Native Wayland and X.org |
 | **Outputs** | `WiiLand Virtual Controller`, `WiiLand Virtual Desktop` |
 | **Profiles** | `gamepad`, `desktop`, `both` |
-| **Frontends** | `wiiland-config` (eframe/egui, Wayland/X11), `xwiishow` (ratatui/crossterm) |
+| **Frontends** | `wiiland-config` (eframe/egui, Wayland/X11), `wiiland-show` (ratatui/crossterm) |
 | **Driver path** | Linux `hid-wiimote` → Rust `wiiland-hid` → direct app or `wiilandd` |
 
 ## Rust integration paths
@@ -235,7 +235,7 @@ wiiland-config
 ID `io.github.philosophimoonbeam.wiiland-config`; no toolkit-specific platform
 override is required. The control center edits and validates configuration,
 manages the user service, and runs device traces and calibration capture.
-The optional `xwiishow` diagnostic uses ratatui/crossterm and restores the
+The optional `wiiland-show` diagnostic uses ratatui/crossterm and restores the
 terminal on exit.
 
 ## Configure
@@ -323,8 +323,8 @@ wiilandd-hardware-report N
 The workspace contains the native Rust `wiiland-hid` hardware crate, the
 source-level `wiiland-ipc` blocking Unix-socket client facade, pure
 `wiiland-core` mapping/configuration logic, the `wiilandd` daemon and report
-binary, the optional `wiiland-config` and `xwiishow` applications, and the
-developer-only `xwiidump` utility. Use the repository's Cargo alias for xtask:
+binary, the optional `wiiland-config` and `wiiland-show` applications, and the
+developer-only `wiiland-dump` utility. Use the repository's Cargo alias for xtask:
 
 ```sh
 cargo xtask build --features gui,tui,integrations
@@ -355,7 +355,7 @@ cargo xtask dist --output wiiland-2.tar.xz
 cargo xtask verify-dist wiiland-2.tar.xz
 ```
 
-`xwiidump` remains a non-installed EEPROM diagnostic and requires kernel
+`wiiland-dump` remains a non-installed EEPROM diagnostic and requires kernel
 `debugfs`. Hardware-free daemon checks are exposed by `wiilandd --self-test`;
 real-device reports should include kernel, distribution, Bluetooth adapter,
 device type, session, and consumer results.
@@ -374,6 +374,6 @@ Questions, bugs, and hardware reports belong in the
 
 ## License and lineage
 
-WiiLand is open source under the permissive xwiimote license; see
-[`LICENSE`](LICENSE) and [`COPYING`](COPYING). It is derived from xwiimote by
-David Herrmann and retains its authorship and contributor history.
+WiiLand is open source under the permissive terms in [`LICENSE`](LICENSE).
+[`COPYING`](COPYING) preserves lineage, authorship, and contributor
+acknowledgements.

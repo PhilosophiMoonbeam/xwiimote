@@ -4,7 +4,7 @@ use std::io::{self, Write};
 use std::path::PathBuf;
 use std::process;
 
-use xwiidump::{close_eeprom, dump, error_description, open_eeprom, usage};
+use wiiland_dump::{close_eeprom, dump, error_description, open_eeprom, usage};
 
 fn main() {
     process::exit(run(env::args_os()));
@@ -18,7 +18,7 @@ where
     let program = args
         .first()
         .map(|value| value.to_string_lossy().into_owned())
-        .unwrap_or_else(|| String::from("xwiidump"));
+        .unwrap_or_else(|| String::from("wiiland-dump"));
 
     if args.len() == 2 && (args[1] == "-h" || args[1] == "--help") {
         let mut stdout = io::stdout().lock();

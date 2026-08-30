@@ -1,5 +1,5 @@
 # Udev permissions for wiimote LED brightness attributes.
-# Keep the input group writable so tools such as xwiishow can control LEDs
+# Keep the input group writable so tools such as wiiland-show can control LEDs
 # without requiring root. Active-seat uaccess applies to device nodes, not
 # sysfs attributes, so direct non-shell helpers are used for these attributes.
 #

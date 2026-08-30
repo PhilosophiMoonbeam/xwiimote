@@ -3,6 +3,7 @@ name = "wiilandd"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
+license-file.workspace = true
 description = "WiiLand Wii Remote input daemon"
 
 [lib]

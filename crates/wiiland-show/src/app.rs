@@ -20,7 +20,7 @@ pub enum Action {
     Quit,
 }
 
-/// All values shown by xwiishow live here.  The reducer is intentionally independent
+/// All values shown by wiiland-show live here.  The reducer is intentionally independent
 /// of ratatui, making event handling deterministic and display-neutral.
 pub struct App {
     pub mode: ViewMode,

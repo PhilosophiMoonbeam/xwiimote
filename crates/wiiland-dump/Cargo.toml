@@ -1,15 +1,18 @@
 [package]
-name = "wiiland-ipc"
+name = "wiiland-dump"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license-file.workspace = true
+description = "Wii Remote EEPROM dumper"
 
 [lib]
-name = "wiiland_ipc"
+name = "wiiland_dump"
 path = "src/lib.rs"
-crate-type = ["rlib"]
+
+[[bin]]
+name = "wiiland-dump"
+path = "src/main.rs"
 
 [dependencies]
-serde.workspace = true
-serde_json.workspace = true
+libc.workspace = true

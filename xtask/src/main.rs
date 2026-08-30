@@ -283,7 +283,7 @@ fn root() -> PathBuf {
         .to_path_buf()
 }
 
-const BASE_BUILD_PACKAGES: [&str; 4] = ["wiiland-ipc", "wiiland-hid", "wiilandd", "xwiidump"];
+const BASE_BUILD_PACKAGES: [&str; 4] = ["wiiland-ipc", "wiiland-hid", "wiilandd", "wiiland-dump"];
 
 fn build_packages(features: Features) -> Vec<&'static str> {
     let mut packages = BASE_BUILD_PACKAGES.to_vec();
@@ -291,7 +291,7 @@ fn build_packages(features: Features) -> Vec<&'static str> {
         packages.push("wiiland-config");
     }
     if features.tui {
-        packages.push("xwiishow");
+        packages.push("wiiland-show");
     }
     packages
 }
@@ -463,7 +463,7 @@ mod tests {
                 "wiiland-ipc",
                 "wiiland-hid",
                 "wiilandd",
-                "xwiidump",
+                "wiiland-dump",
                 "wiiland-config"
             ]
         );
@@ -489,9 +489,9 @@ mod tests {
                 "wiiland-ipc",
                 "wiiland-hid",
                 "wiilandd",
-                "xwiidump",
+                "wiiland-dump",
                 "wiiland-config",
-                "xwiishow"
+                "wiiland-show"
             ]
         );
     }
