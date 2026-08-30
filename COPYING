@@ -12,6 +12,10 @@ WiiLand is a ground-up rewrite and extension maintained by PhilosophiMoonbeam
 (https://github.com/PhilosophiMoonbeam), derived from the xwiimote project
 originally written by David Herrmann (dh.herrmann@gmail.com).
 
+The original project copyright notice is retained in LICENSE. Copyright in
+newly authored WiiLand material remains with its respective authors; all such
+material is distributed under the same terms unless a file states otherwise.
+
 == Contributors ==
 
 This project could not have been realized without several other software
