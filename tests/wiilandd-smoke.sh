@@ -8,12 +8,36 @@ build_dir=${TMPDIR:-/tmp}/wiilandd-smoke.$$
 trap 'rm -rf "$build_dir"' EXIT INT HUP TERM
 mkdir -p "$build_dir"
 bin=$build_dir/wiilandd-smoke
+system_config=$build_dir/system/wiilandd.conf
 
 "$cc" -std=gnu99 -Wall -Wextra -Werror -DPACKAGE_VERSION=\"smoke\" \
+	"-DWIILAND_SYSTEM_CONFIG_PATH=\"$system_config\"" \
 	-I"$root/lib" "$root/tools/wiilandd.c" "$root/tests/xwii_stubs.c" \
 	-o "$bin"
 
 test "$("$bin" --version)" = "wiilandd smoke"
+mkdir -p "$(dirname "$system_config")" "$build_dir/home"
+printf '%s\n' 'profile=desktop' >"$system_config"
+HOME=$build_dir/home XDG_CONFIG_HOME='' \
+	"$bin" --dump-config >"$build_dir/system-config-dump"
+grep -F 'profile=desktop' "$build_dir/system-config-dump" >/dev/null
+HOME=$build_dir/home XDG_CONFIG_HOME='' \
+	"$bin" --doctor >"$build_dir/system-config-doctor"
+grep -F "config.system.path=$system_config" \
+	"$build_dir/system-config-doctor" >/dev/null
+grep -F 'config.system.exists=yes' "$build_dir/system-config-doctor" >/dev/null
+rm -f "$system_config"
+
+mkdir -p "$build_dir/relative/wiiland" "$build_dir/home/.config/wiiland"
+printf '%s\n' 'profile=desktop' \
+	>"$build_dir/relative/wiiland/wiilandd.conf"
+printf '%s\n' 'profile=both' \
+	>"$build_dir/home/.config/wiiland/wiilandd.conf"
+(cd "$build_dir" && HOME=$build_dir/home XDG_CONFIG_HOME=relative \
+	"$bin" --dump-config) >"$build_dir/relative-xdg-dump"
+grep -F 'profile=both' "$build_dir/relative-xdg-dump" >/dev/null
+rm -rf "$build_dir/relative" "$build_dir/home/.config"
+
 install_stage=$build_dir/install-stage
 mkdir -p \
 	"$install_stage/etc/wiiland" \
@@ -42,11 +66,10 @@ cp "$root/tools/wiilandd-hardware-report.sh" \
 	"$install_stage/usr/bin/wiilandd-hardware-report"
 chmod +x "$install_stage/usr/bin/wiilandd-hardware-report"
 cp "$root/doc/WIILAND" "$install_stage/usr/share/doc/wiiland/WIILAND"
-cp "$root/doc/xwiishow.1" "$root/doc/wiilandd.1" \
-	"$install_stage/usr/share/man/man1/"
+cp "$root/doc/wiilandd.1" "$install_stage/usr/share/man/man1/"
 cp "$root/doc/wiiland.7" "$root/doc/libxwiimote.7" \
 	"$install_stage/usr/share/man/man7/"
-"$root/tests/wiilandd-install-smoke.sh" "$install_stage" /usr no /etc
+"$root/tests/wiilandd-install-smoke.sh" "$install_stage" /usr no /etc no
 
 
 "$bin" --self-test
@@ -64,6 +87,57 @@ if "$bin" --config "$build_dir/invalid-screen.conf" --check-config \
 fi
 grep -F 'IR screen calibration requires right > left and bottom > top' \
 	"$build_dir/invalid-screen-err" >/dev/null
+cat >"$build_dir/partial-accel.conf" <<'EOF'
+aim-accel-zero-x=10
+EOF
+if "$bin" --config "$build_dir/partial-accel.conf" --check-config \
+	>"$build_dir/partial-accel-out" 2>"$build_dir/partial-accel-err"; then
+	printf '%s\n' 'wiilandd accepted partial accelerometer calibration' >&2
+	exit 1
+fi
+grep -F 'accelerometer calibration requires complete x, y, and z values' \
+	"$build_dir/partial-accel-err" >/dev/null
+cat >"$build_dir/partial-motion-plus.conf" <<'EOF'
+aim-motion-plus-bias-y=10
+EOF
+if "$bin" --config "$build_dir/partial-motion-plus.conf" --check-config \
+	>"$build_dir/partial-motion-plus-out" \
+	2>"$build_dir/partial-motion-plus-err"; then
+	printf '%s\n' 'wiilandd accepted partial MotionPlus calibration' >&2
+	exit 1
+fi
+grep -F 'MotionPlus calibration requires complete x, y, and z values' \
+	"$build_dir/partial-motion-plus-err" >/dev/null
+cat >"$build_dir/complete-accel.conf" <<'EOF'
+aim-accel-zero-x=10
+aim-accel-zero-y=11
+aim-accel-zero-z=12
+EOF
+"$bin" --config "$build_dir/complete-accel.conf" --check-config
+
+if "$bin" --no-config --config "$root/res/wiilandd.conf" --dump-config \
+	>"$build_dir/config-conflict-out" 2>"$build_dir/config-conflict-err"; then
+	printf '%s\n' 'wiilandd accepted conflicting config selectors' >&2
+	exit 1
+fi
+grep -F -- '--no-config cannot be combined with --config' \
+	"$build_dir/config-conflict-err" >/dev/null
+reject_invalid_command() {
+	if "$bin" "$@" >"$build_dir/action-order-out" \
+		2>"$build_dir/action-order-err"; then
+		printf '%s\n' 'wiilandd ignored an invalid argument' >&2
+		exit 1
+	fi
+}
+reject_invalid_command --axis-map --definitely-invalid
+reject_invalid_command --definitely-invalid --axis-map
+if "$bin" --doctor --dump-config >"$build_dir/action-conflict-out" \
+	2>"$build_dir/action-conflict-err"; then
+	printf '%s\n' 'wiilandd accepted conflicting primary actions' >&2
+	exit 1
+fi
+grep -F 'conflicting actions: --doctor and --dump-config' \
+	"$build_dir/action-conflict-err" >/dev/null
 "$bin" --axis-map >"$build_dir/axis-map"
 grep -F 'range.signed=-32768:32767' "$build_dir/axis-map" >/dev/null
 grep -F 'range.trigger=0:1023' "$build_dir/axis-map" >/dev/null
@@ -97,6 +171,7 @@ DISPLAY='' WAYLAND_DISPLAY=wayland-1 XDG_RUNTIME_DIR=$build_dir \
 grep -F 'session.display-server=wayland' "$build_dir/doctor-wayland" >/dev/null
 grep -F 'session.wayland=yes' "$build_dir/doctor-wayland" >/dev/null
 grep -F 'session.x11=no' "$build_dir/doctor-wayland" >/dev/null
+grep -F 'session.xwayland.available=no' "$build_dir/doctor-wayland" >/dev/null
 grep -F "wayland.socket.path=$build_dir/wayland-1" "$build_dir/doctor-wayland" >/dev/null
 grep -F 'wayland.socket.type=other' "$build_dir/doctor-wayland" >/dev/null
 grep -F 'wayland.socket.exists=yes' "$build_dir/doctor-wayland" >/dev/null
@@ -104,6 +179,8 @@ grep -F 'x11.display=unknown' "$build_dir/doctor-wayland" >/dev/null
 grep -F 'dev.uinput.writable=' "$build_dir/doctor-wayland" >/dev/null
 grep -F 'backend=uinput' "$build_dir/doctor-wayland" >/dev/null
 grep -F 'profile=desktop' "$build_dir/doctor-wayland" >/dev/null
+grep -F "config.system.path=$system_config" "$build_dir/doctor-wayland" >/dev/null
+grep -F 'config.system.exists=no' "$build_dir/doctor-wayland" >/dev/null
 grep -F 'aim.mode=off' "$build_dir/doctor-wayland" >/dev/null
 
 DISPLAY=:4242 WAYLAND_DISPLAY='' XDG_SESSION_TYPE=x11 \
@@ -111,6 +188,8 @@ DISPLAY=:4242 WAYLAND_DISPLAY='' XDG_SESSION_TYPE=x11 \
 grep -F 'session.display-server=x11' "$build_dir/doctor-x11" >/dev/null
 grep -F 'session.wayland=no' "$build_dir/doctor-x11" >/dev/null
 grep -F 'session.x11=yes' "$build_dir/doctor-x11" >/dev/null
+grep -F 'session.xwayland.available=not-applicable' \
+	"$build_dir/doctor-x11" >/dev/null
 grep -F 'x11.display=:4242' "$build_dir/doctor-x11" >/dev/null
 grep -F 'x11.socket.path=/tmp/.X11-unix/X4242' "$build_dir/doctor-x11" >/dev/null
 grep -F 'x11.socket.exists=' "$build_dir/doctor-x11" >/dev/null
@@ -118,10 +197,20 @@ grep -F 'x11.socket.exists=' "$build_dir/doctor-x11" >/dev/null
 DISPLAY=unix/:4243.1 WAYLAND_DISPLAY=wayland-1 XDG_RUNTIME_DIR=$build_dir \
 	XDG_SESSION_TYPE=wayland \
 	"$bin" --no-config --doctor >"$build_dir/doctor-xwayland"
-grep -F 'session.display-server=xwayland' "$build_dir/doctor-xwayland" >/dev/null
+grep -F 'session.display-server=wayland' "$build_dir/doctor-xwayland" >/dev/null
 grep -F 'session.wayland=yes' "$build_dir/doctor-xwayland" >/dev/null
 grep -F 'session.x11=yes' "$build_dir/doctor-xwayland" >/dev/null
+grep -F 'session.xwayland.available=no' "$build_dir/doctor-xwayland" >/dev/null
 grep -F 'x11.socket.path=/tmp/.X11-unix/X4243' "$build_dir/doctor-xwayland" >/dev/null
+grep -F 'x11.socket.exists=no' "$build_dir/doctor-xwayland" >/dev/null
+
+DISPLAY=remote.example:7.0 WAYLAND_DISPLAY=wayland-1 XDG_RUNTIME_DIR=$build_dir \
+	XDG_SESSION_TYPE=wayland \
+	"$bin" --no-config --doctor >"$build_dir/doctor-wayland-remote-x11"
+grep -F 'session.display-server=wayland' \
+	"$build_dir/doctor-wayland-remote-x11" >/dev/null
+grep -F 'session.xwayland.available=unknown' \
+	"$build_dir/doctor-wayland-remote-x11" >/dev/null
 
 DISPLAY=remote.example:7.0 WAYLAND_DISPLAY='' XDG_SESSION_TYPE=x11 \
 	"$bin" --no-config --doctor >"$build_dir/doctor-x11-remote"
@@ -327,6 +416,14 @@ grep -F 'doctor, axis-map' "$build_dir/hardware-report-help" >/dev/null
 grep -F 'WantedBy=default.target' \
 	"$install_stage/usr/lib/systemd/user/wiilandd.service" >/dev/null
 grep -F 'ExecStart=@bindir@/wiilandd' "$root/res/wiilandd.service.in" >/dev/null
+grep -F 'NoNewPrivileges=yes' "$root/res/wiilandd.service.in" >/dev/null
+grep -F 'LockPersonality=yes' "$root/res/wiilandd.service.in" >/dev/null
+grep -F 'MemoryDenyWriteExecute=yes' "$root/res/wiilandd.service.in" >/dev/null
+grep -F 'RestrictRealtime=yes' "$root/res/wiilandd.service.in" >/dev/null
+grep -F 'RestrictSUIDSGID=yes' "$root/res/wiilandd.service.in" >/dev/null
+grep -F 'SystemCallArchitectures=native' \
+	"$root/res/wiilandd.service.in" >/dev/null
+grep -F 'UMask=0077' "$root/res/wiilandd.service.in" >/dev/null
 if command -v systemd-analyze >/dev/null 2>&1; then
 	sed -e 's|@bindir@/wiilandd|/bin/true|g' \
 		"$root/res/wiilandd.service.in" >"$build_dir/wiilandd.service"

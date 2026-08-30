@@ -15,21 +15,24 @@ The frontend does not implement an input backend or start a private daemon.
 WiiLand input remains display-server-neutral through Linux uinput. Command,
 configuration, and service failures are reported in the window.
 .SH CONFIGURATION
-The control center starts with the default user configuration path:
+The control center starts with the default user configuration path at an
+absolute
 .B $XDG_CONFIG_HOME/wiiland/wiilandd.conf
 or, when
 .B XDG_CONFIG_HOME
-is unset,
-.B $HOME/.config/wiiland/wiilandd.conf .
+is unset or relative,
+.BR $HOME/.config/wiiland/wiilandd.conf .
 On startup and when
 .B Load effective config
 is pressed, it runs
 .B wiilandd --dump-config
 for that path. Because the default path is not passed as
 .B --config ,
-this loads the daemon's effective hierarchy: optional
-.B /etc/wiiland/wiilandd.conf
-first, then the optional user file, with later values overriding earlier ones.
+this loads the daemon's effective hierarchy: the optional installed
+.B sysconfdir/wiiland/wiilandd.conf
+first (normally
+.BR /etc/wiiland/wiilandd.conf ),
+then the optional user file, with later values overriding earlier ones.
 .PP
 Another key=value file may be selected in the control center. A selected path
 different from the default is routed to config-sensitive daemon commands as
@@ -50,6 +53,13 @@ first writes the rendered form to a temporary file and runs
 .B wiilandd --check-config --config
 against that temporary file. Only a successful check permits an atomic replace
 of the selected file; a failed check leaves the existing file unchanged.
+.PP
+Accelerometer and MotionPlus saved calibration are enabled independently.
+Each enabled sensor writes a complete X/Y/Z triple, matching the daemon's
+configuration invariant; calibration for one unavailable sensor does not
+invent zero offsets for the other. The command-output view retains the most
+recent 10,000 text blocks so long-running diagnostics cannot grow its document
+without bound.
 .SH SERVICE CONTROL
 The daemon panel controls the installed
 .B wiilandd.service
@@ -75,7 +85,11 @@ The unit is installed with
 .B WantedBy=default.target
 and validates configuration with
 .B ExecCondition=wiilandd --check-config
-before starting. A successful
+before starting. It also denies privilege gain, personality changes, writable
+executable memory, real-time scheduling, SUID/SGID changes, and foreign syscall
+architectures, and uses
+.BR UMask=0077 .
+A successful
 .B Validate and save
 operation on the default user path reports that a daemon restart is required.
 The
@@ -129,7 +143,9 @@ native consumers.
 .SH FILES
 .TP
 .B /etc/wiiland/wiilandd.conf
-Optional system-wide daemon defaults used by the daemon's default hierarchy.
+Usual system-wide daemon defaults path. The actual installed location follows
+the configured
+.BR sysconfdir .
 .TP
 .B $XDG_CONFIG_HOME/wiiland/wiilandd.conf
 Per-user overrides and the control center's default editable path.

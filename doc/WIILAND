@@ -20,8 +20,9 @@ WiiLand is a display-neutral input stack with four layers:
 
 3.  A Wayland compositor consumes the virtual evdev devices through libinput.
     An X.org server consumes the same virtual devices through its normal input
-    stack.  In an XWayland session, the compositor still consumes the device
-    and forwards the resulting seat input to XWayland clients.
+    stack.  On a Wayland desktop with XWayland available, the compositor still
+    consumes the device and forwards the resulting seat input to XWayland
+    clients.
 
 4.  Applications consume the resulting seat or controller events through their
     normal interfaces: native Wayland applications, native X11 applications,
@@ -79,29 +80,33 @@ user-unit directory selected at configure time.  It is pulled by
 `default.target`.  Its `ExecCondition` runs `wiilandd --check-config` before
 `ExecStart`; invalid configuration therefore suppresses that start and does
 not enter the runtime restart policy.  A process that starts and then fails
-uses `Restart=on-failure` with `RestartSec=2s`.  Enable and start it in the
-user manager with:
+uses `Restart=on-failure` with `RestartSec=2s`.  Process-level hardening denies
+privilege gain, personality changes, real-time scheduling, SUID/SGID changes,
+and writable executable memory; it restricts syscall architectures to native
+and uses `UMask=0077`.  Enable and start it in the user manager with:
 
     systemctl --user enable wiilandd.service
     systemctl --user start wiilandd.service
 
 Use `systemctl --user status wiilandd.service` for lifecycle diagnostics.
-`wiilandd --doctor` reports the current session variables, resolved Wayland
-socket, `/dev/uinput`, backend, and profile; it does not enumerate Wii
-devices.  `wiilandd --check-config` validates the effective configuration
-without enumerating devices.
+`wiilandd --doctor` reports the current session variables, Wayland/X11 and
+XWayland availability, resolved configuration paths, `/dev/uinput`, backend,
+and profile; it does not enumerate Wii devices.  `wiilandd --check-config`
+validates the effective configuration without enumerating devices.
 
 == Configuration and GUI ==
 
-Unless `--no-config` is supplied, wiilandd reads
-`/etc/wiiland/wiilandd.conf` first, then
+Unless `--no-config` is supplied, wiilandd reads the installed
+`${sysconfdir}/wiiland/wiilandd.conf` first (normally
+`/etc/wiiland/wiilandd.conf`), then an absolute
 `$XDG_CONFIG_HOME/wiiland/wiilandd.conf`, or
-`$HOME/.config/wiiland/wiilandd.conf` when `XDG_CONFIG_HOME` is unset.  Later
-values override earlier values.  `--config path` selects one explicit
-key=value file instead of the default hierarchy, and command-line options
-override loaded values.  `--dump-config` prints the resolved result.
-`res/wiilandd.conf` is the installed/sample configuration; it is not an
-additional implicit layer.
+`$HOME/.config/wiiland/wiilandd.conf` when `XDG_CONFIG_HOME` is unset or
+relative.  Later values override earlier values.  `--config path` selects one
+explicit key=value file instead of the default hierarchy, and command-line
+options override loaded values.  `--config` and `--no-config` are mutually
+exclusive.  `--dump-config` prints the resolved result.  `res/wiilandd.conf`
+is the installed/sample configuration; it is not an additional implicit
+layer.
 
 The optional `wiiland-config` control center uses Qt 6 Widgets and Qt Platform
 Abstraction (QPA), with no direct X11 or Wayland display API.  Qt selects the
@@ -115,6 +120,12 @@ available in both sessions.  To select explicitly:
 The corresponding Qt QPA platform plugin must be installed at runtime; the
 configure check verifies Qt 6 Widgets but does not verify those runtime
 plugins.
+
+Saved accelerometer and MotionPlus calibration are controlled independently;
+each enabled sensor emits a complete X/Y/Z triple.  The command-output view
+retains the most recent 10,000 text blocks so long-running diagnostics cannot
+grow the GUI document without bound.
+
 
 == Configure and installed artifacts ==
 

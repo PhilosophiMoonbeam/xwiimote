@@ -11,7 +11,6 @@
 #include <QtCore/QProcess>
 #include <QtCore/QSaveFile>
 #include <QtCore/QSharedPointer>
-#include <QtCore/QStandardPaths>
 #include <QtCore/QTextStream>
 #include <QtCore/QTemporaryFile>
 #include <QtCore/QTimer>
@@ -45,13 +44,19 @@
 #include <QtWidgets/QWidget>
 
 namespace {
+constexpr int CommandOutputBlockLimit = 10000;
+
 
 QString defaultConfigPath()
 {
-    const QString configHome = QStandardPaths::writableLocation(QStandardPaths::ConfigLocation);
-    if (!configHome.isEmpty())
+    const QString configHome = qEnvironmentVariable("XDG_CONFIG_HOME");
+    if (QDir::isAbsolutePath(configHome))
         return configHome + QStringLiteral("/wiiland/wiilandd.conf");
-    return QDir::homePath() + QStringLiteral("/.config/wiiland/wiilandd.conf");
+
+    const QString home = qEnvironmentVariable("HOME");
+    if (QDir::isAbsolutePath(home))
+        return home + QStringLiteral("/.config/wiiland/wiilandd.conf");
+    return {};
 }
 
 QString quoteCommand(const QString &program, const QStringList &arguments)
@@ -156,6 +161,7 @@ public:
         output->setAccessibleName(QStringLiteral("Command output"));
         output->setReadOnly(true);
         output->setLineWrapMode(QPlainTextEdit::NoWrap);
+        output->setMaximumBlockCount(CommandOutputBlockLimit);
         outputLayout->addWidget(output);
         workspace->addWidget(outputBox);
         workspace->setStretchFactor(0, 3);
@@ -168,6 +174,48 @@ public:
         statusBar()->showMessage(QStringLiteral("Ready — Qt display backend: %1").arg(backend));
         loadConfigFromPath(defaultConfigPath(), false);
         refreshServiceStatus();
+    }
+
+    bool writeSmokeReport(QTextStream &stream)
+    {
+        const QString defaultPath = defaultConfigPath();
+        const bool defaultPathAbsolute = QDir::isAbsolutePath(defaultPath);
+        configPath->setText(defaultPath + QStringLiteral(".explicit-smoke"));
+        const bool explicitRestartDisabled = !saveAndRestartButton->isEnabled();
+
+        resetConfigForm();
+        aimAccelCalibrationEnabled->setChecked(true);
+        aimAccelZeroX->setValue(11);
+        aimAccelZeroY->setValue(12);
+        aimAccelZeroZ->setValue(13);
+        const QByteArray config = renderedConfig();
+        const bool calibrationSourcesIsolated =
+            config.contains("aim-accel-zero-x=11\n") &&
+            config.contains("aim-accel-zero-y=12\n") &&
+            config.contains("aim-accel-zero-z=13\n") &&
+            !config.contains("aim-motion-plus-bias-");
+        const bool outputBounded =
+            output->maximumBlockCount() == CommandOutputBlockLimit;
+
+        stream << QStringLiteral("qt.platform=%1\n").arg(QGuiApplication::platformName())
+               << QStringLiteral("service.restart.explicit-config=%1\n")
+                      .arg(explicitRestartDisabled
+                               ? QStringLiteral("disabled")
+                               : QStringLiteral("enabled"))
+               << QStringLiteral("calibration.partial-source=%1\n")
+                      .arg(calibrationSourcesIsolated
+                               ? QStringLiteral("isolated")
+                               : QStringLiteral("coupled"))
+               << QStringLiteral("config.default-path=%1\n")
+                      .arg(defaultPathAbsolute
+                               ? QStringLiteral("absolute")
+                               : QStringLiteral("invalid"))
+               << QStringLiteral("output.buffer=%1\n")
+                      .arg(outputBounded
+                               ? QStringLiteral("bounded")
+                               : QStringLiteral("unbounded"));
+        return defaultPathAbsolute && explicitRestartDisabled &&
+               calibrationSourcesIsolated && outputBounded;
     }
 
 private:
@@ -321,7 +369,8 @@ private:
         aimSmoothing = spinBox(0, 95, 25, aimBox);
         aimInvertX = new QCheckBox(aimBox);
         aimInvertY = new QCheckBox(aimBox);
-        aimCalibrationEnabled = new QCheckBox(aimBox);
+        aimAccelCalibrationEnabled = new QCheckBox(aimBox);
+        aimMotionPlusCalibrationEnabled = new QCheckBox(aimBox);
         aimCalibrationDuration = spinBox(1, 30, 8, aimBox);
         aimCalibrationDuration->setSuffix(QStringLiteral(" s"));
         aimAccelZeroX = spinBox(-32768, 32767, 0, aimBox);
@@ -330,17 +379,30 @@ private:
         aimMotionPlusBiasX = spinBox(-32768, 32767, 0, aimBox);
         aimMotionPlusBiasY = spinBox(-32768, 32767, 0, aimBox);
         aimMotionPlusBiasZ = spinBox(-32768, 32767, 0, aimBox);
-        aimCalibrationEnabled->setToolTip(QStringLiteral("Save flat-surface accelerometer and MotionPlus offsets from --calibrate-aim."));
-        const auto syncCalibrationWidgets = [this](bool enabled) {
+        aimAccelCalibrationEnabled->setToolTip(
+            QStringLiteral("Save the complete accelerometer zero point from --calibrate-aim."));
+        aimMotionPlusCalibrationEnabled->setToolTip(
+            QStringLiteral("Save the complete MotionPlus bias from --calibrate-aim."));
+        const auto syncAccelCalibrationWidgets = [this](bool enabled) {
             aimAccelZeroX->setEnabled(enabled);
             aimAccelZeroY->setEnabled(enabled);
             aimAccelZeroZ->setEnabled(enabled);
+        };
+        const auto syncMotionPlusCalibrationWidgets = [this](bool enabled) {
             aimMotionPlusBiasX->setEnabled(enabled);
             aimMotionPlusBiasY->setEnabled(enabled);
             aimMotionPlusBiasZ->setEnabled(enabled);
         };
-        connect(aimCalibrationEnabled, &QCheckBox::toggled, this, syncCalibrationWidgets);
-        syncCalibrationWidgets(false);
+        connect(aimAccelCalibrationEnabled,
+                &QCheckBox::toggled,
+                this,
+                syncAccelCalibrationWidgets);
+        connect(aimMotionPlusCalibrationEnabled,
+                &QCheckBox::toggled,
+                this,
+                syncMotionPlusCalibrationWidgets);
+        syncAccelCalibrationWidgets(false);
+        syncMotionPlusCalibrationWidgets(false);
         aimForm->addRow(QStringLiteral("Output"), aimMode);
         aimForm->addRow(QStringLiteral("Best available sensor"), aimSource);
         aimForm->addRow(QStringLiteral("Activation"), aimActivation);
@@ -349,7 +411,8 @@ private:
         aimForm->addRow(QStringLiteral("Smoothing %"), aimSmoothing);
         aimForm->addRow(QStringLiteral("Invert X"), aimInvertX);
         aimForm->addRow(QStringLiteral("Invert Y"), aimInvertY);
-        aimForm->addRow(QStringLiteral("Use saved calibration"), aimCalibrationEnabled);
+        aimForm->addRow(QStringLiteral("Use accelerometer calibration"), aimAccelCalibrationEnabled);
+        aimForm->addRow(QStringLiteral("Use MotionPlus calibration"), aimMotionPlusCalibrationEnabled);
         aimForm->addRow(QStringLiteral("Calibration duration"), aimCalibrationDuration);
         aimForm->addRow(QStringLiteral("Accelerometer zero X"), aimAccelZeroX);
         aimForm->addRow(QStringLiteral("Accelerometer zero Y"), aimAccelZeroY);
@@ -924,7 +987,8 @@ private:
         aimSmoothing->setValue(25);
         aimInvertX->setChecked(false);
         aimInvertY->setChecked(false);
-        aimCalibrationEnabled->setChecked(false);
+        aimAccelCalibrationEnabled->setChecked(false);
+        aimMotionPlusCalibrationEnabled->setChecked(false);
         aimCalibrationDuration->setValue(8);
         aimAccelZeroX->setValue(0);
         aimAccelZeroY->setValue(0);
@@ -1099,22 +1163,22 @@ private:
         else if (key == QStringLiteral("aim-invert-x"))
             aimInvertX->setChecked(value == QStringLiteral("yes") || value == QStringLiteral("true") || value == QStringLiteral("1"));
         else if (key == QStringLiteral("aim-accel-zero-x")) {
-            aimCalibrationEnabled->setChecked(true);
+            aimAccelCalibrationEnabled->setChecked(true);
             aimAccelZeroX->setValue(value.toInt());
         } else if (key == QStringLiteral("aim-accel-zero-y")) {
-            aimCalibrationEnabled->setChecked(true);
+            aimAccelCalibrationEnabled->setChecked(true);
             aimAccelZeroY->setValue(value.toInt());
         } else if (key == QStringLiteral("aim-accel-zero-z")) {
-            aimCalibrationEnabled->setChecked(true);
+            aimAccelCalibrationEnabled->setChecked(true);
             aimAccelZeroZ->setValue(value.toInt());
         } else if (key == QStringLiteral("aim-motion-plus-bias-x")) {
-            aimCalibrationEnabled->setChecked(true);
+            aimMotionPlusCalibrationEnabled->setChecked(true);
             aimMotionPlusBiasX->setValue(value.toInt());
         } else if (key == QStringLiteral("aim-motion-plus-bias-y")) {
-            aimCalibrationEnabled->setChecked(true);
+            aimMotionPlusCalibrationEnabled->setChecked(true);
             aimMotionPlusBiasY->setValue(value.toInt());
         } else if (key == QStringLiteral("aim-motion-plus-bias-z")) {
-            aimCalibrationEnabled->setChecked(true);
+            aimMotionPlusCalibrationEnabled->setChecked(true);
             aimMotionPlusBiasZ->setValue(value.toInt());
         } else if (key == QStringLiteral("aim-calibration-duration"))
             aimCalibrationDuration->setValue(value.toInt());
@@ -1183,10 +1247,12 @@ private:
         out << "aim-deadzone=" << aimDeadzone->value() << "\n";
         out << "aim-smoothing=" << aimSmoothing->value() << "\n";
         out << "aim-invert-x=" << (aimInvertX->isChecked() ? "yes" : "no") << "\n";
-        if (aimCalibrationEnabled->isChecked()) {
+        if (aimAccelCalibrationEnabled->isChecked()) {
             out << "aim-accel-zero-x=" << aimAccelZeroX->value() << "\n";
             out << "aim-accel-zero-y=" << aimAccelZeroY->value() << "\n";
             out << "aim-accel-zero-z=" << aimAccelZeroZ->value() << "\n";
+        }
+        if (aimMotionPlusCalibrationEnabled->isChecked()) {
             out << "aim-motion-plus-bias-x=" << aimMotionPlusBiasX->value() << "\n";
             out << "aim-motion-plus-bias-y=" << aimMotionPlusBiasY->value() << "\n";
             out << "aim-motion-plus-bias-z=" << aimMotionPlusBiasZ->value() << "\n";
@@ -1432,7 +1498,8 @@ private:
     QSpinBox *aimDeadzone = nullptr;
     QSpinBox *aimSmoothing = nullptr;
     QCheckBox *aimInvertX = nullptr;
-    QCheckBox *aimCalibrationEnabled = nullptr;
+    QCheckBox *aimAccelCalibrationEnabled = nullptr;
+    QCheckBox *aimMotionPlusCalibrationEnabled = nullptr;
     QSpinBox *aimCalibrationDuration = nullptr;
     QSpinBox *aimAccelZeroX = nullptr;
     QSpinBox *aimAccelZeroY = nullptr;
@@ -1470,21 +1537,8 @@ int main(int argc, char **argv)
     MainWindow window;
     window.show();
     if (qEnvironmentVariable("WIILAND_CONFIG_SMOKE_TEST") == QStringLiteral("1")) {
-        auto *config = window.findChild<QLineEdit *>(QStringLiteral("configPath"));
-        auto *saveAndRestart =
-            window.findChild<QPushButton *>(QStringLiteral("saveAndRestartButton"));
-        if (!config || !saveAndRestart)
-            return EXIT_FAILURE;
-
-        config->setText(defaultConfigPath() + QStringLiteral(".explicit-smoke"));
-        const bool explicitRestartDisabled = !saveAndRestart->isEnabled();
-        QTextStream(stdout)
-            << QStringLiteral("qt.platform=%1\n").arg(QGuiApplication::platformName())
-            << QStringLiteral("service.restart.explicit-config=%1\n")
-                   .arg(explicitRestartDisabled
-                            ? QStringLiteral("disabled")
-                            : QStringLiteral("enabled"));
-        if (!explicitRestartDisabled)
+        QTextStream stream(stdout);
+        if (!window.writeSmokeReport(stream))
             return EXIT_FAILURE;
         QTimer::singleShot(50, &app, &QApplication::quit);
     }

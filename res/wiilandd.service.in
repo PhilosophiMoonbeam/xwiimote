@@ -4,6 +4,13 @@ Documentation=man:wiilandd(1)
 
 [Service]
 Type=simple
+NoNewPrivileges=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+SystemCallArchitectures=native
+UMask=0077
 ExecCondition=@bindir@/wiilandd --check-config
 ExecStart=@bindir@/wiilandd
 Restart=on-failure

@@ -139,7 +139,11 @@ before ExecStart, so invalid configuration suppresses startup without entering
 the runtime restart policy.  A process that starts and fails is restarted with
 .B Restart=on-failure
 and
-.B RestartSec=2s .
+.BR RestartSec=2s .
+The unit also denies privilege gain, personality changes, writable executable
+memory, real-time scheduling, SUID/SGID changes, and foreign syscall
+architectures, and uses
+.BR UMask=0077 .
 Enable and start it with:
 .PP
 .RS
@@ -155,16 +159,23 @@ for lifecycle diagnostics.
 .SH CONFIGURATION
 Unless
 .B --no-config
-is supplied, wiilandd loads
-.B /etc/wiiland/wiilandd.conf
-first, then
+is supplied, wiilandd loads the system configuration from the installed
+.B $(sysconfdir)/wiiland/wiilandd.conf
+path (normally
+.BR /etc/wiiland/wiilandd.conf )
+first, then an absolute
 .B $XDG_CONFIG_HOME/wiiland/wiilandd.conf
 or
 .B $HOME/.config/wiiland/wiilandd.conf
-when XDG_CONFIG_HOME is unset.  Later values override earlier values.
+when XDG_CONFIG_HOME is unset or relative.  Later values override earlier
+values.
 .B --config path
 selects one explicit key=value file instead of that hierarchy, and command
-line options override loaded values.  Use
+line options override loaded values.
+.B --config
+and
+.B --no-config
+cannot be combined.  Use
 .B --check-config
 to validate without enumerating devices and
 .B --dump-config
@@ -187,6 +198,10 @@ and xcb in an X.org session.  Explicit selection is possible with:
 .PP
 The corresponding Qt QPA plugin must be installed at runtime; configure checks
 Qt 6 Widgets but does not check runtime plugin availability.
+.PP
+Saved accelerometer and MotionPlus calibration are enabled independently, and
+each enabled sensor writes a complete X/Y/Z triple.  The command-output view
+retains the most recent 10,000 text blocks.
 .
 .SH INSTALLATION
 The build installs

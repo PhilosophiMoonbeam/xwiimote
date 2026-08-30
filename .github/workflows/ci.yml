@@ -64,7 +64,7 @@ jobs:
         run: |
           set -eu
           make DESTDIR="$PWD/stage" install
-          tests/wiilandd-install-smoke.sh "$PWD/stage" /usr yes /etc
+          tests/wiilandd-install-smoke.sh "$PWD/stage" /usr yes /etc yes
       - name: Validate installed package assets
         run: |
           set -eu

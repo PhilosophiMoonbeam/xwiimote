@@ -157,12 +157,15 @@ The obsolete `xwiibind` pairing workflow is not part of WiiLand.
 Configure profiles
 ==================
 
-The daemon reads `/etc/wiiland/wiilandd.conf` first, then
+The daemon reads the installed system configuration at
+`${sysconfdir}/wiiland/wiilandd.conf` first (normally
+`/etc/wiiland/wiilandd.conf`), then the user configuration at an absolute
 `$XDG_CONFIG_HOME/wiiland/wiilandd.conf`, or
-`$HOME/.config/wiiland/wiilandd.conf` when `XDG_CONFIG_HOME` is unset.
-Later values override earlier values. `--config PATH` selects one explicit
-file instead of this hierarchy; `--no-config` uses built-in defaults.
-`res/wiilandd.conf` is the installed sample and a useful starting point.
+`$HOME/.config/wiiland/wiilandd.conf` when `XDG_CONFIG_HOME` is unset or
+relative. Later values override earlier values. `--config PATH` selects one
+explicit file instead of this hierarchy; `--no-config` uses built-in defaults.
+The two selectors cannot be combined. `res/wiilandd.conf` is the installed
+sample and a useful starting point.
 
 The default `gamepad` profile creates one `WiiLand Virtual Controller` per
 remote for games and other evdev consumers. `desktop` additionally creates a
@@ -189,7 +192,9 @@ and motion aiming. `aim-mode=right-stick` exposes camera aim on
 `aim-mode=mouse` exposes relative aim through the virtual desktop pointer.
 Use `wiilandd --device N --calibrate-aim` on a flat, still surface and copy
 the emitted key/value lines into the same configuration file when calibration
-is wanted.
+is wanted. Each saved sensor calibration must include its complete X/Y/Z
+triple; accelerometer and MotionPlus calibration may be configured
+independently.
 
 X.org raw-device policy
 =======================
@@ -209,7 +214,10 @@ User service
 When the systemd user unit is installed, it is a user service wanted by
 `default.target`. It runs `wiilandd --check-config` as an `ExecCondition`
 before starting, so an invalid configuration is reported without entering
-the restart loop. Enable and start it in either display-server session:
+the restart loop. The unit also applies process-level hardening, including
+`NoNewPrivileges`, a locked personality, native syscall architecture, denied
+write-plus-execute mappings, and a private `0077` umask. Enable and start it in
+either display-server session:
 
 	$ systemctl --user daemon-reload
 	$ systemctl --user enable --now wiilandd.service
@@ -265,12 +273,16 @@ The following checks do not require a connected remote unless noted:
 	$ wiilandd --self-test
 
 `--doctor` reports the detected Wayland/X11 session variables and sockets,
-the resolved profile/backend, and `/dev/uinput` access. A Wayland socket is
-not expected in an X.org-only session. `--check-config` validates without
-enumerating devices; `--dump-config` shows the resolved layered values;
-`--axis-map` and `--validation-checklist` print deterministic mapping and
-hardware-coverage data. Help and list modes bypass configuration, so they
-remain usable while investigating a broken config.
+whether XWayland is available to a Wayland session, the resolved system and
+user configuration paths, the profile/backend, and `/dev/uinput` access. A
+Wayland session remains classified as Wayland when `DISPLAY` is also set;
+XWayland is a compatibility server within that session, not a session type.
+`--check-config` validates without enumerating devices; `--dump-config` shows
+the resolved layered values; `--axis-map` and `--validation-checklist` print
+deterministic mapping and hardware-coverage data. Select at most one primary
+action such as `--doctor`, `--dump-config`, or `--self-test`; all arguments are
+validated regardless of order. Help and list modes bypass configuration, so
+they remain usable while investigating a broken config.
 
 Use a dry run for event diagnostics without creating virtual devices:
 

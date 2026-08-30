@@ -21,10 +21,12 @@ fi
 
 capture=$(mktemp "${TMPDIR:-/tmp}/wiiland-config-smoke.XXXXXX")
 errors=$(mktemp "${TMPDIR:-/tmp}/wiiland-config-smoke-errors.XXXXXX")
-trap 'rm -f "$capture" "$errors"' EXIT INT HUP TERM
+smoke_home=$(mktemp -d "${TMPDIR:-/tmp}/wiiland-config-smoke-home.XXXXXX")
+trap 'rm -rf "$capture" "$errors" "$smoke_home"' EXIT INT HUP TERM
 
 set +e
-WIILAND_CONFIG_SMOKE_TEST=1 "$binary" >"$capture" 2>"$errors"
+HOME=$smoke_home XDG_CONFIG_HOME=relative WIILAND_CONFIG_SMOKE_TEST=1 \
+    "$binary" >"$capture" 2>"$errors"
 status=$?
 set -e
 
@@ -35,12 +37,15 @@ if [ "$status" -ne 0 ]; then
     exit 1
 fi
 if ! {
-    printf '%s\n%s\n' \
+    printf '%s\n%s\n%s\n%s\n%s\n' \
         "qt.platform=$expected" \
-        'service.restart.explicit-config=disabled'
+        'service.restart.explicit-config=disabled' \
+        'calibration.partial-source=isolated' \
+        'config.default-path=absolute' \
+        'output.buffer=bounded'
 } | cmp -s - "$capture"; then
     printf '%s\n' \
-        "wiiland-config smoke: unexpected QPA or explicit-config restart state" >&2
+        "wiiland-config smoke: unexpected platform or architecture state" >&2
     printf '%s\n' 'binary standard output:' >&2
     cat "$capture" >&2
     printf '%s\n' 'binary standard error:' >&2

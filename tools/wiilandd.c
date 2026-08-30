@@ -115,7 +115,9 @@
 #define ABS_HAT0X 0x10
 #endif
 
-#define SYSTEM_CONFIG_PATH "/etc/wiiland/wiilandd.conf"
+#ifndef WIILAND_SYSTEM_CONFIG_PATH
+#define WIILAND_SYSTEM_CONFIG_PATH "/etc/wiiland/wiilandd.conf"
+#endif
 #define MAX_DEVICES 32
 #define MAX_DEVICE_RULES 32
 #define BALANCE_SENSOR_COUNT 4
@@ -203,12 +205,26 @@ struct ir_screen_calibration {
 	int32_t bottom;
 };
 
+enum sensor_calibration_axis {
+	SENSOR_CALIBRATION_X = 1U << 0,
+	SENSOR_CALIBRATION_Y = 1U << 1,
+	SENSOR_CALIBRATION_Z = 1U << 2,
+	SENSOR_CALIBRATION_ALL = SENSOR_CALIBRATION_X |
+				 SENSOR_CALIBRATION_Y |
+				 SENSOR_CALIBRATION_Z,
+};
+
 struct sensor_calibration {
-	bool valid;
+	unsigned int axes;
 	int32_t x;
 	int32_t y;
 	int32_t z;
 };
+
+static bool sensor_calibration_ready(const struct sensor_calibration *cal)
+{
+	return cal->axes == SENSOR_CALIBRATION_ALL;
+}
 
 struct calibration_stats {
 	unsigned int samples;
@@ -245,6 +261,19 @@ struct desktop_binding {
 
 enum backend {
 	BACKEND_UINPUT,
+};
+enum command_action {
+	COMMAND_RUN,
+	COMMAND_HELP,
+	COMMAND_VERSION,
+	COMMAND_LIST,
+	COMMAND_AXIS_MAP,
+	COMMAND_VALIDATION_CHECKLIST,
+	COMMAND_DOCTOR,
+	COMMAND_DUMP_CONFIG,
+	COMMAND_CHECK_CONFIG,
+	COMMAND_SELF_TEST,
+	COMMAND_CALIBRATE_AIM,
 };
 
 enum trace_filter {
@@ -336,6 +365,19 @@ static void on_signal(int signo)
 	(void)signo;
 	should_stop = 1;
 }
+static int install_signal_handlers(void)
+{
+	struct sigaction action;
+
+	memset(&action, 0, sizeof(action));
+	action.sa_handler = on_signal;
+	sigemptyset(&action.sa_mask);
+	if (sigaction(SIGINT, &action, NULL) < 0 ||
+	    sigaction(SIGTERM, &action, NULL) < 0)
+		return -errno;
+
+	return 0;
+}
 
 static void info(const char *format, ...)
 {
@@ -356,6 +398,16 @@ static int set_bit(int fd, unsigned long request, int bit)
 
 	return 0;
 }
+static ssize_t write_nointr(int fd, const void *buf, size_t size)
+{
+	ssize_t len;
+
+	do {
+		len = write(fd, buf, size);
+	} while (len < 0 && errno == EINTR);
+
+	return len;
+}
 
 static int emit_event(int fd, uint16_t type, uint16_t code, int32_t value)
 {
@@ -370,7 +422,7 @@ static int emit_event(int fd, uint16_t type, uint16_t code, int32_t value)
 	ev.code = code;
 	ev.value = value;
 
-	len = write(fd, &ev, sizeof(ev));
+	len = write_nointr(fd, &ev, sizeof(ev));
 	if (len < 0)
 		return -errno;
 	if ((size_t)len != sizeof(ev))
@@ -681,9 +733,17 @@ static int create_virtual_desktop(const char *syspath)
 	if (ret)
 		goto err_close;
 
-	if (write(fd, &udev, sizeof(udev)) != (ssize_t)sizeof(udev)) {
-		ret = errno ? -errno : -EIO;
-		goto err_close;
+	{
+		ssize_t len = write_nointr(fd, &udev, sizeof(udev));
+
+		if (len < 0) {
+			ret = -errno;
+			goto err_close;
+		}
+		if ((size_t)len != sizeof(udev)) {
+			ret = -EIO;
+			goto err_close;
+		}
 	}
 
 	if (ioctl(fd, UI_DEV_CREATE) < 0) {
@@ -728,9 +788,17 @@ static int create_virtual_controller(const char *syspath)
 	if (ret)
 		goto err_close;
 
-	if (write(fd, &udev, sizeof(udev)) != (ssize_t)sizeof(udev)) {
-		ret = errno ? -errno : -EIO;
-		goto err_close;
+	{
+		ssize_t len = write_nointr(fd, &udev, sizeof(udev));
+
+		if (len < 0) {
+			ret = -errno;
+			goto err_close;
+		}
+		if ((size_t)len != sizeof(udev)) {
+			ret = -EIO;
+			goto err_close;
+		}
 	}
 
 	if (ioctl(fd, UI_DEV_CREATE) < 0) {
@@ -1548,7 +1616,7 @@ static int forward_aim_motion_plus_event(struct bridge_device *dev,
 
 	raw_x = event->v.abs[0].x;
 	raw_y = event->v.abs[0].y;
-	if (aim_motion_plus_calibration.valid) {
+	if (sensor_calibration_ready(&aim_motion_plus_calibration)) {
 		raw_x -= aim_motion_plus_calibration.x;
 		raw_y -= aim_motion_plus_calibration.y;
 	}
@@ -1568,7 +1636,7 @@ static int forward_aim_accel_event(struct bridge_device *dev,
 	    !aim_accepts_source(dev, AIM_SOURCE_ACCELEROMETER))
 		return 0;
 
-	if (aim_accel_calibration.valid) {
+	if (sensor_calibration_ready(&aim_accel_calibration)) {
 		dev->aim_accel_zero_x = aim_accel_calibration.x;
 		dev->aim_accel_zero_y = aim_accel_calibration.y;
 		dev->aim_accel_zero_z = aim_accel_calibration.z;
@@ -2451,7 +2519,7 @@ static bool calibration_stats_finish(const struct calibration_stats *stats,
 	if (calibration_jitter(stats) > AIM_CALIBRATION_MAX_JITTER)
 		return false;
 
-	cal->valid = true;
+	cal->axes = SENSOR_CALIBRATION_ALL;
 	cal->x = (int32_t)(stats->sum_x / stats->samples);
 	cal->y = (int32_t)(stats->sum_y / stats->samples);
 	cal->z = (int32_t)(stats->sum_z / stats->samples);
@@ -2736,7 +2804,7 @@ static const char *bool_name(bool value)
 static void dump_sensor_calibration(FILE *out, const char *prefix,
 				    const struct sensor_calibration *cal)
 {
-	if (!cal->valid)
+	if (!sensor_calibration_ready(cal))
 		return;
 
 	fprintf(out, "%s-x=%d\n", prefix, cal->x);
@@ -3040,17 +3108,19 @@ static int parse_calibration_axis(const char *arg,
 	switch (axis) {
 	case 'x':
 		cal->x = value;
+		cal->axes |= SENSOR_CALIBRATION_X;
 		break;
 	case 'y':
 		cal->y = value;
+		cal->axes |= SENSOR_CALIBRATION_Y;
 		break;
 	case 'z':
 		cal->z = value;
+		cal->axes |= SENSOR_CALIBRATION_Z;
 		break;
 	default:
 		return -EINVAL;
 	}
-	cal->valid = true;
 	return 0;
 }
 
@@ -3358,12 +3428,12 @@ static const char *default_config_path(void)
 	int ret;
 
 	base = getenv("XDG_CONFIG_HOME");
-	if (base && base[0]) {
+	if (base && base[0] == '/') {
 		ret = snprintf(path, sizeof(path), "%s/wiiland/wiilandd.conf",
 			       base);
 	} else {
 		base = getenv("HOME");
-		if (!base || !base[0])
+		if (!base || base[0] != '/')
 			return NULL;
 		ret = snprintf(path, sizeof(path),
 			       "%s/.config/wiiland/wiilandd.conf", base);
@@ -3380,7 +3450,7 @@ static int load_default_config_files(void)
 	const char *user_path;
 	int ret;
 
-	ret = load_config_file(SYSTEM_CONFIG_PATH, false);
+	ret = load_config_file(WIILAND_SYSTEM_CONFIG_PATH, false);
 	if (ret)
 		return ret;
 
@@ -3390,15 +3460,34 @@ static int load_default_config_files(void)
 
 	return load_config_file(user_path, false);
 }
+static int validate_sensor_calibration(
+	const char *name, const struct sensor_calibration *cal)
+{
+	if (!cal->axes || sensor_calibration_ready(cal))
+		return 0;
+
+	fprintf(stderr,
+		"wiilandd: %s calibration requires complete x, y, and z values\n",
+		name);
+	return -EINVAL;
+}
+
 static int validate_config_state(void)
 {
+	int ret;
+
 	if (ir_screen_calibration.valid && !ir_screen_calibration_ready()) {
 		fprintf(stderr,
 			"wiilandd: IR screen calibration requires right > left and bottom > top\n");
 		return -EINVAL;
 	}
 
-	return 0;
+	ret = validate_sensor_calibration(
+		"accelerometer", &aim_accel_calibration);
+	if (ret)
+		return ret;
+	return validate_sensor_calibration(
+		"MotionPlus", &aim_motion_plus_calibration);
 }
 
 static int expect_int(const char *name, int got, int want)
@@ -3990,7 +4079,7 @@ static int self_test_motion_aim(void)
 	if (ret)
 		return ret;
 
-	aim_motion_plus_calibration.valid = true;
+	aim_motion_plus_calibration.axes = SENSOR_CALIBRATION_ALL;
 	aim_motion_plus_calibration.x = 4;
 	aim_motion_plus_calibration.y = -4;
 	memset(captured_abs_seen, 0, sizeof(captured_abs_seen));
@@ -4018,7 +4107,7 @@ static int self_test_motion_aim(void)
 	aim_sensitivity = 16;
 	aim_deadzone = 4;
 	aim_smoothing = 0;
-	aim_accel_calibration.valid = true;
+	aim_accel_calibration.axes = SENSOR_CALIBRATION_ALL;
 	aim_accel_calibration.x = 100;
 	aim_accel_calibration.y = 200;
 	event.type = XWII_EVENT_ACCEL;
@@ -4395,16 +4484,44 @@ static int self_test_config(void)
 			 aim_accel_calibration.x, -12);
 	if (ret)
 		return ret;
-	ret = expect_int("config-aim-accel-valid",
-			 aim_accel_calibration.valid, 1);
+	ret = expect_int("config-aim-accel-partial",
+			 sensor_calibration_ready(&aim_accel_calibration), 0);
+	if (ret)
+		return ret;
+	snprintf(line, sizeof(line), " aim-accel-zero-y = 34\n");
+	ret = apply_config_line("self-test", 15, line);
+	if (ret)
+		return ret;
+	snprintf(line, sizeof(line), " aim-accel-zero-z = 56\n");
+	ret = apply_config_line("self-test", 16, line);
+	if (ret)
+		return ret;
+	ret = expect_int("config-aim-accel-complete",
+			 sensor_calibration_ready(&aim_accel_calibration), 1);
 	if (ret)
 		return ret;
 	snprintf(line, sizeof(line), " aim-motion-plus-bias-y = 9\n");
-	ret = apply_config_line("self-test", 15, line);
+	ret = apply_config_line("self-test", 17, line);
 	if (ret)
 		return ret;
 	ret = expect_int("config-aim-motion-plus-bias-y",
 			 aim_motion_plus_calibration.y, 9);
+	if (ret)
+		return ret;
+	ret = expect_int("config-aim-motion-plus-partial",
+			 sensor_calibration_ready(&aim_motion_plus_calibration), 0);
+	if (ret)
+		return ret;
+	snprintf(line, sizeof(line), " aim-motion-plus-bias-x = -3\n");
+	ret = apply_config_line("self-test", 18, line);
+	if (ret)
+		return ret;
+	snprintf(line, sizeof(line), " aim-motion-plus-bias-z = 7\n");
+	ret = apply_config_line("self-test", 19, line);
+	if (ret)
+		return ret;
+	ret = expect_int("config-aim-motion-plus-complete",
+			 sensor_calibration_ready(&aim_motion_plus_calibration), 1);
 	if (ret)
 		return ret;
 	snprintf(line, sizeof(line), " aim-calibration-duration = 12\n");
@@ -4960,8 +5077,10 @@ static const char *display_server_name(const char *wayland,
 	bool have_wayland = wayland && wayland[0];
 	bool have_x11 = x11 && x11[0];
 
-	if (have_wayland && have_x11)
-		return "xwayland";
+	if (session_type && !strcmp(session_type, "wayland"))
+		return "wayland";
+	if (session_type && !strcmp(session_type, "x11"))
+		return "x11";
 	if (have_wayland)
 		return "wayland";
 	if (have_x11)
@@ -4984,16 +5103,30 @@ static void print_doctor(void)
 	char x11_socket[PATH_MAX];
 	const char *wayland_socket_path;
 	const char *x11_socket_path;
+	const char *display_server;
+	const char *xwayland;
+	const char *user_config_path;
 
 	wayland_socket_path = resolve_wayland_socket(
 		wayland, runtime_dir, wayland_socket, sizeof(wayland_socket));
 	x11_socket_path = resolve_x11_socket(x11, x11_socket,
 					    sizeof(x11_socket));
+	display_server = display_server_name(wayland, x11, session_type);
+	if (strcmp(display_server, "wayland"))
+		xwayland = "not-applicable";
+	else if (!x11 || !x11[0])
+		xwayland = "no";
+	else if (!x11_socket_path)
+		xwayland = "unknown";
+	else
+		xwayland = !strcmp(socket_type(x11_socket_path), "socket") ?
+			"yes" : "no";
+	user_config_path = default_config_path();
 
-	printf("session.display-server=%s\n",
-	       display_server_name(wayland, x11, session_type));
+	printf("session.display-server=%s\n", display_server);
 	printf("session.wayland=%s\n", wayland && wayland[0] ? "yes" : "no");
 	printf("session.x11=%s\n", x11 && x11[0] ? "yes" : "no");
+	printf("session.xwayland.available=%s\n", xwayland);
 	printf("session.type=%s\n",
 	       session_type && session_type[0] ? session_type : "unknown");
 	printf("session.desktop=%s\n",
@@ -5014,6 +5147,15 @@ static void print_doctor(void)
 	printf("x11.socket.exists=%s\n", path_exists(x11_socket_path));
 	printf("x11.socket.readable=%s\n", path_readable(x11_socket_path));
 	printf("x11.socket.writable=%s\n", path_writable(x11_socket_path));
+	printf("config.system.path=%s\n", WIILAND_SYSTEM_CONFIG_PATH);
+	printf("config.system.exists=%s\n",
+	       path_exists(WIILAND_SYSTEM_CONFIG_PATH));
+	printf("config.system.readable=%s\n",
+	       path_readable(WIILAND_SYSTEM_CONFIG_PATH));
+	printf("config.user.path=%s\n",
+	       user_config_path ? user_config_path : "unknown");
+	printf("config.user.exists=%s\n", path_exists(user_config_path));
+	printf("config.user.readable=%s\n", path_readable(user_config_path));
 	printf("dev.uinput.exists=%s\n", path_exists("/dev/uinput"));
 	printf("dev.uinput.readable=%s\n", path_readable("/dev/uinput"));
 	printf("dev.uinput.writable=%s\n", path_writable("/dev/uinput"));
@@ -5025,6 +5167,50 @@ static void print_doctor(void)
 }
 
 
+
+static const char *command_action_name(enum command_action action)
+{
+	switch (action) {
+	case COMMAND_RUN:
+		return "run";
+	case COMMAND_HELP:
+		return "--help";
+	case COMMAND_VERSION:
+		return "--version";
+	case COMMAND_LIST:
+		return "--list";
+	case COMMAND_AXIS_MAP:
+		return "--axis-map";
+	case COMMAND_VALIDATION_CHECKLIST:
+		return "--validation-checklist";
+	case COMMAND_DOCTOR:
+		return "--doctor";
+	case COMMAND_DUMP_CONFIG:
+		return "--dump-config";
+	case COMMAND_CHECK_CONFIG:
+		return "--check-config";
+	case COMMAND_SELF_TEST:
+		return "--self-test";
+	case COMMAND_CALIBRATE_AIM:
+		return "--calibrate-aim";
+	default:
+		return "unknown";
+	}
+}
+
+static int select_command_action(enum command_action *selected,
+				 enum command_action requested,
+				 const char *option)
+{
+	if (*selected != COMMAND_RUN && *selected != requested) {
+		fprintf(stderr, "wiilandd: conflicting actions: %s and %s\n",
+			command_action_name(*selected), option);
+		return -EINVAL;
+	}
+
+	*selected = requested;
+	return 0;
+}
 
 static void usage(FILE *out)
 {
@@ -5090,11 +5276,8 @@ int main(int argc, char **argv)
 	bool explicit_config = false;
 	bool no_config = false;
 	bool self_test = false;
-	bool check_config = false;
-	bool dump_config = false;
-	bool doctor = false;
 	bool diagnostic = false;
-	bool calibrate_aim = false;
+	enum command_action action = COMMAND_RUN;
 	int i, ret;
 
 	for (i = 1; i < argc; ++i) {
@@ -5113,10 +5296,6 @@ int main(int argc, char **argv)
 			no_config = true;
 		} else if (!strcmp(argv[i], "--self-test")) {
 			self_test = true;
-		} else if (!strcmp(argv[i], "--check-config")) {
-			check_config = true;
-		} else if (!strcmp(argv[i], "--dump-config")) {
-			dump_config = true;
 		} else if (!strcmp(argv[i], "--version") ||
 			   !strcmp(argv[i], "-h") || !strcmp(argv[i], "--help") ||
 			   !strcmp(argv[i], "-l") || !strcmp(argv[i], "--list") ||
@@ -5126,6 +5305,11 @@ int main(int argc, char **argv)
 		} else if (!strcmp(argv[i], "-v") || !strcmp(argv[i], "--verbose")) {
 			verbose = true;
 		}
+	}
+	if (no_config && explicit_config) {
+		fprintf(stderr,
+			"wiilandd: --no-config cannot be combined with --config\n");
+		return EINVAL;
 	}
 
 	if (!diagnostic && !no_config && (!self_test || explicit_config)) {
@@ -5139,21 +5323,35 @@ int main(int argc, char **argv)
 
 	for (i = 1; i < argc; ++i) {
 		if (!strcmp(argv[i], "-h") || !strcmp(argv[i], "--help")) {
-			usage(stdout);
-			return 0;
+			ret = select_command_action(
+				&action, COMMAND_HELP, argv[i]);
+			if (ret)
+				return abs(ret);
 		} else if (!strcmp(argv[i], "--version")) {
-			printf("wiilandd %s\n", PACKAGE_VERSION);
-			return 0;
+			ret = select_command_action(
+				&action, COMMAND_VERSION, argv[i]);
+			if (ret)
+				return abs(ret);
 		} else if (!strcmp(argv[i], "-l") || !strcmp(argv[i], "--list")) {
-			return abs(list_devices());
+			ret = select_command_action(
+				&action, COMMAND_LIST, argv[i]);
+			if (ret)
+				return abs(ret);
 		} else if (!strcmp(argv[i], "--axis-map")) {
-			print_axis_map();
-			return 0;
+			ret = select_command_action(
+				&action, COMMAND_AXIS_MAP, argv[i]);
+			if (ret)
+				return abs(ret);
 		} else if (!strcmp(argv[i], "--validation-checklist")) {
-			print_validation_checklist();
-			return 0;
+			ret = select_command_action(
+				&action, COMMAND_VALIDATION_CHECKLIST, argv[i]);
+			if (ret)
+				return abs(ret);
 		} else if (!strcmp(argv[i], "--doctor")) {
-			doctor = true;
+			ret = select_command_action(
+				&action, COMMAND_DOCTOR, argv[i]);
+			if (ret)
+				return abs(ret);
 		} else if (!strncmp(argv[i], "--profile=", 10)) {
 			if (parse_profile(argv[i] + 10)) {
 				usage(stderr);
@@ -5325,7 +5523,10 @@ int main(int argc, char **argv)
 				return EINVAL;
 			}
 		} else if (!strcmp(argv[i], "--calibrate-aim")) {
-			calibrate_aim = true;
+			ret = select_command_action(
+				&action, COMMAND_CALIBRATE_AIM, argv[i]);
+			if (ret)
+				return abs(ret);
 		} else if (!strncmp(argv[i], "--config=", 9)) {
 		} else if (!strcmp(argv[i], "-c") || !strcmp(argv[i], "--config")) {
 			++i;
@@ -5333,9 +5534,15 @@ int main(int argc, char **argv)
 		} else if (!strcmp(argv[i], "-n") || !strcmp(argv[i], "--dry-run")) {
 			dry_run = true;
 		} else if (!strcmp(argv[i], "--self-test")) {
-			self_test = true;
+			ret = select_command_action(
+				&action, COMMAND_SELF_TEST, argv[i]);
+			if (ret)
+				return abs(ret);
 		} else if (!strcmp(argv[i], "--check-config")) {
-			check_config = true;
+			ret = select_command_action(
+				&action, COMMAND_CHECK_CONFIG, argv[i]);
+			if (ret)
+				return abs(ret);
 		} else if (!strncmp(argv[i], "--trace-events=", 15)) {
 			if (parse_trace_events(argv[i] + 15)) {
 				usage(stderr);
@@ -5344,7 +5551,10 @@ int main(int argc, char **argv)
 		} else if (!strcmp(argv[i], "--trace-events")) {
 			parse_trace_events(NULL);
 		} else if (!strcmp(argv[i], "--dump-config")) {
-			dump_config = true;
+			ret = select_command_action(
+				&action, COMMAND_DUMP_CONFIG, argv[i]);
+			if (ret)
+				return abs(ret);
 		} else if (!strcmp(argv[i], "-v") || !strcmp(argv[i], "--verbose")) {
 			verbose = true;
 		} else if (!strcmp(argv[i], "-d") || !strcmp(argv[i], "--device")) {
@@ -5362,24 +5572,41 @@ int main(int argc, char **argv)
 	if (ret)
 		return abs(ret);
 
-
-	if (dump_config) {
-		dump_config_state(stdout);
+	switch (action) {
+	case COMMAND_HELP:
+		usage(stdout);
 		return 0;
-	}
-	if (check_config)
+	case COMMAND_VERSION:
+		printf("wiilandd %s\n", PACKAGE_VERSION);
 		return 0;
-	if (doctor) {
+	case COMMAND_LIST:
+		return abs(list_devices());
+	case COMMAND_AXIS_MAP:
+		print_axis_map();
+		return 0;
+	case COMMAND_VALIDATION_CHECKLIST:
+		print_validation_checklist();
+		return 0;
+	case COMMAND_DOCTOR:
 		print_doctor();
 		return 0;
-	}
-	if (self_test)
+	case COMMAND_DUMP_CONFIG:
+		dump_config_state(stdout);
+		return 0;
+	case COMMAND_CHECK_CONFIG:
+		return 0;
+	case COMMAND_SELF_TEST:
 		return abs(run_self_test());
-	if (calibrate_aim)
-		return abs(run_calibrate_aim(device));
+	case COMMAND_CALIBRATE_AIM:
+	case COMMAND_RUN:
+		break;
+	}
 
-	signal(SIGINT, on_signal);
-	signal(SIGTERM, on_signal);
+	ret = install_signal_handlers();
+	if (ret)
+		return abs(ret);
+	if (action == COMMAND_CALIBRATE_AIM)
+		return abs(run_calibrate_aim(device));
 
 	ret = device ? run_one(device) : run_monitor();
 	if (ret < 0)

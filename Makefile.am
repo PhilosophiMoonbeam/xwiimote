@@ -158,13 +158,12 @@ AM_CFLAGS = \
 	-Wall \
 	-pipe \
 	-fno-common \
-	-ffast-math \
 	-fdiagnostics-show-option \
 	-fno-strict-aliasing \
 	-fvisibility=hidden \
 	-ffunction-sections \
 	-fdata-sections \
-	-fstack-protector
+	-fstack-protector-strong
 AM_CXXFLAGS = \
 	-Wall \
 	-Wextra \
@@ -173,7 +172,7 @@ AM_CXXFLAGS = \
 	-fvisibility=hidden \
 	-ffunction-sections \
 	-fdata-sections \
-	-fstack-protector
+	-fstack-protector-strong
 AM_CPPFLAGS = \
 	-include $(top_builddir)/config.h \
 	-I $(srcdir)/lib \
@@ -238,7 +237,8 @@ xwiishow_LDFLAGS = \
 wiilandd_SOURCES = \
 	tools/wiilandd.c
 wiilandd_CPPFLAGS = \
-	$(AM_CPPFLAGS)
+	$(AM_CPPFLAGS) \
+	-D'WIILAND_SYSTEM_CONFIG_PATH="$(wiilandconfigdir)/wiilandd.conf"'
 wiilandd_LDADD = \
 	libxwiimote.la
 wiilandd_LDFLAGS = \

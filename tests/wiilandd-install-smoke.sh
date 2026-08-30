@@ -2,9 +2,9 @@
 # Verify staged WiiLand install paths for the shared Linux input stack.
 set -eu
 
-usage='usage: wiilandd-install-smoke.sh <DESTDIR> [prefix] [qt-ui] [sysconfdir]'
+usage='usage: wiilandd-install-smoke.sh <DESTDIR> [prefix] [qt-ui] [sysconfdir] [xwiishow]'
 case $# in
-1|2|3|4) ;;
+1|2|3|4|5) ;;
 *)
 	printf '%s\n' "$usage" >&2
 	exit 1
@@ -14,6 +14,7 @@ stage=$1
 prefix=${2:-/usr}
 qt_ui=${3:-no}
 sysconfdir=${4:-$prefix/etc}
+xwiishow_enabled=${5:-yes}
 
 case $stage in
 /*) ;;
@@ -44,6 +45,14 @@ yes|no) ;;
 	exit 1
 	;;
 esac
+case $xwiishow_enabled in
+yes|no) ;;
+*)
+	printf '%s\n' "xwiishow must be yes or no: $xwiishow_enabled" >&2
+	exit 1
+	;;
+esac
+
 
 rules=$stage$prefix/lib/udev/rules.d/70-wiiland-uinput.rules
 led_rules=$stage$prefix/lib/udev/rules.d/70-udev-wiiland.rules
@@ -58,14 +67,34 @@ man1=$stage$prefix/share/man/man1
 man7=$stage$prefix/share/man/man7
 
 for path in "$rules" "$led_rules" "$service" "$xorg" "$doc" "$config" \
-	"$system_config" "$bin" "$report" \
-	"$man1/xwiishow.1" "$man1/wiilandd.1" \
+	"$system_config" "$bin" "$report" "$man1/wiilandd.1" \
 	"$man7/wiiland.7" "$man7/libxwiimote.7"; do
 	if [ ! -e "$path" ]; then
 		printf '%s\n' "missing staged install artifact: $path" >&2
 		exit 1
 	fi
 done
+xwiishow=$stage$prefix/bin/xwiishow
+xwiishow_man=$man1/xwiishow.1
+if [ "$xwiishow_enabled" = yes ]; then
+	for path in "$xwiishow" "$xwiishow_man"; do
+		if [ ! -e "$path" ]; then
+			printf '%s\n' "missing staged xwiishow artifact: $path" >&2
+			exit 1
+		fi
+	done
+	if [ ! -x "$xwiishow" ]; then
+		printf '%s\n' "xwiishow is not executable: $xwiishow" >&2
+		exit 1
+	fi
+else
+	for path in "$xwiishow" "$xwiishow_man"; do
+		if [ -e "$path" ]; then
+			printf '%s\n' "unexpected staged xwiishow artifact: $path" >&2
+			exit 1
+		fi
+	done
+fi
 gui=$stage$prefix/bin/wiiland-config
 desktop=$stage$prefix/share/applications/io.github.philosophimoonbeam.wiiland-config.desktop
 icon=$stage$prefix/share/icons/hicolor/scalable/apps/io.github.philosophimoonbeam.wiiland.svg
@@ -143,6 +172,13 @@ grep -F '[Unit]' "$service" >/dev/null
 grep -F '[Service]' "$service" >/dev/null
 grep -F 'Type=simple' "$service" >/dev/null
 grep -F 'Restart=on-failure' "$service" >/dev/null
+grep -F 'NoNewPrivileges=yes' "$service" >/dev/null
+grep -F 'LockPersonality=yes' "$service" >/dev/null
+grep -F 'MemoryDenyWriteExecute=yes' "$service" >/dev/null
+grep -F 'RestrictRealtime=yes' "$service" >/dev/null
+grep -F 'RestrictSUIDSGID=yes' "$service" >/dev/null
+grep -F 'SystemCallArchitectures=native' "$service" >/dev/null
+grep -F 'UMask=0077' "$service" >/dev/null
 grep -F '[Install]' "$service" >/dev/null
 if grep -F '@bindir@' "$service" >/dev/null; then
 	printf '%s\n' "unsubstituted bindir in staged service: $service" >&2
