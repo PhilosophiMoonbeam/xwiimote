@@ -1,13 +1,8 @@
-.\"
-.\" Dedicated to the Public Domain
-.\"
-.TH "XWIISHOW" 1 "August 2026" "WiiLand" "WiiLand Manual"
+.TH XWIISHOW 1 "August 2026" "wiiland" "WiiLand Manual"
 .SH NAME
-xwiishow \- inspect and test connected Wii Remote devices
-.
+xwiishow \- inspect and exercise a connected Wii Remote
 .SH SYNOPSIS
-.B xwiishow
-.BR \-h | \-\-help
+.B xwiishow --help
 .br
 .B xwiishow list
 .br
@@ -16,108 +11,143 @@ xwiishow \- inspect and test connected Wii Remote devices
 .br
 .B xwiishow
 .I /sys/path/to/device
-.
 .SH DESCRIPTION
-.B xwiishow
-lists Wii Remote devices or opens one in an interactive ncurses interface.
-The
-.B list
-form writes one tab-separated ordinal and absolute sysfs path per line.
-It does not require a terminal, so its output can be redirected or piped.
-.
+.B xwiishow list
+enumerates connected Wii Remotes and writes one tab-separated positive ordinal
+and sysfs path per line.  It is intended for pipelines and does not require a
+terminal.  An empty list is successful and produces no lines.
 .PP
-The interactive form accepts exactly one selector: a positive device ordinal
-from
-.BR "xwiishow list" ,
-or an absolute device path below
-.BR /sys .
-Zero, negative, malformed, overflowing, or trailing-character ordinals are
+The ordinal and absolute-path forms open one remote in an interactive
+ratatui/crossterm terminal interface.  The ordinal is resolved in monitor
+order, as printed by
+.BR list .
+The path form must begin with
+.BR /sys/
+\&.  A zero, malformed, overflowing, or otherwise non-positive ordinal is
 rejected, as are extra arguments.
-Before starting ncurses,
-.B xwiishow
-prints the resolved path in this form:
-.
+.PP
+After opening the device and before checking terminal state, the program
+prints:
+.PP
 .nf
 Using Wii Remote: /sys/path/to/device
 .fi
-.
 .PP
-Interactive use requires terminal devices on both standard input and standard
-output, a usable
-.B TERM
-value, and a terminal at least 80 columns by 24 lines.
-It is display-server neutral: it does not connect to X11 or Wayland.
-Press
-.B q
-to quit.
-Run
-.B "xwiishow --help"
-for the complete keyboard command list.
-.
+Interactive mode then requires a terminal on both standard input and standard
+output, a non-empty TERM other than
+.BR dumb ,
+and at least 80 columns by 24 lines.  It enters raw mode and an alternate
+screen.  The basic view is used when both dimensions meet the 80 by 24 minimum but either
+dimension is below 160 columns or 48 lines.  The extended view is used only
+when both dimensions are at least 160 by 48.  A smaller terminal is rejected.
 .SH OPTIONS
 .TP
-.BR \-h ", " \-\-help
-Print help and exit successfully.
-.
-.SH PERMISSIONS
-Readable input-device access is sufficient for monitoring buttons, sensors,
-and extensions.
-.B xwiishow
-continues opening readable interfaces when optional writable access is denied.
-Rumble and LED controls are shown as unavailable when their input device or
-sysfs LED attributes cannot be written.
-.
+.BR -h , " --help"
+Print help and exit successfully.  Help lists the interactive keyboard
+commands.
 .PP
-Access is normally granted through the active session's device ACLs or local
-udev policy.
-If input cannot be read, check the ACLs on the corresponding
-.B /dev/input/event*
-nodes and the system's udev rules.
-If an LED cannot be changed, check write access to its sysfs
-.B brightness
-attribute.
-Running the entire program as root is neither required nor recommended.
-.
+There are no other options.  Device selection is positional.
+.SH INTERACTIVE COMMANDS
+Commands are recognized on key press or repeat:
+.TP
+.B q
+Quit and restore the terminal.
+.TP
+.B f
+Freeze or unfreeze the displayed values.  Input events continue to be read,
+but values are not updated while frozen.
+.TP
+.B s
+Refresh static values such as battery, LED state, device type, and extension.
+.TP
+.B k
+Toggle core key-event monitoring.
+.TP
+.B a
+Toggle accelerometer monitoring.
+.TP
+.B i
+Toggle infrared-camera monitoring.
+.TP
+.B m
+Toggle MotionPlus monitoring.
+.TP
+.B n
+Toggle MotionPlus normalization (50 when enabled, 0 when disabled).
+.TP
+.B N
+Toggle Nunchuk monitoring.
+.TP
+.B c
+Toggle Classic Controller monitoring.
+.TP
+.B b
+Toggle Balance Board monitoring.
+.TP
+.B p
+Toggle Wii U Pro Controller monitoring.
+.TP
+.B g
+Toggle Guitar controller monitoring.
+.TP
+.B d
+Toggle Drums controller monitoring.
+.TP
+.B r
+Toggle the rumble motor when writable.  Read-only input reports rumble as
+unavailable.
+.TP
+.B 1 , 2 , 3 , 4
+Toggle the corresponding Wii Remote LED when writable.
+.PP
+The interface displays available controller data and button state, including
+core accelerometer and IR values, MotionPlus, Nunchuk, Classic Controller,
+Balance Board, Pro Controller, Guitar, and Drums values when those interfaces
+are available.  Hotplug watch and device-gone events are reported in the
+status area; readable interfaces remain usable when optional writable controls
+cannot be opened.
+.SH NON-INTERACTIVE USE
+For redirected or piped output use
+.BR "xwiishow list" .
+For an ordinal or path selection, the resolved-device line is printed before
+terminal checks.  If standard input is not a terminal, the program then emits
+an error that interactive UI requires a terminal on stdin; if standard output
+is not a terminal, it emits the corresponding stdout error.  Empty or
+.B dumb
+TERM produces a usable-TERM error.  These checks return failure rather than
+falling back to a non-interactive device dump.
+.SH PERMISSIONS
+Readable hid-wiimote input access is sufficient for monitoring.  Rumble and
+LED controls require writable device access and are disabled when unavailable.
+The program does not elevate privileges.
+.SH EXIT STATUS
+Returns zero for help, a successful device listing, or a normally closed
+interactive session.  Returns one for invalid arguments, an unavailable or
+unresolved device, monitor creation failure, insufficient input access,
+non-TTY or unusable TERM, a terminal smaller than 80 by 24, or an interactive
+runtime or terminal-restoration failure.
 .SH EXAMPLES
-List devices; this form is suitable for a pipeline:
-.
+List devices for a pipeline:
+.PP
 .nf
-.B $ xwiishow list
+$ xwiishow list
 1	/sys/devices/platform/example/0005:057E:0306.0001
 .fi
-.
 .PP
 Open the first listed device:
-.
-.nf
-.B $ xwiishow 1
-Using Wii Remote: /sys/devices/platform/example/0005:057E:0306.0001
-<ncurses interface headed "WIILAND SHOW">
-.fi
-.
 .PP
-The absolute path printed by
-.B list
-may be passed instead of its ordinal:
-.
 .nf
-.B $ xwiishow /sys/devices/platform/example/0005:057E:0306.0001
+$ xwiishow 1
 Using Wii Remote: /sys/devices/platform/example/0005:057E:0306.0001
-<ncurses interface headed "WIILAND SHOW">
 .fi
-.
-.SH EXIT STATUS
-Returns zero after explicit help, a successful listing, or a normally closed
-interactive session.
-Returns nonzero for invalid arguments, an unresolved device, insufficient
-read access, terminal setup or restoration failure, or an interactive runtime
-failure.
-.
-.SH AUTHOR
-David Herrmann <dh.herrmann@googlemail.com>
-.br
-The WiiLand Project: https://github.com/PhilosophiMoonbeam/wiiland
-.
-.SH "SEE ALSO"
+.PP
+Open the same device by path:
+.PP
+.nf
+$ xwiishow /sys/devices/platform/example/0005:057E:0306.0001
+.fi
+.SH SEE ALSO
+.BR wiilandd (1),
+.BR wiiland-config (1),
 .BR wiiland (7),
 .BR libxwiimote (7)

@@ -1,692 +1,395 @@
 .TH WIILANDD 1 "August 2026" "wiiland" "WiiLand Manual"
-
 .SH NAME
-wiilandd \- bridge Wii Remote input to shared Linux virtual evdev devices
+wiilandd \- bridge Wii Remote input to Linux virtual evdev devices
 .SH SYNOPSIS
 .B wiilandd
 .RI [ OPTIONS ]
 .br
 .B wiilandd --device
-.RI number | /sys/path
+.I number-or-absolute-path
 .RI [ OPTIONS ]
 .SH DESCRIPTION
 .B wiilandd
-is the display-server-neutral Wii Remote input daemon. It reads hid-wiimote
-events through
-.B libxwiimote
-and creates display-neutral virtual devices with Linux
+reads hid-wiimote events through libxwiimote and exposes the selected Wii
+Remote inputs through Linux
 .BR uinput .
-Those devices appear as evdev nodes and are consumed by a Wayland compositor
-through libinput, by the X.org input stack, and by SDL, Steam, Wine/Proton, and
-native applications through their normal Linux input paths.
+The resulting devices are named
+.B "WiiLand Virtual Controller"
+and
+.B "WiiLand Virtual Desktop"
+and are consumed through the normal evdev/libinput path.  The daemon does not
+connect to a display server.
 .PP
-The ingestion and virtual-device path is the same in Wayland and X.org sessions;
-the daemon does not connect to either display server. On X.org, the installed
-InputClass policy suppresses matching raw Wii Remote input nodes to avoid
-duplicate input, while leaving libxwiimote ingestion and
-.B WiiLand Virtual *
-devices unaffected.
-.SH PAIRING
-Pair a Wii Remote through the desktop Bluetooth UI or the current
-.B bluetoothctl
-workflow. Make the remote discoverable, then use:
-.PP
-.RS
-.B bluetoothctl
-.br
-.B power on
-.br
-.B agent on
-.br
-.B default-agent
-.br
-.B scan on
-.br
-.B pair XX:XX:XX:XX:XX:XX
-.br
-.B trust XX:XX:XX:XX:XX:XX
-.br
-.B connect XX:XX:XX:XX:XX:XX
-.br
-.B scan off
-.br
-.B quit
-.RE
-.PP
-Replace the address with the one reported by
-.B scan on
-; desktop Bluetooth panels provide the equivalent discovery, pairing, and
-connection operations. The obsolete
-.B xwiibind
-pairing workflow is not part of WiiLand.
+With no action option, the daemon monitors all connected and hot-plugged
+remotes.  With
+.BR --device ,
+it handles one selected remote.  A selector is a positive ordinal from
+.BR --list
+or an absolute device path (normally below
+.BR /sys ).
 .SH OPTIONS
+.PP
+Value options accept either a separate value (for example,
+.B --profile desktop
+) or an equals form (for example,
+.BR --profile=desktop ).
+The optional value of
+.B --trace-events
+is supplied only in the equals form.
 .TP
 .BR -h , " --help"
-Show help and exit without loading configuration.
+Print command help and exit.  This mode does not load configuration.
+.TP
+.B --version
+Print the version and exit.  This mode does not load configuration.
 .TP
 .BR -l , " --list"
-List connected Wii Remote devices and exit. Combine with
-.B --verbose
-to include devtype and extension attributes from sysfs. This does not create
-uinput devices or load configuration.
+List connected Wii Remotes and exit.  Each device is printed as an ordinal,
+a tab, and its sysfs path.  If no devices are found, print
+.B "No Wii Remote devices found"
+\&.  Combine with
+.BR --verbose
+to print
+.B devtype
+and
+.B extension
+attributes for each device.
 .TP
-.BR --version
-Print the wiilandd version and exit without loading configuration.
+.BR -d , " --device " number-or-absolute-path
+Handle one device instead of monitoring all devices.  An ordinal is resolved
+in monitor order; an absolute path is used as supplied.  This option also
+selects the device for
+.BR --calibrate-aim .
 .TP
-.BR -d , " --device " number | /sys/path
-Bridge one device instead of monitoring all connected and hotplugged devices.
-A number refers to the output of
-.BR --list .
-.TP
-.BR -p , " --profile " gamepad | desktop | both
-Select the virtual input profile. The default
-.B gamepad
-profile creates a virtual controller for games. The
+.BR -p , " --profile " gamepad\fR|\fBdesktop\fR|\fBboth
+Select the default virtual-input profile.  The default is
+.BR gamepad .
 .B desktop
-profile creates a virtual mouse/keyboard device: D-pad repeat and valid IR
-events move the pointer, A/B click, +/- send Enter/Escape, Home sends the
-compositor overview key, and 1/2 send Page Down/Page Up.
+adds pointer and desktop button output;
+.B both
+enables both profiles.  Per-device configuration rules can override this
+selection.
 .TP
-.BR --backend " " uinput
-Select the input backend. Only
-.B uinput
-is currently supported; it is the shared Linux virtual-input path for Wayland,
-X.org, and non-display consumers.
+.B --backend=uinput
+Select the input backend.  The only accepted value and the default is
+.BR uinput .
 .TP
-.BR --pointer-speed " " 1-127
-Set the desktop profile pointer step in pixels per repeat tick. The default is
-16.
+.B --pointer-speed=1-127
+Desktop D-pad pointer step per repeat tick.  The default is 16.
 .TP
-.BR --ir-speed " " 1-127
-Set the desktop profile IR pointer gain. The default is 8, matching one eighth
-of the raw IR camera delta.
+.B --ir-speed=1-127
+Desktop IR pointer gain.  The default is 8.
 .TP
-.BR --ir-deadzone " " 0-127
-Suppress desktop profile IR pointer deltas smaller than this value after gain
-scaling. The default is 0.
+.B --ir-deadzone=0-127
+Discard small IR pointer deltas after gain scaling.  The default is 0.
 .TP
-.BR --ir-smoothing " " 0-95
-Smooth desktop profile IR pointer coordinates by retaining this percentage of
-the previous filtered position. The default is 0.
+.B --ir-smoothing=0-95
+Retain this percentage of the previous filtered IR position.  The default is
+0.
 .TP
-.BR --ir-tracking " " dual | centroid | first
-Select IR blob tracking. The default
-.B dual
-uses the midpoint of the widest valid IR-dot pair, avoiding source-order swaps
-when both sensor-bar LEDs are visible.
+.B --ir-tracking=dual\fR|\fBcentroid\fR|\fBfirst
+Select the IR source tracker.  The default is
+.BR dual ,
+which uses the midpoint of the widest valid pair;
 .B centroid
-averages every valid dot.
+averages valid points, and
 .B first
-preserves the legacy first-valid-source tracker.
+uses the first valid point.
 .TP
-.BR --ir-aim-mapping " " relative | absolute
-Select IR aim mapping. The default
-.B relative
-emits camera-like motion deltas and requires no screen calibration.
+.B --ir-aim-mapping=relative\fR|\fBabsolute
+Select IR aim output mapping.  The default is
+.BR relative .
 .B absolute
-maps the selected IR point through
+uses the
 .B ir-screen-*
-calibration bounds for users who want Wii-menu-style positional aim.
+configuration bounds.
+.TP
+.B --aim-mode=off\fR|\fBmouse\fR|\fBright-stick
+Select motion aim output.  The default is
+.BR off .
+.B mouse
+emits relative pointer motion and
+.B right-stick
+emits ABS_RX/ABS_RY aim axes.
+.TP
+.B --aim-source=auto\fR|\fBir\fR|\fBmotion-plus\fR|\fBaccelerometer
+Select the motion sensor for aim.  The default is
+.BR auto ,
+which prefers IR, then MotionPlus, then accelerometer data.
+.TP
+.B --aim-activation=always\fR|\fBb\fR|\fBz\fR|\fBc
+Select aim activation.  The default is
+.BR b .
+The latter three values gate aim on the Wii Remote B, Nunchuk Z, or Nunchuk C
+button respectively.
+.TP
+.B --aim-sensitivity=1-127
+Motion aim gain.  The default is 16.
+.TP
+.B --aim-deadzone=0-32767
+Motion aim deadzone before gain.  The default is 4.
+.TP
+.B --aim-smoothing=0-95
+Motion aim smoothing percentage.  The default is 25.
+.TP
+.B --aim-invert-x=yes\fR|\fBno
+Invert motion aim X.  The default is
+.BR no .
+Values
+.BR true / false
+and
+.BR 1 / 0
+are also accepted.
+.TP
+.B --aim-invert-y=yes\fR|\fBno
+Invert motion aim Y.  The default is
+.BR no .
+Values
+.BR true / false
+and
+.BR 1 / 0
+are also accepted.
+.TP
+.B --aim-calibration-duration=1-30
+Number of seconds sampled by
+.BR --calibrate-aim .
+The default is 8.
 .TP
 .BR -c , " --config " path
-Load a key=value configuration file. Command-line options override loaded
-configuration.
+Load one required key=value configuration file instead of the default layer
+hierarchy.  Command-line values override the file.
 .TP
-.BR --no-config
-Use built-in defaults instead of loading the default configuration hierarchy.
-It cannot be combined with
+.B --no-config
+Use built-in defaults and do not load configuration files.  This option cannot
+be combined with
 .BR --config .
 .TP
 .BR -n , " --dry-run"
-Enumerate and open devices without creating /dev/uinput devices or emitting
-virtual input. Useful for smoke tests and service diagnostics.
+Run device handling without creating virtual uinput devices or emitting input.
 .TP
-.BR --check-config
-Load configuration, apply command-line overrides, validate the resulting state,
-and exit without enumerating devices. Useful for packaging, service preflight,
-and configuration saves.
+.B --check-config
+Load configuration, apply command-line values, validate it, and exit without
+enumerating devices.
 .TP
-.BR --dump-config
-Print the fully resolved configuration after loading files and applying
-command-line overrides, then exit. This is the effective configuration consumed
-by a normal daemon start.
+.B --dump-config
+Print the resolved configuration as key=value lines and exit.  The output
+reflects loaded files followed by command-line overrides.
 .TP
-.BR --axis-map
-Print the virtual gamepad axis and button mapping used by the gamepad profile,
-then exit. This is a hardware-validation aid, does not enumerate devices, and
-does not load configuration.
+.B --axis-map
+Print the virtual gamepad axis and button map and exit.  This diagnostic does
+not load configuration or enumerate devices.
 .TP
-.BR --validation-checklist
-Print the required real-hardware validation matrix, then exit. This is a
-hardware-report aid, does not enumerate devices, and does not load
-configuration.
+.B --validation-checklist
+Print the hardware-validation checklist and exit.  This diagnostic does not
+load configuration or enumerate devices.
 .TP
-.BR --doctor
-Print runtime readiness diagnostics and exit without enumerating Wii devices.
-Configuration is loaded like a normal daemon start unless
+.B --doctor
+Print environment, display-socket, configuration-path, and /dev/uinput
+readiness fields and exit.  It loads configuration like a normal start unless
 .B --no-config
-is given. The output classifies the active session as
-.BR wayland ,
-.BR x11 ,
-.BR headless ,
-or
-.B unknown
-from
-.BR WAYLAND_DISPLAY ,
-.BR DISPLAY ,
-and
-.BR XDG_SESSION_TYPE .
-A Wayland session remains
-.B wayland
-when
-.B DISPLAY
-is also set; the separate
-.B session.xwayland.available
-field reports whether a local XWayland display is available.
-The output also reports the raw session fields
-.BR XDG_SESSION_TYPE
-and
-.BR XDG_CURRENT_DESKTOP ,
-the Wayland display and
-.BR XDG_RUNTIME_DIR ,
-resolved Wayland and X11 socket details, configured system and resolved user
-configuration paths, and
-.BR /dev/uinput
-existence/readability/writability. These are informational environment and
-filesystem checks; the daemon does not connect to either display server.
+is used.
 .TP
-.BR --self-test
-Run deterministic profile, config, button-map, IR, and pointer-motion tests, then exit.
-This mode does not enumerate devices or open
-.BR /dev/uinput .
+.B --self-test
+Run deterministic mapping, configuration, calibration, and trace checks, then
+exit without enumerating devices or opening /dev/uinput.
 .TP
-.BR --trace-events [ =all | keys | axes | ir | motion-plus ]
-Print sequenced, monotonic-timestamped decoded libxwiimote event records before
-forwarding them. Optional filters reduce output to key events, absolute-axis
-events, IR events, or MotionPlus events. IR events are reported as
-.B ir
-with source coordinates; MotionPlus events are reported as
-.B motion-plus
-with X/Y/Z axis payloads. Intended for hardware validation reports; combine with
+.B --trace-events[=all\fR|\fBkeys\fR|\fBaxes\fR|\fBir\fR|\fBmotion-plus]
+Enable decoded event records on standard output.  With no value the filter is
+.B all
+\&.  A value is supplied with an equals sign.  Records contain
+.B time= ,
+.B seq= ,
+the sysfs path, event name and numeric type, followed by key state or
+.B absN=x,y,z
+payload fields.  Combine with
 .B --dry-run
-to inspect devices without creating virtual input.
+to observe events without virtual output.
 .TP
-.BR --calibrate-aim
-Capture accelerometer zero and MotionPlus gyro bias from a flat, still Wii
-Remote and print persistent
-.B wiilandd.conf
-key=value lines. Place the Wii Remote face down with buttons against a stable
-surface for the sample window. If only one sensor source produces a stable
-window, the command prints that source's offsets and a warning for the other;
-at least one stable source is sufficient for success.
-.TP
-.BR --aim-calibration-duration " " 1-30
-Set the
 .B --calibrate-aim
-sample window in seconds. The default is 8.
+Sample a flat, stationary Wii Remote and print complete key=value calibration
+lines for any stable accelerometer and MotionPlus sources.  If no
+.B --device
+is supplied, ordinal 1 is selected.  At least one stable source is required;
+unstable or unavailable sources produce a warning.
 .TP
 .BR -v , " --verbose"
-Print device lifecycle details.
+Print device lifecycle details.  With
+.BR --list ,
+also print each device's devtype and extension attributes.
 .PP
-At most one primary action such as
+At most one action may be selected.  Actions include
+.BR --help ,
+.BR --version ,
+.BR --list ,
+.BR --axis-map ,
+.BR --validation-checklist ,
 .BR --doctor ,
 .BR --dump-config ,
 .BR --check-config ,
 .BR --self-test ,
-or
-.B --calibrate-aim
-may be selected. With no primary action, the daemon runs normally. All
-arguments are parsed before an action runs, so invalid trailing arguments and
-conflicting actions are rejected regardless of order.
-.SH PERMISSIONS
-The daemon must be allowed to read the hid-wiimote input event nodes and write
-to
-.BR /dev/uinput .
-The installed udev rules grant active-seat access with
-.B TAG+="uaccess"
-and retain an
-.B input
-group,
-.B 0660
-fallback. A system or user service still runs with the permissions of its
-account; the daemon does not elevate privileges.
+and
+.BR --calibrate-aim .
+Conflicting actions and malformed or unknown options are rejected before an
+action runs.
 .SH CONFIGURATION
+Configuration files contain one
+.B key=value
+entry per line.  A
+.B #
+starts a comment; values are not shell-expanded.  Numeric ranges and choice
+values are validated, and lines are limited to 511 bytes.
+.PP
 Unless
 .B --no-config
-is set,
-.B wiilandd
-loads the optional system file from the configured
-.B sysconfdir/wiiland/wiilandd.conf
-path (normally
-.BR /etc/wiiland/wiilandd.conf )
-first, then the optional user file at an absolute
+is used, the default hierarchy reads the optional system file first and the
+optional user file second.  The fixed system path is
+.BR /etc/wiiland/wiilandd.conf .
+The user path is
 .B $XDG_CONFIG_HOME/wiiland/wiilandd.conf
-or
-.B $HOME/.config/wiiland/wiilandd.conf
-when
-.B XDG_CONFIG_HOME
-is unset or relative. A relative
-.B HOME
-does not produce an implicit user path. Later files override earlier values.
-Use
+when XDG_CONFIG_HOME is absolute; otherwise, when HOME is absolute, it is
+.B $HOME/.config/wiiland/wiilandd.conf .
+Later values replace earlier values.  An explicit
 .B --config
-to load one required explicit file instead of this hierarchy; command-line
-options override values loaded from it.
-.B --config
-and
-.B --no-config
-are mutually exclusive. Help, version, list, axis-map, and
-validation-checklist modes do not load configuration, while diagnostics such
-as
-.B --doctor
-do. The selected system and user paths are reported by
-.BR --doctor .
-Supported keys are:
+file is required and is loaded alone.  Help, version, list, axis-map, and
+validation-checklist use built-in defaults without reading files.
+.PP
+The accepted keys are:
 .TP
 .B backend=uinput
-The shared Linux uinput backend. It is the only currently supported backend and
-does not depend on a display server.
+The only supported input backend.
 .TP
 .B profile=gamepad|desktop|both
-Default virtual input profile.
+Default profile; the default is
+.BR gamepad .
 .TP
-.B pointer-speed=1-127
-Desktop profile pointer step.
-.TP
-.B ir-speed=1-127
-Desktop profile IR pointer gain.
-.TP
-.B ir-deadzone=0-127
-Desktop profile IR jitter deadzone after gain scaling.
-.TP
-.B ir-smoothing=0-95
-Desktop profile IR smoothing percentage.
+.B pointer-speed=1-127 , ir-speed=1-127 , ir-deadzone=0-127 , ir-smoothing=0-95
+Desktop pointer and IR settings.  Defaults are 16, 8, 0, and 0 respectively.
 .TP
 .B ir-tracking=dual|centroid|first
-Choose the IR tracker used by both desktop IR pointer motion and IR motion aim.
-The default
-.B dual
-tracks the midpoint of the widest valid source pair, so source index swaps do
-not cause jumps when the sensor bar is visible.
+IR tracker; default
+.BR dual .
 .TP
 .B ir-aim-mapping=relative|absolute
-Choose whether IR aim emits relative deltas or calibrated absolute screen
-position. The default
-.B relative
-needs no display setup and remains best for camera aim.
+IR aim mapping; default
+.BR relative .
 .TP
-.B ir-screen-left|right|top|bottom=0-32767
-Optional screen bounds used only when
-.B ir-aim-mapping=absolute .
-Right must exceed left and bottom must exceed top; invalid rectangles are
-rejected during configuration validation. These values let users dial in TV
-size, aspect ratio, overscan, and sensor-bar placement without making absolute
-pointing mandatory.
+.B ir-screen-left=0-32767 , ir-screen-right=0-32767 , ir-screen-top=0-32767 , ir-screen-bottom=0-32767
+Optional bounds for absolute IR aim.  Right must exceed left and bottom must
+exceed top.
 .TP
 .B aim-mode=off|mouse|right-stick
-Enable modern motion aiming. The default
-.B off
-keeps the login/session-safe gamepad unchanged.
-.B mouse
-converts the selected sensor to relative
-.BR REL_X / REL_Y
-pointer aim.
-.B right-stick
-converts it to
-.BR ABS_RX / ABS_RY
-camera aim for Steam, Proton/Wine, SDL, and native games that read a standard
-right stick.
+Motion aim output; default
+.BR off .
 .TP
 .B aim-source=auto|ir|motion-plus|accelerometer
-Select the motion-aim sensor. The default
-.B auto
-prefers valid IR camera deltas, then MotionPlus gyro axes, then accelerometer
-tilt. Calibration offsets are applied when configured. Without
-.B aim-accel-zero-*
-keys, accelerometer aim keeps the compatibility fallback of taking the first
-accelerometer event as neutral.
+Motion sensor; default
+.BR auto .
 .TP
 .B aim-activation=always|b|z|c
-Choose whether motion aim is always active or gated by holding B, Nunchuk Z, or
-Nunchuk C. The default is
+Activation gate; default
 .BR b .
 .TP
-.B aim-sensitivity=1-127
-Motion aim output gain. The default is 16.
+.B aim-sensitivity=1-127 , aim-deadzone=0-32767 , aim-smoothing=0-95
+Motion aim tuning.  Defaults are 16, 4, and 25.
 .TP
-.B aim-deadzone=0-32767
-Motion aim deadzone before gain. The default is 4.
-.TP
-.B aim-smoothing=0-95
-Motion aim smoothing percentage. The default is 25.
-.TP
-.B aim-invert-x=yes|no
-Invert motion aim X output. The default is no.
-.TP
-.B aim-invert-y=yes|no
-Invert motion aim Y output. The default is no.
+.B aim-invert-x=yes|no , aim-invert-y=yes|no
+Motion aim inversion.  Both default to
+.BR no ;
+.BR true / false
+and
+.BR 1 / 0
+are accepted.
 .TP
 .B aim-accel-zero-x|y|z=-32768-32767
-Persist the flat-surface accelerometer neutral point generated by
-.BR --calibrate-aim .
-All three accelerometer axes must be configured together; partial triples are
-rejected. A complete accelerometer triple may be used without MotionPlus
-calibration. When configured, accelerometer aim subtracts this point instead
-of using first-event neutral fallback.
+Complete accelerometer neutral triple.  A partial triple is invalid.
 .TP
 .B aim-motion-plus-bias-x|y|z=-32768-32767
-Persist the still MotionPlus gyro bias generated by
-.BR --calibrate-aim .
-All three MotionPlus axes must be configured together; partial triples are
-rejected. A complete MotionPlus triple may be used without accelerometer
-calibration. When configured, MotionPlus aim subtracts this bias before
-sensitivity, deadzone, and smoothing are applied.
+Complete MotionPlus bias triple.  A partial triple is invalid.
 .TP
 .B aim-calibration-duration=1-30
-Default calibration sample window used by
-.BR --calibrate-aim .
-The default is 8.
+Calibration sample duration in seconds; default is 8.
 .TP
 .B desktop.a|b|plus|minus|home|one|two=ACTION
-Override desktop button output. Actions are
+Desktop button actions.  ACTION is one of
+.BR disabled ,
 .BR left-click ,
 .BR right-click ,
 .BR enter ,
 .BR escape ,
 .BR overview ,
 .BR page-up ,
-.BR page-down ,
-and
-.BR disabled .
-.TP
-.B device.<syspath-substring>.profile=gamepad|desktop|both
-Override the profile for devices whose sysfs path contains the substring.
-.TP
-.B device-type.<devtype-substring>.profile=gamepad|desktop|both
-Override the profile for devices whose hid-wiimote devtype contains the
-substring, such as
-.BR gen10 ,
-.BR gen20 ,
-.BR balanceboard ,
 or
-.BR procontroller .
-Rules are evaluated in file order; later matching rules win.
+.BR page-down .
+Defaults are left-click, right-click, enter, escape, overview, page-down, and
+page-up for A, B, +, -, Home, 1, and 2 respectively.
+.TP
+.B device.<substring>.profile=gamepad|desktop|both
+Apply a profile when the device sysfs path contains
+.BR <substring> .
+.TP
+.B device-type.<substring>.profile=gamepad|desktop|both
+Apply a profile when the hid-wiimote device type contains
+.BR <substring> .
+Rules are evaluated in file order and later matching rules win.  At most 32
+rules are accepted.
+.SH EXIT STATUS
+A successful action returns zero.  Syntax, conflicting actions, configuration,
+monitor, device, and runtime failures return a nonzero errno-style status.
+The normal daemon action runs until stopped or until its runtime fails.
+.SH HARDWARE REPORT
+.B wiilandd-hardware-report
+is an installed companion command.  With no arguments it emits a finite,
+line-oriented schema-v2 report.  Its top-level sections, in order, are
+.BR host ,
+.BR permissions ,
+.BR wiilandd ,
+.BR devices ,
+.BR manual-validation ,
+and
+.BR result .
+Each section begins with
+.B == SECTION ==
+and most records are
+.B key=value
+lines.  The host section starts with
+.B report.schema.version=2
+and
+.B report.timestamp.utc= .
+The result section always contains
+.B report.core-failures=
+and
+.B report.status=ok
+or
+.BR report.status=failed .
+Core probe failures are numbered as
+.B core.failure.N=...
+; optional probe failures are reported as unavailable fields and do not by
+themselves fail the report.  A device selector adds a
+.B trace
+section and replaces the report process with
+.B wiilandd --dry-run --trace-events --verbose --device ... --profile both
+plus non-conflicting forwarded arguments.  Stop that live capture with
+.BR Ctrl-C .
+.SH PERMISSIONS
+The daemon must be able to read hid-wiimote input nodes and write
+.BR /dev/uinput .
+The daemon does not elevate privileges; use the system's normal udev ACL or
+input/uinput group policy.
 .SH FILES
 .TP
 .B /etc/wiiland/wiilandd.conf
-Usual system-wide daemon defaults path. The installed location follows the
-configured
-.BR sysconfdir ;
-.B --doctor
-prints the exact compiled path.
+Canonical installed system configuration path.
 .TP
 .B $XDG_CONFIG_HOME/wiiland/wiilandd.conf
-Optional per-user overrides; when
-.B XDG_CONFIG_HOME
-is unset, the equivalent path is
-.B $HOME/.config/wiiland/wiilandd.conf .
+Optional per-user configuration when XDG_CONFIG_HOME is absolute.
 .TP
-.B res/wiilandd.conf
-Documented sample configuration installed as the system configuration and
-available under the package documentation examples directory.
+.B $HOME/.config/wiiland/wiilandd.conf
+Fallback per-user configuration when XDG_CONFIG_HOME is unset or relative.
 .TP
-.B res/70-wiiland-uinput.rules
-udev permissions for hid-wiimote event nodes and
-.BR /dev/uinput .
-The
-.B uaccess
-tag and
-.B input
-group fallback support active-seat users in both Wayland and X.org sessions.
-.TP
-.B res/70-udev-wiiland.rules
-udev rule for writable hid-wiimote LED sysfs attributes used by tools such as
-.BR xwiishow .
-.TP
-.B res/50-xorg-fix-wiiland.conf
-Optional X.org InputClass policy for raw Wii Remote nodes; it does not filter
-libxwiimote or WiiLand virtual devices.
-.TP
-.B res/wiilandd.service
-Installed systemd user service with
-.B WantedBy=default.target
-.
-Its
-.B ExecCondition
-runs
-.B wiilandd --check-config
-before
-.B ExecStart
-; invalid configuration therefore prevents startup. The unit uses
-.B Restart=on-failure
-with a 2-second delay. It also enables
-.BR NoNewPrivileges ,
-locks the process personality, denies writable executable memory and real-time
-scheduling, restricts SUID/SGID changes and syscall architectures, and sets
-.BR UMask=0077 .
-Enable and start it with
-.BR "systemctl --user enable wiilandd.service"
-and
-.BR "systemctl --user start wiilandd.service" .
-.SH X.ORG INTEGRATION
-When installed, the X.org configuration contains an
-.B InputClass
-named
-.B Nintendo Wii Remote Raw Input Blacklist
-that matches
-.B Nintendo Wii Remote
-on
-.B /dev/input/event*
-and sets
-.B Option "Ignore" "on"
-.
-The Classic Controller and Pro Controller InputClass entries explicitly set
-.B Ignore
-to
-.B off
-for their matching products. This suppresses duplicate raw-node handling by
-X.org only; it does not block hid-wiimote, libxwiimote, the daemon, or devices
-named
-.B WiiLand Virtual Controller
-and
-.B WiiLand Virtual Desktop
-.
-.PP
-The same uinput devices therefore remain available to the X.org stack and to
-Wayland compositors, SDL, Steam, Wine/Proton, and native applications.
-.SH GAMEPAD MAPPING
-The gamepad profile exposes core and extension buttons as evdev button codes and
-extension sensors on stable evdev absolute axes so SDL, Wine/Proton, and native
-input testers can validate each source separately.
-.TP
-.B Wii Remote
-Core buttons use D-pad, South/East, Start/Select, Mode, and 1/2 button events.
-Accelerometer X/Y/Z use
-.BR ABS_THROTTLE ,
-.BR ABS_RUDDER ,
-and
-.BR ABS_WHEEL .
-.TP
-.B Nunchuk
-Stick X/Y use
-.BR ABS_X / ABS_Y ;
-accelerometer X/Y/Z use
-.BR ABS_HAT1X ,
-.BR ABS_HAT1Y ,
-and
-.BR ABS_HAT2X .
-.TP
-.B MotionPlus
-X/Y/Z use
-.BR ABS_GAS ,
-.BR ABS_BRAKE ,
-and
-.BR ABS_HAT0X .
-.TP
-.B Motion aiming
-When
-.B aim-mode=right-stick
-is enabled, IR, MotionPlus, or accelerometer aim is emitted on
-.BR ABS_RX / ABS_RY .
-When
-.B aim-mode=mouse
-is enabled, the same aim signal is emitted on
-.BR REL_X / REL_Y
-through a virtual desktop pointer device. This deliberately exposes generic
-Linux input instead of spoofing a DualSense, DualShock, or Steam Controller.
-.SS Motion aim calibration
-Run
-.BR "wiilandd --device 1 --calibrate-aim"
-and keep the Wii Remote face down, buttons against a flat stable surface, for
-the printed sample window. Short or unstable samples are rejected. If only
-accelerometer or only MotionPlus samples are stable, the command still succeeds
-and prints the available source's offsets with a warning for the unavailable or
-unstable source. Paste the generated
-.BR aim-accel-zero-* ,
-.BR aim-motion-plus-bias-* ,
-and
-.B aim-calibration-duration
-lines into the same config file that sets
-.BR aim-mode .
-The Qt control center exposes the same fields and a capture button in the
-Validation tab.
-.SS IR tracking and screen calibration
-The default IR path is calibration-free relative tracking. It uses the
-.B dual
-tracker to pick the midpoint of the widest valid IR-source pair, which is stable
-when the sensor bar reports its two LEDs in different source slots between
-frames. Users can switch to
-.B centroid
-for multi-source averaging or
-.B first
-for legacy behavior.
-.PP
-Screen/corner calibration is optional. Set
-.B ir-aim-mapping=absolute
-and provide
-.BR ir-screen-left ,
-.BR ir-screen-right ,
-.BR ir-screen-top ,
-and
-.B ir-screen-bottom
-when a game or setup benefits from Wii-menu-style positional aim. Relative
-desktop pointer motion and relative IR aim continue to work without these
-bounds, so diverse screens and top/bottom sensor-bar placements do not become a
-setup requirement.
-.PP
-.SS Gamepad axis normalization
-Mainline hid-wiimote devices expose controller families with different raw
-ranges. WiiLand normalizes signed sticks, accelerometers, MotionPlus, and the
-whammy bar to -32768 through 32767. Triggers, the guitar touch strip, and drum
-pressures on trigger-style axes use 0 through 1023; drum pressures sharing
-signed stick axes use 0 through 32767. Balance Board sensors retain their 0
-through 65535 values. This gives SDL, Steam Input, Wine/Proton, and native
-games full axis travel instead of the small fraction produced by forwarding
-raw extension values into wider virtual ranges.
-.PP
-.TP
-.B Classic Controller
-Left stick uses
-.BR ABS_X / ABS_Y ;
-right stick uses
-.BR ABS_RX / ABS_RY ;
-analog triggers use
-.BR ABS_Z / ABS_RZ .
-.TP
-.B Wii U Pro Controller
-Left stick uses
-.BR ABS_X / ABS_Y ;
-right stick uses
-.BR ABS_RX / ABS_RY .
-ZL/ZR are reported as
-.BR BTN_TL2 / BTN_TR2
-button events.
-.TP
-.B Guitar
-Stick X/Y use
-.BR ABS_X / ABS_Y ;
-whammy and fret board use the valid generic uinput axes
-.BR ABS_HAT3X
-and
-.BR ABS_HAT3Y ;
-strum/fret buttons use dedicated guitar button events, and +/- use
-.BR BTN_START / BTN_SELECT .
-.TP
-.B Drums
-Pad X/Y use
-.BR ABS_X / ABS_Y ;
-left/right cymbals use
-.BR ABS_RX / ABS_RY ;
-left/right/far-right toms use
-.BR ABS_Z ,
-.BR ABS_RZ ,
-and
-.BR ABS_HAT3X ;
-bass and hi-hat pedals use
-.BR ABS_HAT3Y
-and
-.BR ABS_MISC ;
-+/- use
-.BR BTN_START / BTN_SELECT .
-.TP
-.B Balance Board
-The four weight sensors use
-.BR ABS_PRESSURE ,
-.BR ABS_DISTANCE ,
-.BR ABS_TILT_X ,
-and
-.BR ABS_TILT_Y .
-.SH BACKEND
-The default and only supported backend is Linux uinput. It is display-server
-independent and is consumed through evdev/libinput by Wayland compositors and
-the X.org input stack, as well as directly by SDL, Steam, Wine/Proton, and
-native applications. WiiLand opens only the hid-wiimote interfaces needed by
-the selected profile and aim source. An optional extension-open failure does
-not discard an otherwise usable remote.
-.PP
-Event dispatch drains at most 256 events per pass. The monitor path reconciles
-the device set at most once per second, and removes failed devices so they can
-be observed and added again on later hotplug/reconciliation events. These
-bounds keep pointer repeat responsive under sensor traffic and keep each
-recovery pass bounded.
-.PP
-The gamepad profile is safe as a login default; use
-.B --profile=desktop
-or
-.B --profile=both
-when the Wii Remote should also drive the desktop pointer and keyboard.
-Virtual devices are named
-.B WiiLand Virtual Controller
-and
-.B WiiLand Virtual Desktop
-.
-.SH HARDWARE REPORT
-The installed
-.B wiilandd-hardware-report
-command collects finite host, permission, configuration, doctor, axis-map,
-device, and manual-validation diagnostics. Run it without arguments for the
-host report, or pass a device number or sysfs path (as accepted by
-.BR --device )
-to continue into a live dry-run trace. The report may pass one trace selector,
-such as
-.BR --trace-events=ir
-or
-.BR --trace-events=motion-plus .
-It reports whether required probes succeed; it does not claim that physical
-hardware passed until the operator exercises the listed validation matrix.
-.SH COMPATIBILITY
-Older releases exposed the virtual identities
-.B WiiLand Wayland Controller
-and
-.B WiiLand Wayland Desktop
-.
-The current identities are
-.B WiiLand Virtual Controller
-and
-.B WiiLand Virtual Desktop
-for every display server. Applications or stored controller profiles that
-match device names may need to be remapped to the new names.
+.B /dev/uinput
+Kernel uinput device used by the daemon.
 .SH SEE ALSO
+.BR wiiland-config (1),
+.BR xwiishow (1),
 .BR wiiland (7),
-.BR libxwiimote (7),
-.BR xwiishow (1)
+.BR libxwiimote (7)

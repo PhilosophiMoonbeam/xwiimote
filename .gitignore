@@ -1,40 +1,10 @@
-# Ignore generated files
-res/wiilandd.service
-driver/.tmp_versions
-driver/Module.symvers
-driver/modules.order
-driver/.*.cmd
-driver/*.ko
-driver/*.mod.c
-driver/*.o
+# Rust build outputs
+/target/
+
+# Editor artifacts
 *.swp
-*.o
-*.lo
-*.la
-Makefile
-Makefile.in
-aclocal.m4
-autom4te.cache/
-build-aux/
-config.h
-config.h.in
-config.h.in~
-config.log
-config.status
-configure
-*.tar.bz2
-*.tar.xz
-libtool
-m4/
-stamp-*
-.deps
-.dirstamp
-.libs
-xwiidump
-xwiishow
-wiiland-config
-xwiikeymap
-libxwiimote.pc
-doc/Doxyfile
-doc/html/
-doc/stamp-doxygen
+*.swo
+*~
+
+# Source archives
+*.tar.*

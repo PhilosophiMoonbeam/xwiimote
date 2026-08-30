@@ -1,0 +1,15 @@
+[package]
+name = "wiiland-config"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "wiiland-config"
+path = "src/main.rs"
+
+[dependencies]
+eframe.workspace = true
+egui.workspace = true
+tempfile.workspace = true
+wiiland-core = { path = "../wiiland-core" }

@@ -1,0 +1,23 @@
+[package]
+name = "wiilandd"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "WiiLand Wii Remote input daemon"
+
+[lib]
+name = "wiilandd"
+path = "src/lib.rs"
+
+[[bin]]
+name = "wiilandd"
+path = "src/main.rs"
+
+[[bin]]
+name = "wiilandd-hardware-report"
+path = "src/bin/wiilandd-hardware-report.rs"
+
+[dependencies]
+libc.workspace = true
+wiiland-core = { path = "../wiiland-core" }
+xwiimote = { path = "../xwiimote" }

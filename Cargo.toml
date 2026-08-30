@@ -1,0 +1,46 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/xwiimote",
+    "crates/wiiland-core",
+    "crates/wiilandd",
+    "crates/wiiland-config",
+    "crates/xwiishow",
+    "crates/xwiidump",
+    "xtask",
+]
+
+[workspace.package]
+version = "2.0.0"
+edition = "2024"
+rust-version = "1.98"
+
+[workspace.dependencies]
+anyhow = "1.0.100"
+bitflags = "2.9.4"
+libc = "0.2.174"
+libudev-sys = "0.1.4"
+thiserror = "2.0.12"
+eframe = { version = "0.33.0", default-features = false, features = ["default_fonts", "glow", "wayland", "x11", "accesskit"] }
+egui = "0.33.0"
+ratatui = "0.29.0"
+crossterm = "0.29.0"
+tempfile = "3.20.0"
+tar = "0.4.44"
+xz2 = "0.1.7"
+walkdir = "2.5.0"
+
+[profile.dev]
+opt-level = 0
+debug = 2
+overflow-checks = true
+incremental = true
+
+[profile.release]
+opt-level = 3
+debug = "line-tables-only"
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
+panic = "abort"
+incremental = false

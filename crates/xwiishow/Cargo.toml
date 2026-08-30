@@ -1,0 +1,18 @@
+[package]
+name = "xwiishow"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "Interactive Wii Remote diagnostic display"
+
+[[bin]]
+name = "xwiishow"
+path = "src/main.rs"
+
+[dependencies]
+libc.workspace = true
+ratatui.workspace = true
+crossterm.workspace = true
+xwiimote = { path = "../xwiimote" }
+
+[dev-dependencies]

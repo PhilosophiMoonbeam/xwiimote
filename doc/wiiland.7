@@ -9,9 +9,9 @@ WiiLand \- Linux Wii Remote input stack for Wayland and X.org sessions
 .SH DESCRIPTION
 WiiLand connects Nintendo Wii Remotes to Linux through the kernel
 .B hid-wiimote
-driver, BlueZ, and
-.B libxwiimote .
-The
+driver, BlueZ, and the Rust
+.B xwiimote
+compatibility library.  The
 .B wiilandd (1)
 daemon reads those interfaces and publishes display-neutral Linux
 .B uinput
@@ -21,8 +21,9 @@ sessions; X.org is not a legacy-only path.
 .SS Layered input path
 The path is:
 .IP 1. 4
-hid-wiimote and BlueZ expose the paired remote; libxwiimote supplies decoded
+hid-wiimote and BlueZ expose the paired remote; xwiimote supplies decoded
 buttons, extension data, accelerometer, MotionPlus, IR, and Balance Board data.
+The library also provides the public libxwiimote C ABI.
 .IP 2. 4
 wiilandd creates virtual devices through /dev/uinput.  The gamepad profile is
 named
@@ -111,6 +112,23 @@ SDL, Steam Input, Wine/Proton, and native games read the gamepad profile
 through Linux evdev or their usual input backend in either session.  Desktop
 pointer and keyboard output follows the session's normal seat.
 .
+.SH FRONTENDS
+The optional
+.B wiiland-config
+control center is a Rust eframe/egui application.  Its native winit backends
+support Wayland and X11, and its application ID is
+.B io.github.philosophimoonbeam.wiiland-config .
+No toolkit-specific platform override is required.  The model preserves
+canonical daemon values, revision/transaction ownership, atomic same-directory
+saves, service controls, and stale asynchronous-completion protection.  Trace
+and calibration actions are mutually exclusive.  Fixed-width command output
+retains the most recent 10,000 text blocks.
+.PP
+The optional
+.B xwiishow
+diagnostic is a ratatui/crossterm TUI.  It supports 80x24 minimum and 160x48
+extended layouts, full controller displays, and terminal cleanup on exit.
+.
 .SH PERMISSIONS
 wiilandd must read the hid-wiimote
 .B /dev/input/event*
@@ -124,13 +142,13 @@ or the packaged equivalents.  The latter rule uses
 .B TAG+="uaccess"
 for active-seat input access and
 .B GROUP="input", MODE="0660"
-as a fallback; the former grants group write access to Wii Remote LED sysfs
-attributes.  No display-server client permission is needed.
+as a fallback; the former grants group write access to Wii Remote LED
+brightness attributes.  No display-server client permission is needed.
 .
 .SH SERVICE
 The packaged
 .B wiilandd.service
-is a systemd user unit installed in the configured user-unit directory and
+is a systemd user unit installed in the selected user-unit directory and
 pulled by
 .B default.target .
 Its ExecCondition runs
@@ -159,10 +177,8 @@ for lifecycle diagnostics.
 .SH CONFIGURATION
 Unless
 .B --no-config
-is supplied, wiilandd loads the system configuration from the installed
-.B $(sysconfdir)/wiiland/wiilandd.conf
-path (normally
-.BR /etc/wiiland/wiilandd.conf )
+is supplied, wiilandd loads the system configuration from
+.BR /etc/wiiland/wiilandd.conf
 first, then an absolute
 .B $XDG_CONFIG_HOME/wiiland/wiilandd.conf
 or
@@ -183,50 +199,52 @@ to print the resolved result.  The packaged
 .B res/wiilandd.conf
 is a sample/default file, not an additional implicit layer.
 .
-.SH GUI
-The optional
-.B wiiland-config
-control center uses Qt 6 Widgets and Qt Platform Abstraction (QPA), not direct
-X11 or Wayland APIs.  Qt uses its native Wayland plugin in a Wayland session
-and xcb in an X.org session.  Explicit selection is possible with:
+.SH INSTALLATION
+The repository pins Rust 1.98.0 and uses a Cargo workspace.  Build and install
+the release profile with:
 .PP
 .RS
-.B "QT_QPA_PLATFORM=wayland wiiland-config"
+.B "cargo xtask build --release --features gui,tui,integrations"
 .br
-.B "QT_QPA_PLATFORM=xcb wiiland-config"
+.B "cargo xtask install --release --prefix /usr --sysconfdir /etc \e"
+.br
+.B "  --features gui,tui,integrations"
 .RE
 .PP
-The corresponding Qt QPA plugin must be installed at runtime; configure checks
-Qt 6 Widgets but does not check runtime plugin availability.
-.PP
-The responsive configuration surface uses readable labels but writes canonical
-daemon values, keeps save actions available while settings scroll, and warns
-before edited values are discarded.  Trace and calibration actions are
-mutually exclusive.  Saved accelerometer and MotionPlus calibration remain
-independent, with complete X/Y/Z triples for each enabled sensor.  Fixed-width
-command output can be copied or cleared and retains the most recent 10,000
-text blocks.
-.
-.SH INSTALLATION
-The build installs
-.B wiilandd
+The xtask build compiles the
+.B xwiimote
+crate's
+.B rlib
 and
-.B wiilandd-hardware-report
-under
-.B $(bindir)
-and installs this page, wiilandd(1), and the optional UI pages.  It installs
-.B res/wiilandd.conf
-as
-.B $(sysconfdir)/wiiland/wiilandd.conf
-and as a documentation example.  The udev rules, systemd user unit, and
-X.org policy are installed only when their configure integrations are enabled,
-to the directories selected by
+.B staticlib ,
+then final-links the versioned shared object with the root
+.B libxwiimote.sym
+ABI map and SONAME
+.B libxwiimote.so.2 .
+.PP
+Pass
+.B --destdir PATH
+to stage the same logical tree.  The typed xtask manifest installs
+.B wiilandd ,
+.B wiilandd-hardware-report ,
+optional frontend binaries, the libxwiimote shared library and static archive,
+the public C header, pkg-config metadata, configuration, documentation, and
+manual pages.  The compatibility library retains SONAME
+.B libxwiimote.so.2
+and the static archive is
+.B libxwiimote.a .
+.PP
+The integration options
 .B --with-udev-rules-dir ,
 .B --with-systemd-user-unit-dir ,
 and
-.B --with-xorg-conf-dir .
-.B --enable-qt-ui
-controls the optional GUI, desktop entry, and icon.
+.B --with-xorg-conf-dir
+each accept
+.B auto ,
+.B no ,
+or an absolute destination.  Generated service and pkg-config content uses
+logical paths; DESTDIR is not embedded in those files.  The default logical
+prefix is /usr/local.
 .
 .SH VALIDATION
 Hardware-free checks are:

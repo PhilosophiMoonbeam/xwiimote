@@ -1,235 +1,197 @@
 .TH WIILAND-CONFIG 1 "August 2026" "wiiland" "WiiLand Manual"
 .SH NAME
-wiiland-config \- configure and inspect the WiiLand input service
+wiiland-config \- graphical WiiLand configuration and diagnostics
 .SH SYNOPSIS
 .B wiiland-config
 .SH DESCRIPTION
 .B wiiland-config
-is the Qt 6 control center for WiiLand. It edits Wii Remote profiles and
-per-device rules, runs
-.B wiilandd
-readiness and diagnostic commands, captures validation traces, and controls the
-installed user service.
+opens the WiiLand Control Center, a native eframe/egui application.  It edits
+Wii Remote profiles and device rules, invokes
+.BR wiilandd (1)
+for configuration and diagnostics, captures event traces and motion
+calibration, and controls the per-user systemd service.
 .PP
-The frontend does not implement an input backend or start a private daemon.
-WiiLand input remains display-server-neutral through Linux uinput. Command,
-configuration, and service failures are reported in the window.
-.SH CONFIGURATION
-The control center starts with the default user configuration path at an
-absolute
+The initial window is 1180 by 780 pixels and cannot be resized below 760 by
+600.  The application id is
+.BR io.github.philosophimoonbeam.wiiland-config .
+The native window backend is selected by eframe for the current session; the
+Overview status reports Wayland when WAYLAND_DISPLAY is set, X11 when DISPLAY
+is set otherwise, and unknown when neither is set.
+.PP
+The frontend does not create input devices or run a private daemon.  All
+commands run asynchronously, with their standard output and standard error
+shown in the Command output panel.
+.SH CONFIGURATION FILES
+On startup the frontend selects the user path
 .B $XDG_CONFIG_HOME/wiiland/wiilandd.conf
-or, when
-.B XDG_CONFIG_HOME
-is unset or relative,
-.BR $HOME/.config/wiiland/wiilandd.conf .
-On startup and when
-.B Load effective config
-is pressed, it runs
+when XDG_CONFIG_HOME is absolute.  Otherwise, when HOME is absolute, it uses
+.B $HOME/.config/wiiland/wiilandd.conf .
+If neither environment variable yields an absolute path, the daemon system
+path
+.B /etc/wiiland/wiilandd.conf
+is used as the editable target.
+.PP
+The initial load runs
 .B wiilandd --dump-config
-for that path. Because the default path is not passed as
-.B --config ,
-this loads the daemon's effective hierarchy: the optional installed
-.B sysconfdir/wiiland/wiilandd.conf
-first (normally
-.BR /etc/wiiland/wiilandd.conf ),
-then the optional user file, with later values overriding earlier ones.
-.PP
-Another key=value file may be selected in the control center. A selected path
-different from the default is routed to config-sensitive daemon commands as
+without
 .B --config
-that path; it is loaded as that file alone rather than as the system-plus-user
-hierarchy. The selected path is also the save target. Commands that do not
-consume configuration, such as device listing and axis-map, are not given this
-option.
+for the default user target, so the daemon's optional system file is layered
+before its optional user file.  If a different path is entered, config-
+sensitive commands receive
+.B --config
+with that path and use that file alone.  The entered path is also the save
+target.  Device listing and axis-map commands do not receive a config path.
 .PP
-The persistent configuration actions are
-.B Reload from daemon ,
-.B Validate and save ,
-and
-.B Save and restart daemon
-.
-They remain available below the scrollable settings at compact window sizes.
-Reloading replaces the form with the daemon's dumped effective values. Display
-labels are human-readable while saved files retain canonical
-.B wiilandd.conf
-tokens. Saving first writes the rendered form to a temporary file and runs
-.B wiilandd --check-config --config
-against that temporary file. Only a successful check permits an atomic replace
-of the selected file; a failed check leaves the existing file unchanged.
-Closing the window with edited form values prompts before discarding them.
+Configuration values use the daemon's canonical key=value tokens.  See
+.BR wiilandd (1)
+for all accepted keys, ranges, defaults, and layering rules.
+.SH OVERVIEW TAB
+The Overview tab provides editable Daemon executable and Configuration file
+fields and reports the selected configuration scope and detected window
+system.  Its controls are:
+.TP
+.B Reload from daemon
+Run wiilandd --dump-config and replace the form with the resolved values.
+.TP
+.B Refresh service
+Run
+.BR "systemctl --user is-active wiilandd.service" .
+.TP
+.B Start , Stop , Restart
+Run the corresponding
+.BR "systemctl --user"
+operation for
+.BR wiilandd.service .
+.TP
+.B Check readiness
+Run
+.B "wiilandd --doctor"
+\&.
+.TP
+.B Validate configuration
+Run
+.B "wiilandd --check-config"
+\&.
+.TP
+.B Show effective config
+Run
+.B wiilandd --dump-config .
+.TP
+.B Find devices
+Run
+.BR "wiilandd --list --verbose" .
+.TP
+.B View input map
+Run
+.B wiilandd --axis-map .
+.TP
+.B View test checklist
+Run
+.B wiilandd --validation-checklist .
+.SH CONFIGURATION TAB
+The Configuration tab contains controls for every editable daemon setting:
+.TP
+.B Profiles and pointer feel
+Default profile (gamepad, desktop, or both), D-pad pointer speed, IR gain,
+IR jitter deadzone, IR smoothing, IR tracking (dual, centroid, or first), IR
+aim mapping (relative or absolute), and optional IR screen calibration bounds.
+.TP
+.B Modern motion aiming
+Output (off, right stick, or mouse), sensor (automatic, IR, MotionPlus, or
+accelerometer), activation (always, B, Nunchuk Z, or Nunchuk C), sensitivity,
+deadzone, smoothing, X/Y inversion, independent accelerometer and MotionPlus
+calibration toggles and X/Y/Z fields, and calibration duration.
+.TP
+.B Desktop button bindings
+Actions for Wii Remote A, B, +, -, Home, 1, and 2.  Each action is one of
+disabled, left-click, right-click, enter, escape, overview, page-up, or
+page-down.
+.TP
+.B Per-device profile rules
+Add or remove up to 32 ordered rules.  Each rule matches a substring of either
+the device path or device type and selects gamepad, desktop, or both.  Later
+matching rules override earlier matches.
 .PP
-Accelerometer and MotionPlus saved calibration are enabled independently.
-Each enabled sensor writes a complete X/Y/Z triple, matching the daemon's
-configuration invariant; calibration for one unavailable sensor does not
-invent zero offsets for the other.
-.PP
-The fixed-width command-output view provides
-.B Copy all
-and
-.B Clear
-actions. It retains the most recent 10,000 text blocks so long-running
-diagnostics cannot grow its document without bound.
-.SH SERVICE CONTROL
-The daemon panel controls the installed
-.B wiilandd.service
-user unit with
-.B systemctl --user
-.
-.B Refresh
-runs
-.B systemctl --user is-active wiilandd.service
-.
-.B Start ,
-.B Stop ,
-and
-.B Restart
-run the corresponding
-.B systemctl --user
-operation on that unit. The panel reports checking, active, inactive,
-activating, deactivating, reloading, unavailable, and failed states and does
-not substitute a directly spawned process when systemd or the unit is
-unavailable.
-.PP
-The unit is installed with
-.B WantedBy=default.target
-and validates configuration with
-.B ExecCondition=wiilandd --check-config
-before starting. It also denies privilege gain, personality changes, writable
-executable memory, real-time scheduling, SUID/SGID changes, and foreign syscall
-architectures, and uses
-.BR UMask=0077 .
-A successful
+Numeric widgets constrain values to the daemon's accepted ranges.  Changes are
+marked unsaved.  The controls below the scrollable settings are:
+.TP
+.B Reload from daemon
+Discard edits and reload effective daemon configuration.
+.TP
 .B Validate and save
-operation on the default user path reports that a daemon restart is required.
-The
+Validate the form with wiilandd --check-config against a same-directory
+temporary file.  On success, atomically replace the selected target; on
+failure, preserve the existing file.
+.TP
 .B Save and restart daemon
-button invokes the exact user-unit restart after that file is saved; the
-ordinary save flow offers
-.B Restart daemon
-or
-.B Later
-.
-.PP
-For an explicit path, the installed user unit cannot consume the selected
-file because it starts the daemon without
-.BR --config .
-The restart action is therefore disabled, and the control center displays the
-exact
-.B wiilandd --config
-command required to apply the saved file.
-.SH DEVICE VALIDATION
-The validation tab exposes the device selector, event filter, and temporary
-profile before its actions. Leaving the device selector empty observes every
-connected remote; a number or sysfs path focuses one device.
-.PP
+Available only for the default user target.  Save as above and then run
+.B "systemctl --user restart wiilandd.service"
+\&.  It is disabled for an
+explicit target because the installed service does not load that target.
+.SH VALIDATION TAB
+The Validation tab accepts an optional device selector (a positive ordinal or
+sysfs path), an event filter (all, keys, axes, ir, or motion-plus), and an
+optional temporary profile (effective configuration, gamepad, desktop, or
+both).
+.TP
 .B Start trace
-runs a dry event trace without creating virtual input devices.
+Run wiilandd with
+.BR --dry-run ,
+.BR --trace-events ,
+and
+.B --verbose .  A selected device is passed through
+.BR --device .
+No virtual input is created.
+.TP
 .B Stop
-is enabled only while a trace can be stopped.
+Request termination of the active trace or calibration process.
+.TP
 .B Capture flat-surface calibration
-uses the same selected device and the configured sample duration. Trace and
-calibration capture are mutually exclusive; their fields and actions reflect
-the active or stopping state so output cannot be interleaved accidentally.
-.SH DISPLAY BACKEND
-The interface uses Qt Platform Abstraction (QPA) and contains no X11 or Wayland
-display-server API calls. Qt chooses a platform plugin from the session and its
-own configuration; the status area reports
-.B Wayland
-for a
-.B wayland*
-platform name and
-.B X11
-for
-.B xcb
-.
+Run
+.BR --calibrate-aim
+with the configured sample duration and optional device selector.  Successful
+output is applied to the form and marked unsaved; save it to persist the
+values.
 .PP
-To require the native Wayland plugin, run:
+Trace and calibration are mutually exclusive.  Suggested coverage shown in
+the tab includes Wii Remote, MotionPlus, Nunchuk, Classic Controller, Wii U
+Pro Controller, Guitar, Drums, Balance Board, SDL, Wine/Proton, and desktop
+input on Wayland and X11.
+.SH COMMAND OUTPUT
+The fixed-width Command output panel displays commands, stdout, stderr, and
+process errors.  Copy all copies the complete retained text to the clipboard;
+Clear removes it.  The buffer retains at most 10,000 text blocks.  Completion
+results that belong to an old form revision or target are discarded, and a
+failed save preserves existing data.
 .PP
-.RS
-.B QT_QPA_PLATFORM=wayland wiiland-config
-.RE
-.PP
-To require the Qt X11/xcb plugin, run:
-.PP
-.RS
-.B QT_QPA_PLATFORM=xcb wiiland-config
-.RE
-.PP
-These settings select a Qt plugin; the application does not automatically
-change or retry the selection. The requested plugin must be installed and able
-to connect to the session display. This QPA choice affects the control-center
-window only; the
-.B wiilandd
-uinput path remains shared by Wayland, X.org, SDL, Steam, Wine/Proton, and
-native consumers.
+Closing with unsaved changes opens an Unsaved configuration dialog.  Discard
+changes closes the application; Keep editing returns to the form.
+.SH PERMISSIONS
+The frontend does not elevate privileges.  The selected configuration target
+and its parent must be writable to save.  Service controls require a working
+systemd user manager.  The daemon itself requires access to hid-wiimote input
+nodes and /dev/uinput; permission errors are reported in the output panel.
+.SH EXIT STATUS
+The application exits successfully when its eframe window closes normally.  A
+nonzero status indicates that native window initialization or another eframe
+runtime operation failed.  A failed daemon command, validation, trace, or
+service operation is reported in the window and does not by itself terminate
+the frontend.
 .SH FILES
 .TP
 .B /etc/wiiland/wiilandd.conf
-Usual system-wide daemon defaults path. The actual installed location follows
-the configured
-.BR sysconfdir .
+Canonical installed system configuration path.
 .TP
 .B $XDG_CONFIG_HOME/wiiland/wiilandd.conf
-Per-user overrides and the control center's default editable path.
+Default per-user configuration and save target when absolute.
 .TP
 .B $HOME/.config/wiiland/wiilandd.conf
-Per-user fallback when
-.B XDG_CONFIG_HOME
-is unset.
-.TP
-.B res/70-wiiland-uinput.rules
-udev permissions for hid-wiimote event nodes and
-.BR /dev/uinput .
-.TP
-.B res/70-udev-wiiland.rules
-udev permissions for writable wiimote LED sysfs attributes.
-.TP
-.B res/50-xorg-fix-wiiland.conf
-X.org InputClass policy that suppresses matching raw Wii Remote nodes while
-leaving libxwiimote and
-.B WiiLand Virtual *
-devices unaffected.
+Fallback per-user configuration and save target.
 .TP
 .B wiilandd.service
-User unit installed in a systemd user-unit search path, with
-.B WantedBy=default.target
-and a pre-start
-.B --check-config
-condition.
-.TP
-.B wiilandd-hardware-report
-Installed command for finite host, permission, daemon, doctor, device, and
-manual validation diagnostics; with a device argument it continues to a live
-dry-run trace.
-.TP
-.B /dev/uinput
-Kernel uinput device used by the daemon, not by the frontend itself.
-.SH PERMISSIONS
-The control center does not elevate privileges. The selected configuration file
-and its parent directory must be writable to save changes. The daemon must be
-allowed to read hid-wiimote input event nodes and write
-.BR /dev/uinput .
-Install both distribution udev rules and use their normal logind, udev, or
-input/uinput group policy. Permission failures remain visible as command or
-service failures.
-.SH DEVICE NAME COMPATIBILITY
-Older releases exposed
-.B WiiLand Wayland Controller
-and
-.B WiiLand Wayland Desktop
-.
-Current virtual devices are named
-.B WiiLand Virtual Controller
-and
-.B WiiLand Virtual Desktop
-in both Wayland and X.org sessions. Applications or stored controller profiles
-that match device names may need remapping after upgrading.
-.SH EXIT STATUS
-Zero indicates that the frontend exited normally. A nonzero status indicates
-that the frontend could not start or terminated abnormally. Failures from a
-diagnostic command, trace, configuration check, or service operation are shown
-in the interface and do not by themselves terminate the frontend.
+Per-user systemd unit controlled by the Overview tab.
 .SH SEE ALSO
 .BR wiilandd (1),
-.BR systemctl (1),
-.BR wiiland (7)
+.BR xwiishow (1),
+.BR wiiland (7),
+.BR systemctl (1)

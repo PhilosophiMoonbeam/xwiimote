@@ -4,108 +4,171 @@ on:
   push:
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
-  wiilandd-smoke:
+  rust:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Install build and integration dependencies
+
+      - name: Install Rust and native integration dependencies
         run: |
+          set -eu
           sudo apt-get update
           sudo apt-get install -y \
-            autoconf \
-            automake \
-            build-essential \
+            binutils \
             desktop-file-utils \
             groff \
-            libncurses-dev \
-            libqt6waylandclient6 \
-            libtool \
+            libegl1-mesa-dev \
+            libgl1-mesa-dev \
             libudev-dev \
+            libwayland-dev \
+            libx11-dev \
+            libxcursor-dev \
+            libxinerama-dev \
+            libxi-dev \
+            libxkbcommon-dev \
+            libxkbcommon-x11-dev \
+            libxrandr-dev \
             pkg-config \
-            qt6-base-dev \
-            qt6-qpa-plugins \
-            qt6-wayland \
-            shellcheck \
             udev \
             weston \
             xauth \
-            xvfb
-      - name: Check shell scripts
-        run: |
-          shellcheck \
-            tests/cli-smoke.sh \
-            tests/wiiland-config-smoke.sh \
-            tests/wiilandd-install-smoke.sh \
-            tests/wiilandd-smoke.sh \
-            tools/wiilandd-hardware-report.sh
-      - name: Run wiilandd smoke script
-        run: tests/wiilandd-smoke.sh
-      - name: Build and test full package
-        run: |
-          set -eu
-          NOCONFIGURE=1 ./autogen.sh
-          ./configure \
-            --prefix=/usr \
-            --sysconfdir=/etc \
-            --enable-xwiishow=yes \
-            --enable-qt-ui=yes \
-            --with-udev-rules-dir=auto \
-            --with-systemd-user-unit-dir=auto \
-            --with-xorg-conf-dir=auto
-          make -j"$(nproc)"
-          make check
-      - name: Exercise kernel uinput integration
+            xvfb \
+            xz-utils
+          rustup toolchain install 1.98.0 \
+            --profile minimal \
+            --component rustfmt \
+            --component clippy
+          rustup default 1.98.0
+          test "$(rustc --version | cut -d' ' -f2)" = 1.98.0
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Check the locked workspace
+        run: cargo check --workspace --all-targets --all-features --locked
+
+      - name: Run strict clippy
+        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+
+      - name: Run locked workspace tests
+        run: cargo test --workspace --all-features --locked
+
+      - name: Smoke test CLI and daemon commands
         run: |
           set -eu
-          sudo modprobe uinput || test -e /dev/uinput
-          sudo ./wiilandd-uinput-test
-      - name: Install staged package
+          daemon="$PWD/target/debug/wiilandd"
+          report="$PWD/target/debug/wiilandd-hardware-report"
+          tui="$PWD/target/debug/xwiishow"
+          dump="$PWD/target/debug/xwiidump"
+          "$daemon" --help >/dev/null
+          "$daemon" --no-config --self-test
+          "$daemon" --no-config --check-config >/dev/null
+          "$daemon" --no-config --axis-map >/dev/null
+          "$daemon" --no-config --validation-checklist >/dev/null
+          "$daemon" --no-config --doctor >/dev/null
+          "$tui" --help >/dev/null
+          "$dump" --help >/dev/null
+          WIILANDD="$daemon" WIILAND_REPO_DIR="$PWD" \
+            "$report" --help >/dev/null
+          WIILANDD="$daemon" WIILAND_REPO_DIR="$PWD" \
+            "$report" >"$RUNNER_TEMP/wiiland-hardware-report"
+          grep -F 'report.schema.version=2' \
+            "$RUNNER_TEMP/wiiland-hardware-report" >/dev/null
+          grep -F 'report.status=ok' \
+            "$RUNNER_TEMP/wiiland-hardware-report" >/dev/null
+
+      - name: Build the release workspace and compatibility library
+        run: cargo xtask build --release --features gui,tui,integrations
+
+      - name: Check the Rust ABI and compatibility library
         run: |
           set -eu
-          make DESTDIR="$PWD/stage" install
-          tests/wiilandd-install-smoke.sh "$PWD/stage" /usr yes /etc yes
-      - name: Validate installed package assets
-        run: |
-          set -eu
-          stage="$PWD/stage"
-          for rule in "$stage/usr/lib/udev/rules.d/"*.rules; do
-            udevadm verify "$rule"
+          cargo test --locked -p xwiimote --test abi
+          library="$PWD/target/release/libxwiimote.so"
+          test -f "$library"
+          readelf -d "$library" | grep -F 'SONAME' | \
+            grep -F 'libxwiimote.so.2' >/dev/null
+          readelf --version-info "$library" | \
+            grep -F 'LIBXWIIMOTE_2' >/dev/null
+          readelf --version-info "$library" | \
+            grep -F 'LIBXWIIMOTE_3' >/dev/null
+          symbols='
+            xwii_iface_new xwii_iface_ref xwii_iface_unref
+            xwii_iface_get_syspath xwii_iface_get_fd xwii_iface_watch
+            xwii_iface_open xwii_iface_close xwii_iface_opened
+            xwii_iface_available xwii_iface_poll xwii_iface_dispatch
+            xwii_iface_rumble xwii_iface_get_led xwii_iface_set_led
+            xwii_iface_get_battery xwii_iface_get_devtype
+            xwii_iface_get_extension xwii_iface_set_mp_normalization
+            xwii_iface_get_mp_normalization xwii_monitor_new
+            xwii_monitor_ref xwii_monitor_unref xwii_monitor_get_fd
+            xwii_monitor_poll xwii_get_iface_name
+          '
+          for symbol in $symbols; do
+            nm -D --defined-only "$library" | \
+              grep -Eq "[[:space:]]${symbol}(@|$)" || {
+                echo "missing ABI symbol: $symbol" >&2
+                exit 1
+              }
           done
-          desktop-file-validate \
-            "$stage/usr/share/applications/io.github.philosophimoonbeam.wiiland-config.desktop"
-          for manual in "$stage/usr/share/man/man1/"*.1 \
-              "$stage/usr/share/man/man7/"*.7; do
-            groff -man -Tutf8 "$manual" >/dev/null
-          done
-      - name: Exercise xcb GUI under Xvfb
+
+      - name: Compile and run external C ABI consumers
+        run: |
+          set -eu
+          fixture="$PWD/.github/fixtures/xwiimote-abi-smoke.c"
+          stage="$RUNNER_TEMP/xwiimote-abi-stage"
+          abi_dir="$RUNNER_TEMP/xwiimote-c-abi"
+          cargo xtask install --release --destdir "$stage" \
+            --prefix /usr \
+            --features default \
+            --with-udev-rules-dir no \
+            --with-systemd-user-unit-dir no \
+            --with-xorg-conf-dir no
+          mkdir "$abi_dir"
+          export PKG_CONFIG_PATH="$stage/usr/lib/pkgconfig"
+          export PKG_CONFIG_SYSROOT_DIR="$stage"
+          test "$(pkg-config --modversion libxwiimote)" = 2.0.0
+          read -r -a shared_flags <<< "$(pkg-config --cflags --libs libxwiimote)"
+          cc -std=c11 -Wall -Wextra -Werror \
+            "$fixture" "${shared_flags[@]}" \
+            -o "$abi_dir/shared-smoke"
+          LD_LIBRARY_PATH="$stage/usr/lib" "$abi_dir/shared-smoke"
+          rm "$stage/usr/lib/libxwiimote.so"
+          read -r -a static_flags <<< "$(pkg-config --static --cflags --libs libxwiimote)"
+          cc -std=c11 -Wall -Wextra -Werror \
+            "$fixture" "${static_flags[@]}" \
+            -o "$abi_dir/static-smoke"
+          if readelf -d "$abi_dir/static-smoke" | grep -F 'libxwiimote.so' >/dev/null; then
+            echo "static consumer unexpectedly depends on libxwiimote.so" >&2
+            exit 1
+          fi
+          "$abi_dir/static-smoke"
+
+      - name: Smoke GUI under X11
         run: |
           set -eu
           xvfb-run --auto-servernum --server-args="-screen 0 1280x800x24" \
-            env QT_QPA_PLATFORM=xcb WIILAND_CONFIG_SMOKE_TEST=1 \
-            ./tests/wiiland-config-smoke.sh xcb ./wiiland-config
-      - name: Exercise native Wayland GUI under Weston
+            env \
+              WINIT_UNIX_BACKEND=x11 \
+              WIILAND_CONFIG_SMOKE_TEST=1 \
+              "$PWD/target/release/wiiland-config"
+
+      - name: Smoke GUI with the headless Wayland backend
         run: |
           set -eu
           runtime="$RUNNER_TEMP/wiiland-wayland-runtime"
           socket=wiiland-wayland-0
-          weston_log="$RUNNER_TEMP/wiiland-weston.log"
+          log="$RUNNER_TEMP/wiiland-weston.log"
           weston_pid=
           cleanup() {
             status=$?
             trap - EXIT INT TERM
-            if [ -n "$weston_pid" ] &&
-                kill -0 "$weston_pid" 2>/dev/null; then
+            if [ -n "$weston_pid" ] && kill -0 "$weston_pid" 2>/dev/null; then
               kill "$weston_pid" 2>/dev/null || :
-              attempts=0
-              while kill -0 "$weston_pid" 2>/dev/null &&
-                  [ "$attempts" -lt 50 ]; do
-                attempts=$((attempts + 1))
-                sleep 0.1
-              done
-              if kill -0 "$weston_pid" 2>/dev/null; then
-                kill -KILL "$weston_pid" 2>/dev/null || :
-              fi
               wait "$weston_pid" 2>/dev/null || :
             fi
             rm -rf "$runtime"
@@ -123,33 +186,96 @@ jobs:
             --shell=kiosk \
             --socket="$WAYLAND_DISPLAY" \
             --idle-time=0 \
-            >"$weston_log" 2>&1 &
+            >"$log" 2>&1 &
           weston_pid=$!
-          ready=no
-          attempts=0
-          while [ "$attempts" -lt 100 ]; do
-            if [ -S "$runtime/$socket" ]; then
-              ready=yes
-              break
-            fi
+          for _ in $(seq 1 100); do
+            [ -S "$runtime/$socket" ] && break
             if ! kill -0 "$weston_pid" 2>/dev/null; then
-              cat "$weston_log"
+              cat "$log"
               exit 1
             fi
-            attempts=$((attempts + 1))
             sleep 0.1
           done
-          if [ "$ready" != yes ]; then
-            cat "$weston_log"
-            exit 1
-          fi
+          test -S "$runtime/$socket"
           env \
             DISPLAY= \
+            WINIT_UNIX_BACKEND=wayland \
             XDG_SESSION_TYPE=wayland \
-            QT_QPA_PLATFORM=wayland \
             WIILAND_CONFIG_SMOKE_TEST=1 \
-            ./tests/wiiland-config-smoke.sh wayland ./wiiland-config
-      - name: Verify distribution archive
+            "$PWD/target/release/wiiland-config"
+
+      - name: Exercise real uinput when available
         run: |
           set -eu
-          make distcheck
+          sudo modprobe uinput 2>/dev/null || :
+          if test -r /dev/uinput && test -w /dev/uinput; then
+            WIILAND_REAL_UINPUT=1 cargo test --locked -p wiilandd \
+              --test uinput_real -- \
+              --ignored --exact \
+              real_uinput_creates_emits_and_destroys_both_device_kinds
+            echo "uinput: pass (real create/emit/sync/destroy test completed)"
+          elif test -e /dev/uinput; then
+            echo "uinput: skip (device exists but is not readable and writable)"
+          else
+            echo "uinput: skip (kernel module or device unavailable)"
+          fi
+
+      - name: Stage installation and validate assets
+        run: |
+          set -eu
+          stage="$RUNNER_TEMP/wiiland-stage"
+          cargo xtask install --release --destdir "$stage" \
+            --prefix /usr \
+            --sysconfdir /etc \
+            --with-udev-rules-dir /usr/lib/udev/rules.d \
+            --with-systemd-user-unit-dir /usr/lib/systemd/user \
+            --with-xorg-conf-dir /usr/share/X11/xorg.conf.d \
+            --features gui,tui,integrations
+          test -x "$stage/usr/bin/wiilandd"
+          test -x "$stage/usr/bin/wiilandd-hardware-report"
+          test -x "$stage/usr/bin/wiiland-config"
+          test -x "$stage/usr/bin/xwiishow"
+          for rule in "$stage/usr/lib/udev/rules.d/"*.rules; do
+            test -s "$rule"
+            udevadm verify "$rule"
+          done
+          desktop="$stage/usr/share/applications/io.github.philosophimoonbeam.wiiland-config.desktop"
+          desktop-file-validate "$desktop"
+          for manual in "$stage/usr/share/man/man1/"*.1 \
+              "$stage/usr/share/man/man7/"*.7; do
+            test -s "$manual"
+            groff -man -Tutf8 "$manual" >/dev/null
+          done
+          test -s "$stage/usr/lib/systemd/user/wiilandd.service"
+          test -s "$stage/usr/share/X11/xorg.conf.d/50-xorg-fix-wiiland.conf"
+          test -s "$stage/usr/share/icons/hicolor/scalable/apps/io.github.philosophimoonbeam.wiiland.svg"
+          "$stage/usr/bin/wiilandd" --no-config --self-test
+          "$stage/usr/bin/xwiishow" --help >/dev/null
+          WIILANDD="$stage/usr/bin/wiilandd" WIILAND_REPO_DIR="$PWD" \
+            "$stage/usr/bin/wiilandd-hardware-report" --help >/dev/null
+
+      - name: Verify ownership-safe uninstall
+        run: |
+          set -eu
+          stage="$RUNNER_TEMP/wiiland-stage"
+          keep="$stage/usr/bin/ci-unowned-file"
+          changed="$stage/usr/share/man/man7/wiiland.7"
+          printf '%s\n' 'not owned by xtask' >"$keep"
+          printf '%s\n' '.ci-local-edit' >>"$changed"
+          cargo xtask uninstall --destdir "$stage" \
+            --prefix /usr --sysconfdir /etc
+          test -e "$keep"
+          test -e "$changed"
+          test ! -e "$stage/usr/bin/wiilandd"
+          test ! -e "$stage/usr/bin/wiiland-config"
+          test ! -e "$stage/etc/wiiland/.xtask-install"
+
+      - name: Create and verify deterministic source archives
+        run: |
+          set -eu
+          first="$RUNNER_TEMP/wiiland-2-first.tar.xz"
+          second="$RUNNER_TEMP/wiiland-2-second.tar.xz"
+          cargo xtask dist --output "$first"
+          cargo xtask dist --output "$second"
+          cmp --silent "$first" "$second"
+          cargo xtask verify-dist "$first"

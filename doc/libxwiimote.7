@@ -5,38 +5,49 @@
 .TH "LIBXWIIMOTE" 7 "August 2026" "WiiLand" "WiiLand Manual"
 .SH NAME
 libxwiimote \- display-server-independent Wii Remote access library
-
+.
 .SH SYNOPSIS
 .B #include <xwiimote.h>
-
+.
 .SH DESCRIPTION
-The libxwiimote compatibility library manages connected Wii Remotes from
-user-space. It discovers hid-wiimote devices through udev and exposes their
-kernel input interfaces through the existing
+The libxwiimote compatibility library is implemented by the Rust
+.B xwiimote
+crate.  It discovers hid-wiimote devices through udev and exposes their kernel
+input interfaces through the existing
 .B xwii_*
-API. It does not require, connect to, or route events through Wayland, X.org,
+API.  It does not require, connect to, or route events through Wayland, X.org,
 XWayland, or any other display server.
 .PP
 The
 .B wiilandd
 daemon uses this library for ingestion and translates events into Linux uinput
-virtual evdev devices. Applications may also use the library directly when
+virtual evdev devices.  Applications may also use the library directly when
 they need finer-grained access than a display or kernel input path provides.
 The resulting event data is therefore suitable for either Wayland or X.org
-sessions and for non-display consumers; this manual makes no new API or ABI
-claims.
-.PP
-This library provides a simple, but still comprehensive, API to access
-connected Wii Remotes. The API documentation is still in process. Please read
-the tools in wiiland/tools/ or the header in wiiland/lib/xwiimote.h for
-information on the API.
+sessions and for non-display consumers.
+.
+.SH ABI COMPATIBILITY
+The public declarations are in
+.B lib/xwiimote.h
+and all 26 exported symbols and version nodes are in
+.B libxwiimote.sym .
+The shared library retains SONAME
+.B libxwiimote.so.2
+and the static archive is
+.B libxwiimote.a .
+The Rust implementation preserves the existing event layouts and
+discriminants, negative-errno/NULL/-1 error conventions, C allocator ownership,
+stable file-descriptor readiness, monitor enumeration boundary and
+deduplication, partial dispatch-size copies, and SYN_DROPPED recovery.  Opaque
+handles validate null pointers and no panic crosses the C ABI.
+.
 .SH PERMISSIONS
 The process using libxwiimote needs permission to read the hid-wiimote
 .B /dev/input/event*
-nodes for read-only interfaces. Opening an interface with
+nodes for read-only interfaces.  Opening an interface with
 .B XWII_IFACE_WRITABLE
-requests read/write access and may additionally require write permission;
-the library does not elevate privileges. LED and other sysfs attributes have
+requests read/write access and may additionally require write permission; the
+library does not elevate privileges.  LED and other sysfs attributes have
 their own permissions.
 .PP
 The packaged
@@ -45,22 +56,62 @@ rule tags hid-wiimote event nodes for active-seat access and supplies an
 .B input
 group,
 .B 0660
-fallback. The packaged
+fallback.  The packaged
 .B res/70-udev-wiiland.rules
 rule grants the input group write access to wiimote LED brightness attributes
-for tools that use them. Install the rules through the distribution's normal
-udev configuration; active-seat ACL and group policy determine the effective
+for tools that use them.  Install the rules through the distribution's normal
+udev configuration; active-seat ACL and group policy determine effective
 permissions.
-
-.SH BUGS
-The library does not support all Wii Remote peripherals, yet. Please consider
-contributing to the project if you need further functionality.
-
+.
+.SH BUILD AND INSTALLATION
+The library is part of the Rust 1.98.0 Cargo workspace.  Build it with:
+.PP
+.RS
+.B "cargo xtask build --release"
+.RE
+.PP
+The xtask build compiles the Rust
+.B rlib
+and
+.B staticlib ,
+then final-links the versioned shared object from
+.B libxwiimote.a
+with the ABI map in
+.B libxwiimote.sym
+and SONAME
+.B libxwiimote.so.2 .
+The typed installation workflow installs the shared and static libraries,
+header, pkg-config metadata, and applicable documentation:
+.PP
+.RS
+.B "cargo xtask install --release --prefix /usr --sysconfdir /etc"
+.br
+.B "cargo xtask install --release --destdir PATH --prefix /usr \e"
+.br
+.B "  --sysconfdir /etc"
+.RE
+.PP
+Pass
+.B --with-udev-rules-dir auto|no|PATH
+to select the udev integration destination.  DESTDIR stages files without
+changing paths embedded in generated metadata.
+.
+.SH ARCHIVAL REFERENCES
+Protocol history and device captures are retained in
+.B doc/PROTOCOL ,
+.B doc/DEVICES ,
+.B doc/DEV_REMOTE ,
+.B doc/eeprom.dump ,
+and
+.B doc/rdesc.dump .
+They describe the hardware and wire-level lineage; the public header and symbol
+map remain authoritative for the current C ABI.
+.
 .SH AUTHOR
 David Herrmann <dh.herrmann@googlemail.com>
 .br
 The WiiLand Project: https://github.com/PhilosophiMoonbeam/wiiland
-
+.
 .SH "SEE ALSO"
 .BR wiiland (7),
 .BR wiilandd (1),

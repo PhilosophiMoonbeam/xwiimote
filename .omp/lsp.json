@@ -1,15 +1,46 @@
 {
   "servers": {
-    "clangd": {
+    "rust-analyzer": {
+      "command": "rust-analyzer",
+      "args": [],
+      "fileTypes": [".rs"],
       "rootMarkers": [
-        "compile_commands.json",
-        "CMakeLists.txt",
-        ".clangd",
-        ".clang-format",
-        "Makefile",
-        "Makefile.am",
-        "configure.ac"
-      ]
+        "Cargo.toml",
+        "rust-toolchain.toml",
+        "rust-analyzer.toml",
+        ".cargo",
+        ".git"
+      ],
+      "initOptions": {},
+      "settings": {
+        "rust-analyzer": {
+          "cargo": {
+            "allTargets": true,
+            "allFeatures": true
+          },
+          "check": {
+            "allTargets": true,
+            "allFeatures": true
+          },
+          "procMacro": {
+            "enable": true
+          },
+          "workspace": {
+            "symbol": {
+              "search": {
+                "kind": "all"
+              }
+            }
+          }
+        }
+      },
+      "capabilities": {
+        "flycheck": true,
+        "ssr": true,
+        "expandMacro": true,
+        "runnables": true,
+        "relatedTests": true
+      }
     }
   }
 }

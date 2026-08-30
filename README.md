@@ -10,6 +10,7 @@
   <a href="#quick-start"><strong>Quick start</strong></a> ·
   <a href="#configure">Configure</a> ·
   <a href="#diagnose">Diagnose</a> ·
+  <a href="#development">Development</a> ·
   <a href="#documentation">Documentation</a>
 </p>
 
@@ -32,25 +33,48 @@ Wii hardware → hid-wiimote → libxwiimote → wiilandd → uinput/evdev
 | **Sessions** | Native Wayland and X.org |
 | **Outputs** | `WiiLand Virtual Controller`, `WiiLand Virtual Desktop` |
 | **Profiles** | `gamepad`, `desktop`, `both` |
-| **Frontends** | Qt 6 control center, optional ncurses monitor |
-| **Driver path** | Linux `hid-wiimote` → `libxwiimote` → `wiilandd` |
+| **Frontends** | `wiiland-config` (eframe/egui, Wayland/X11), `xwiishow` (ratatui/crossterm) |
+| **Driver path** | Linux `hid-wiimote` → Rust `xwiimote`/`libxwiimote` → `wiilandd` |
 
 ## Quick start
 
 ### 1. Build and install
 
-Required: a C compiler, GNU Make, `pkg-config`, libudev headers, and Linux
-uinput headers. Autotools and Libtool are required for a checkout. Qt 6 Widgets
-with a C++17 compiler and ncurses are optional.
+WiiLand is a Linux-only Rust workspace. The repository pins the required
+toolchain to Rust 1.98.0 in `rust-toolchain.toml`; Cargo uses resolver 3,
+edition 2024, and workspace package version 2.0.0. A Linux host also needs
+libudev development files and access to `/dev/uinput`; systemd, udev, and X.org
+are needed only for the integrations being installed.
+
+Build the daemon and both optional frontends:
 
 ```sh
-./autogen.sh --prefix=/usr --sysconfdir=/etc \
-  --enable-qt-ui=auto --enable-xwiishow=auto
-make -j"$(nproc)"
-sudo make install
+cargo xtask build --release --features gui,tui,integrations
 ```
 
-A release archive already contains `configure`; use it instead of `autogen.sh`.
+Install directly under `/usr` (or stage the exact same tree with `DESTDIR`):
+
+```sh
+sudo cargo xtask install --release \
+  --prefix /usr --sysconfdir /etc \
+  --features gui,tui,integrations
+
+# Package-manager staging example:
+cargo xtask install --release --destdir "$DESTDIR" \
+  --prefix /usr --sysconfdir /etc \
+  --features gui,tui,integrations
+```
+
+`cargo xtask install` uses the typed install manifest. It installs the binaries,
+the `libxwiimote` shared/static libraries and C header, configuration,
+manual pages, and documentation. The shared object is final-linked by
+`cargo xtask build` from `libxwiimote.a` with the root `libxwiimote.sym` ABI map
+and SONAME `libxwiimote.so.2`. Integrations are selected independently:
+`--with-udev-rules-dir`, `--with-systemd-user-unit-dir`, and
+`--with-xorg-conf-dir` each accept `auto`, `no`, or an absolute destination.
+`DESTDIR` prefixes staged files only; generated service and pkg-config content
+contains the logical (unstaged) paths.
+
 After installing udev rules, reload them and reconnect the controller:
 
 ```sh
@@ -100,20 +124,24 @@ systemctl --user daemon-reload
 systemctl --user enable --now wiilandd.service
 ```
 
-With the Qt frontend installed:
+With the eframe frontend installed:
 
 ```sh
 wiiland-config
 ```
 
-The control center edits and validates configuration, manages the user service,
-and runs device traces and calibration capture.
+`wiiland-config` uses egui with native winit Wayland/X11 backends and application
+ID `io.github.philosophimoonbeam.wiiland-config`; no toolkit-specific platform
+override is required. The control center edits and validates configuration,
+manages the user service, and runs device traces and calibration capture.
+The optional `xwiishow` diagnostic uses ratatui/crossterm and restores the
+terminal on exit.
 
 ## Configure
 
 WiiLand loads configuration in this order:
 
-1. `${sysconfdir}/wiiland/wiilandd.conf`—normally `/etc/wiiland/wiilandd.conf`
+1. `/etc/wiiland/wiilandd.conf`
 2. `$XDG_CONFIG_HOME/wiiland/wiilandd.conf` when `XDG_CONFIG_HOME` is absolute;
    otherwise `$HOME/.config/wiiland/wiilandd.conf`
 
@@ -186,44 +214,56 @@ wiilandd-hardware-report N
 | No remote listed | Pair, trust, and connect it; confirm `hid-wiimote` is loaded |
 | Input/uinput denied | Install the udev rules, reconnect, then rerun `--doctor` |
 | Service will not start | Run `--check-config`, then inspect `journalctl --user -u wiilandd.service` |
-| Qt window will not open | Install the Qt `wayland` plugin or `xcb` plugin for the active session |
+| GUI window will not open | Confirm the active Wayland/X11 session and its eframe/winit runtime libraries |
 | Duplicate raw pointer on X.org | Install the packaged `50-xorg-fix-wiiland.conf` policy |
-
-## Build options
-
-| Option | Values | Purpose |
-|---|---|---|
-| `--enable-qt-ui` | `auto`, `yes`, `no` | Qt 6 control center |
-| `--enable-xwiishow` | `auto`, `yes`, `no` | ncurses monitor |
-| `--enable-debug` | flag | Debug build |
-| `--with-udev-rules-dir` | `auto`, `no`, absolute path | Device permissions |
-| `--with-systemd-user-unit-dir` | `auto`, `no`, absolute path | User service |
-| `--with-xorg-conf-dir` | `auto`, `no`, absolute path | Raw-device X.org policy |
-
-`yes` makes a missing optional dependency a configure error. Integration paths
-use pkg-config locations when available and sensible prefix-based fallbacks
-otherwise.
 
 ## Development
 
+The workspace contains the Rust `xwiimote` compatibility library, pure
+`wiiland-core` mapping/configuration logic, the `wiilandd` daemon and report
+binary, the optional `wiiland-config` and `xwiishow` applications, and the
+developer-only `xwiidump` utility. Use the repository's Cargo alias for xtask:
+
 ```sh
-make -j"$(nproc)" check
-make distcheck
+cargo xtask build --features gui,tui,integrations
+cargo xtask build --release --features gui,tui,integrations
+cargo xtask check --all-features
+cargo xtask docs
 ```
 
-`xwiidump` is a non-installed EEPROM diagnostic requiring kernel `debugfs`.
-Hardware-free smoke checks live in [`tests/`](tests); real-device reports should
-include kernel, distribution, Bluetooth adapter, device type, session, and
-consumer results.
+The build compiles the `xwiimote` `rlib` and `staticlib`, then final-links the
+versioned shared object with the root `libxwiimote.sym` ABI map and SONAME
+`libxwiimote.so.2`.
+
+The normal workspace gates are:
+
+```sh
+cargo fmt --check
+cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+cargo test --workspace --all-features --locked
+```
+
+Create and verify the deterministic single-root source archive:
+
+```sh
+cargo xtask dist --output wiiland-2.tar.xz
+cargo xtask verify-dist wiiland-2.tar.xz
+```
+
+`xwiidump` remains a non-installed EEPROM diagnostic and requires kernel
+`debugfs`. Hardware-free daemon checks are exposed by `wiilandd --self-test`;
+real-device reports should include kernel, distribution, Bluetooth adapter,
+device type, session, and consumer results.
 
 ## Documentation
 
-- [`doc/WIILAND`](doc/WIILAND) — architecture, configuration, and operations
+- [`doc/WIILAND`](doc/WIILAND) — architecture, configuration, operations, and validation
 - [`doc/wiilandd.1`](doc/wiilandd.1) — daemon and command reference
-- [`doc/wiiland-config.1`](doc/wiiland-config.1) — Qt control center
+- [`doc/wiiland-config.1`](doc/wiiland-config.1) — control center reference
 - [`doc/wiiland.7`](doc/wiiland.7) — installed overview
-- [`doc/DEVICES`](doc/DEVICES) and [`doc/PROTOCOL`](doc/PROTOCOL) — hardware model and protocol
-- [`DEV`](DEV) — contributor build notes
+- [`doc/libxwiimote.7`](doc/libxwiimote.7) — compatibility library overview
+- [`doc/DEVICES`](doc/DEVICES) and [`doc/PROTOCOL`](doc/PROTOCOL) — hardware model and archival protocol notes
+- [`DEV`](DEV) — contributor build and packaging notes
 
 Questions, bugs, and hardware reports belong in the
 [issue tracker](https://github.com/PhilosophiMoonbeam/wiiland/issues).

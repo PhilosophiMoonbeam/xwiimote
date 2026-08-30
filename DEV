@@ -1,19 +1,103 @@
 = Development =
 
-This file contains information about the development of this software package.
-This contains no information for end-users.
+This file contains contributor information for the Rust workspace. End-user
+operation and the compatibility contracts are documented in `doc/WIILAND`.
 
-== Git ==
+== Repository ==
 
-This software is developed in a git-repository hosted by github:
+The project is developed in the Git repository:
   https://github.com/PhilosophiMoonbeam/wiiland
 
-The related linux device driver development is hosted at kernel.org:
-  http://git.kernel.org
-The driver is developed upstream. Discussion takes place at
+The related Linux device-driver development is upstream:
+  https://git.kernel.org/
+Discussion takes place on:
   linux-input@vger.kernel.org
+
+The protocol and device captures in `doc/PROTOCOL`, `doc/DEVICES`,
+`doc/DEV_REMOTE`, `doc/eeprom.dump`, and `doc/rdesc.dump` are archival
+references. They are not generated build inputs.
+
+== Workspace ==
+
+The repository pins Rust 1.98.0 in `rust-toolchain.toml`.  The Cargo workspace
+uses resolver 3, edition 2024, and package version 2.0.0.  The principal
+packages are:
+
+* `crates/xwiimote` — safe device/monitor ownership plus the `libxwiimote`
+  C ABI (`rlib` and `staticlib`).
+* `crates/wiiland-core` — pure configuration, mapping, pointer, aim, and trace
+  logic.
+* `crates/wiilandd` — the `wiilandd` daemon and
+  `wiilandd-hardware-report`.
+* `crates/wiiland-config` — optional eframe/egui Wayland/X11 control center.
+* `crates/xwiishow` — optional ratatui/crossterm diagnostic TUI.
+* `crates/xwiidump` — non-installed EEPROM diagnostic.
+* `xtask` — typed build, install, documentation, and distribution workflows.
+
+The daemon remains display-neutral: device ingestion and uinput output do not
+call a display-server API. The GUI's winit backend is selected by the active
+Wayland/X11 environment, while the TUI owns and restores its terminal.
+
+== Build ==
+
+Use the repository's Cargo alias for the xtask package:
+
+  cargo xtask build --features gui,tui,integrations
+  cargo xtask build --release --features gui,tui,integrations
+  cargo xtask check --all-features
+  cargo xtask docs
+
+The `gui`, `tui`, and `integrations` feature names select the optional
+frontends and installed integration assets where supported. `cargo xtask build`
+places profile outputs in `target/debug` or `target/release`, then final-links
+the versioned `libxwiimote` shared object from `libxwiimote.a` using the root
+`libxwiimote.sym` ABI map and SONAME `libxwiimote.so.2`.
+
+The focused workspace checks are:
+
+  cargo fmt --check
+  cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+  cargo test --workspace --all-features --locked
+
+Do not add a C or C++ implementation path: `xwiimote` is the single
+implementation for both safe Rust users and the compatibility C ABI. Keep
+`lib/xwiimote.h` and the root `libxwiimote.sym` synchronized with that ABI.
+
+== Install and distribution ==
+
+Build the selected profile before installing it. `xtask` installs from the
+corresponding Cargo target directory:
+
+  cargo xtask build --release --features gui,tui,integrations
+  cargo xtask install --release --prefix /usr --sysconfdir /etc \
+    --features gui,tui,integrations
+
+For packaging, pass `--destdir PATH`; it prefixes staged destinations without
+appearing in generated service or pkg-config files:
+
+  cargo xtask install --release --destdir "$DESTDIR" \
+    --prefix /usr --sysconfdir /etc \
+    --features gui,tui,integrations
+
+Logical directory options include `--prefix`, `--exec-prefix`, `--bindir`,
+`--sbindir`, `--libdir`, `--includedir`, `--datadir`, `--docdir`, and
+`--mandir`. `--sysconfdir` is accepted only as `/etc`, matching the runtime's
+canonical system configuration path. Integration destinations independently
+`auto`, `no`, or an absolute path:
+`--with-udev-rules-dir`, `--with-systemd-user-unit-dir`, and
+`--with-xorg-conf-dir`. `cargo xtask uninstall` reads its ownership marker and
+removes only unchanged files owned by that install.
+
+The deterministic source archive workflow is:
+
+  cargo xtask dist --output wiiland-2.tar.xz
+  cargo xtask verify-dist wiiland-2.tar.xz
+
+`dist` creates one `wiiland-2` archive root and adds `verify-dist.sh`;
+`verify-dist` rejects unsafe or extra roots, extracts the archive, and runs its
+locked Cargo workspace check.
 
 == Changelog ==
 
-There is no classic changelog file. See the git history for a comprehensive
+There is no classic changelog file. See the Git history for a comprehensive
 changelog.

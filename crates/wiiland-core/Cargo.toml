@@ -1,0 +1,11 @@
+[package]
+name = "wiiland-core"
+version = "2.0.0"
+edition = "2024"
+rust-version = "1.98"
+
+[lib]
+name = "wiiland_core"
+path = "src/lib.rs"
+
+[dependencies]

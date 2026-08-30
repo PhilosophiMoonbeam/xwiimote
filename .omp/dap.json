@@ -1,17 +1,21 @@
 {
   "adapters": {
     "gdb": {
-      "launchDefaults": {
-        "env": {
-          "LD_LIBRARY_PATH": ".libs"
-        }
-      },
+      "command": "gdb",
+      "args": ["-q", "-i", "dap"],
+      "languages": ["rust"],
+      "fileTypes": [".rs"],
       "rootMarkers": [
-        "Makefile",
-        "Makefile.am",
-        "configure.ac",
-        "compile_commands.json"
-      ]
+        "Cargo.toml",
+        "rust-toolchain.toml",
+        "rust-analyzer.toml",
+        ".cargo",
+        ".git"
+      ],
+      "launchDefaults": {
+        "request": "launch",
+        "stopOnEntry": false
+      }
     }
   }
 }

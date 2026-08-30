@@ -1,22 +1,24 @@
 = WiiLand =
 
-Status: final architecture, operations, and validation guide for one Linux
-installation that supports Wayland and X.org sessions equally.
+Status: final Rust 1.98 architecture, operations, and validation guide for one
+Linux installation that supports Wayland and X.org sessions equally.
 
 == Architecture ==
 
 WiiLand is a display-neutral input stack with four layers:
 
 1.  The kernel hid-wiimote driver and BlueZ expose the paired Wii Remote as
-    input interfaces.  libxwiimote is the userspace ingestion API used by
-    wiilandd.  It supplies core buttons, extension buttons and axes,
-    accelerometer, MotionPlus, IR, and Balance Board data.
+    input interfaces.  The Rust `xwiimote` crate provides safe ownership and
+    the `libxwiimote` compatibility library, preserving the public C header,
+    symbol map, SONAME, event layouts, and error conventions.  It supplies
+    core buttons, extension buttons and axes, accelerometer, MotionPlus, IR,
+    and Balance Board data.
 
-2.  wiilandd decodes those events and creates Linux uinput virtual evdev
-    devices.  The gamepad profile creates one device named "WiiLand Virtual
-    Controller" per remote.  The desktop profile creates a device named
-    "WiiLand Virtual Desktop"; `both` creates both profiles.  The daemon does
-    not call a display-server API and does not require XWayland.
+2.  `wiilandd` consumes those interfaces and creates Linux uinput virtual
+    evdev devices.  The gamepad profile creates one device named
+    "WiiLand Virtual Controller" per remote.  The desktop profile creates a
+    device named "WiiLand Virtual Desktop"; `both` creates both profiles.  The
+    daemon does not call a display-server API and does not require XWayland.
 
 3.  A Wayland compositor consumes the virtual evdev devices through libinput.
     An X.org server consumes the same virtual devices through its normal input
@@ -24,24 +26,16 @@ WiiLand is a display-neutral input stack with four layers:
     consumes the device and forwards the resulting seat input to XWayland
     clients.
 
-4.  Applications consume the resulting seat or controller events through their
-    normal interfaces: native Wayland applications, native X11 applications,
-    XWayland applications, SDL, Steam Input, and Wine/Proton.
+4.  Applications consume the resulting seat or controller events through
+    their normal interfaces: native Wayland applications, native X11
+    applications, XWayland applications, SDL, Steam Input, and Wine/Proton.
 
 uinput is the shared boundary because it is a kernel input interface, not a
-display protocol.  One wiilandd instance can therefore publish identical
+display protocol.  One `wiilandd` instance can therefore publish identical
 evdev devices to whichever session is active, without separate compositor
 plugins or display-specific injection permissions.  Each session consumes the
 same virtual devices through its own normal input stack; the session does not
 change how the Wii Remote is decoded.
-
-For a native X.org installation, the X.org integration provides
-`res/50-xorg-fix-wiiland.conf` InputClass rules that suppress matching raw
-Nintendo Wii Remote event nodes so X.org does not create duplicate pointer
-input from accelerometer/IR axes.  The rules do not block libxwiimote access,
-wiilandd, or devices named "WiiLand Virtual Controller" and "WiiLand Virtual
-Desktop".  The Classic Controller and Pro Controller exceptions in that file
-remain enabled.  This policy has no role in a Wayland session.
 
 == Pairing and operating the bridge ==
 
@@ -67,7 +61,7 @@ application configuration change, not a change to the evdev contract.
 
 == Permissions and service lifecycle ==
 
-wiilandd needs read access to the hid-wiimote `/dev/input/event*` nodes and
+`wiilandd` needs read access to the hid-wiimote `/dev/input/event*` nodes and
 write access to `/dev/uinput`.  Install the udev rules
 `res/70-udev-wiiland.rules` and `res/70-wiiland-uinput.rules` (or the packaged
 equivalents).  The latter grants active-seat access to input nodes with
@@ -76,7 +70,7 @@ former grants group write access to Wii Remote LED sysfs attributes.  No
 display-server client access is needed.
 
 The packaged user unit is `wiilandd.service` and is installed in the systemd
-user-unit directory selected at configure time.  It is pulled by
+user-unit directory selected by `cargo xtask install`.  It is pulled by
 `default.target`.  Its `ExecCondition` runs `wiilandd --check-config` before
 `ExecStart`; invalid configuration therefore suppresses that start and does
 not enter the runtime restart policy.  A process that starts and then fails
@@ -89,69 +83,82 @@ and uses `UMask=0077`.  Enable and start it in the user manager with:
     systemctl --user start wiilandd.service
 
 Use `systemctl --user status wiilandd.service` for lifecycle diagnostics.
-`wiilandd --doctor` reports the current session variables, Wayland/X11 and
-XWayland availability, resolved configuration paths, `/dev/uinput`, backend,
-and profile; it does not enumerate Wii devices.  `wiilandd --check-config`
+`wiilandd --doctor` reports current session variables, Wayland/X11 and XWayland
+availability, resolved configuration paths, `/dev/uinput`, backend, and
+profile; it does not enumerate Wii devices.  `wiilandd --check-config`
 validates the effective configuration without enumerating devices.
 
-== Configuration and GUI ==
+== Configuration and frontends ==
 
-Unless `--no-config` is supplied, wiilandd reads the installed
-`${sysconfdir}/wiiland/wiilandd.conf` first (normally
-`/etc/wiiland/wiilandd.conf`), then an absolute
+Unless `--no-config` is supplied, `wiilandd` reads the canonical system file
+`/etc/wiiland/wiilandd.conf` first, then an absolute
 `$XDG_CONFIG_HOME/wiiland/wiilandd.conf`, or
 `$HOME/.config/wiiland/wiilandd.conf` when `XDG_CONFIG_HOME` is unset or
 relative.  Later values override earlier values.  `--config path` selects one
 explicit key=value file instead of the default hierarchy, and command-line
 options override loaded values.  `--config` and `--no-config` are mutually
 exclusive.  `--dump-config` prints the resolved result.  `res/wiilandd.conf`
-is the installed/sample configuration; it is not an additional implicit
-layer.
+is the installed/sample configuration; it is not an additional implicit layer.
 
-The optional `wiiland-config` control center uses Qt 6 Widgets and Qt Platform
-Abstraction (QPA), with no direct X11 or Wayland display API.  Qt selects the
-native Wayland plugin in a Wayland session and the xcb plugin in an X.org
-session.  The same configuration editor and status display are therefore
-available in both sessions.  To select explicitly:
+The optional `wiiland-config` control center is a Rust eframe/egui application.
+Its native winit backends support Wayland and X11, and its application ID is
+`io.github.philosophimoonbeam.wiiland-config`.  The model and reducer preserve
+canonical daemon values, transaction/revision ownership, atomic same-directory
+saves, service controls, and stale asynchronous-completion protection.
+calibration actions are mutually exclusive; saved accelerometer and MotionPlus
+calibration remain independent, with complete X/Y/Z triples for each enabled
+sensor.  Fixed-width command output can be copied or cleared and retains the
+most recent 10,000 text blocks.
 
-    QT_QPA_PLATFORM=wayland wiiland-config
-    QT_QPA_PLATFORM=xcb wiiland-config
+The optional `xwiishow` diagnostic is a ratatui/crossterm TUI.  It supports the
+80x24 minimum and 160x48 extended layouts, full controller displays, and
+terminal cleanup on exit.  `xwiidump` is a developer-only utility and is not
+installed.
 
-The corresponding Qt QPA platform plugin must be installed at runtime; the
-configure check verifies Qt 6 Widgets but does not verify those runtime
-plugins.
+== Build, installation, and artifacts ==
 
-The configuration surface uses human-readable labels while serializing the
-canonical daemon values, keeps reload/save actions outside its scroll area,
-and warns before discarding edited form values.  The validation form is visible
-at compact window sizes and coordinates trace and calibration state so those
-tasks cannot overlap.
+The workspace is pinned to Rust 1.98.0 by `rust-toolchain.toml` and uses Cargo
+resolver 3, edition 2024, and package version 2.0.0.  Build optional
+applications and integration assets with:
+    cargo xtask build --release --features gui,tui,integrations
 
-Saved accelerometer and MotionPlus calibration are controlled independently;
-each enabled sensor emits a complete X/Y/Z triple.  Fixed-width command output
-can be copied or cleared and retains the most recent 10,000 text blocks so
-long-running diagnostics cannot grow the GUI document without bound.
+The xtask build compiles the `xwiimote` `rlib` and `staticlib`, then final-links
+the versioned `libxwiimote` shared object with the root `libxwiimote.sym` ABI map
+and SONAME `libxwiimote.so.2`.
 
+The typed install workflow accepts logical GNU-style paths and stages them
+with `--destdir`:
 
-== Configure and installed artifacts ==
+    cargo xtask install --release --destdir "$DESTDIR" \
+      --prefix /usr --sysconfdir /etc \
+      --features gui,tui,integrations
 
-Native integration is controlled by these configure switches:
+`--with-udev-rules-dir`, `--with-systemd-user-unit-dir`, and
+`--with-xorg-conf-dir` independently accept `auto`, `no`, or an absolute
+destination.  With integrations enabled, installation provides
+`70-udev-wiiland.rules`, `70-wiiland-uinput.rules`, `wiilandd.service`, and
+`50-xorg-fix-wiiland.conf` in their selected system directories.  It installs
+`wiilandd`, `wiilandd-hardware-report`, optional `wiiland-config` and
+`xwiishow`, the `libxwiimote.so.2` and static library, `xwiimote.h`, pkg-config
+metadata, `res/wiilandd.conf`, this documentation, and the applicable manual
+pages.  The compatibility library keeps SONAME `libxwiimote.so.2`; the static
+archive is `libxwiimote.a`.
 
-    --enable-qt-ui=auto|yes|no
-    --with-udev-rules-dir=auto|no|PATH
-    --with-systemd-user-unit-dir=auto|no|PATH
-    --with-xorg-conf-dir=auto|no|PATH
+The default logical prefix is `/usr/local`, while the system configuration
+path remains `/etc`; `--sysconfdir` rejects any other path.  Distribution
+packages normally pass `--prefix /usr --sysconfdir /etc` and a package-specific
+`--destdir`.  `cargo xtask uninstall` uses the ownership marker for that staged
+root and removes only files that still match the recorded content.
 
-With the relevant options enabled, installation provides `wiilandd`,
-`wiilandd-hardware-report`, optional `wiiland-config`, the man pages, and
-`doc/WIILAND`.  It installs `res/wiilandd.conf` under
-`$(sysconfdir)/wiiland/wiilandd.conf` and also as a documentation example.
-The udev rules go to the configured udev rules directory; the user unit goes
-to the configured systemd user-unit directory; and
-`50-xorg-fix-wiiland.conf` goes to the configured X.org
-`xorg.conf.d` directory.  The Qt desktop entry and icon are installed only
-when the Qt UI is built.  Set each `--with-...-dir` option to `no` to omit
-that integration artifact.
+== X.org raw-device policy ==
+
+For a native X.org installation, the X.org integration provides
+`res/50-xorg-fix-wiiland.conf` InputClass rules that suppress matching raw
+Nintendo Wii Remote event nodes so X.org does not create duplicate pointer
+input from accelerometer/IR axes.  The rules do not block `libxwiimote` access,
+`wiilandd`, or devices named "WiiLand Virtual Controller" and "WiiLand Virtual
+Desktop".  The Classic Controller and Pro Controller exceptions in that file
+remain enabled.  This policy has no role in a Wayland session.
 
 == Reproducible validation ==
 
@@ -173,7 +180,7 @@ libxwiimote and wiilandd versions, commit/dirty state, resolved config, axis
 map, checklist, doctor diagnostics, device list, devtype, extension, sysfs
 identity, battery, event-node access, and manual-validation fields.  It exits
 with a failure status for core diagnostic failures; manual fields remain
-explicit acceptance placeholders.
+explicit acceptance fields.
 
 With a paired device, use the device number from `--list` or its sysfs path:
 
@@ -221,5 +228,12 @@ Session and consumer coverage for each applicable hardware/profile pair:
 For motion validation, run `--calibrate-aim` on a flat, still remote, put its
 generated key=value lines in the test configuration, and record any optional
 IR screen bounds.  Mark a row only after observing the expected virtual
-device/events in that session and consumer; do not substitute a report
-placeholder for paired hardware evidence.
+device/events in that session and consumer; do not substitute a report field
+for paired hardware evidence.
+
+== Archival references ==
+
+Protocol history and device captures remain available in `doc/PROTOCOL`,
+`doc/DEVICES`, `doc/DEV_REMOTE`, `doc/eeprom.dump`, and `doc/rdesc.dump`.
+They document the hardware and wire-level lineage; the Rust implementation and
+the public C ABI are authoritative for current behavior.
