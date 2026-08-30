@@ -35,27 +35,122 @@ LT_PREREQ(2.2)
 LT_INIT
 
 PKG_CHECK_MODULES([UDEV], [libudev])
-AC_SUBST(UDEV_CFLAGS)
-AC_SUBST(UDEV_LIBS)
+AC_SUBST([UDEV_CFLAGS])
+AC_SUBST([UDEV_LIBS])
+AC_CHECK_HEADERS([linux/uinput.h], [],
+                 [AC_MSG_ERROR([linux/uinput.h is required])])
 
-PKG_CHECK_MODULES([NCURSES], [ncurses])
-AC_SUBST(NCURSES_CFLAGS)
-AC_SUBST(NCURSES_LIBS)
+AC_ARG_ENABLE([xwiishow],
+              [AS_HELP_STRING([--enable-xwiishow=@<:@auto/yes/no@:>@],
+                              [build optional ncurses xwiishow frontend])],
+              [enable_xwiishow="$enableval"],
+              [enable_xwiishow=auto])
+AS_CASE([$enable_xwiishow],
+        [auto|yes|no], [],
+        [AC_MSG_ERROR([invalid value '$enable_xwiishow' for --enable-xwiishow; expected auto, yes, or no])])
+have_xwiishow=no
+if test "x$enable_xwiishow" != "xno"; then
+        PKG_CHECK_MODULES([NCURSES], [ncurses],
+                          [have_xwiishow=yes],
+                          [if test "x$enable_xwiishow" = "xyes"; then
+                                   AC_MSG_ERROR([ncurses is required for --enable-xwiishow=yes])
+                           fi])
+fi
+AM_CONDITIONAL([HAVE_XWIISHOW], [test "$have_xwiishow" = yes])
+
 AC_ARG_ENABLE([qt-ui],
               [AS_HELP_STRING([--enable-qt-ui=@<:@auto/yes/no@:>@],
                               [build optional Qt 6 configuration UI])],
               [enable_qt_ui="$enableval"],
               [enable_qt_ui=auto])
+AS_CASE([$enable_qt_ui],
+        [auto|yes|no], [],
+        [AC_MSG_ERROR([invalid value '$enable_qt_ui' for --enable-qt-ui; expected auto, yes, or no])])
 have_qt_ui=no
 if test "x$enable_qt_ui" != "xno"; then
         PKG_CHECK_MODULES([QT6_WIDGETS], [Qt6Widgets],
-                          [have_qt_ui=yes],
-                          [if test "x$enable_qt_ui" = "xyes"; then
-                                   AC_MSG_ERROR([Qt6Widgets is required for --enable-qt-ui=yes])
-                           fi])
+                          [save_CPPFLAGS=$CPPFLAGS
+                           save_CXXFLAGS=$CXXFLAGS
+                           CPPFLAGS="$CPPFLAGS $QT6_WIDGETS_CFLAGS"
+                           CXXFLAGS="$CXXFLAGS $QT6_WIDGETS_CFLAGS"
+                           AC_LANG_PUSH([C++])
+                           AC_COMPILE_IFELSE(
+                                   [AC_LANG_PROGRAM(
+                                           [[#include <QApplication>
+#include <QWidget>]],
+                                           [[QWidget widget;
+widget.setWindowTitle(QStringLiteral("WiiLand"));]])],
+                                   [have_qt_ui=yes],
+                                   [have_qt_ui=no])
+                           AC_LANG_POP([C++])
+                           CPPFLAGS=$save_CPPFLAGS
+                           CXXFLAGS=$save_CXXFLAGS],
+                          [have_qt_ui=no])
+        if test "x$enable_qt_ui" = "xyes" && test "$have_qt_ui" != yes; then
+                AC_MSG_ERROR([Qt6Widgets headers and a working C++ compiler are required for --enable-qt-ui=yes])
+        fi
 fi
 AM_CONDITIONAL([HAVE_QT_UI], [test "$have_qt_ui" = yes])
+if test "$have_qt_ui" = yes; then
+        qt_qpa_runtime="not checked (Wayland and xcb plugins are loaded at runtime)"
+        AC_MSG_NOTICE([Qt QPA runtime availability is not checked; install the appropriate Wayland or xcb platform plugin])
+else
+        qt_qpa_runtime="not applicable (Qt UI disabled)"
+        AC_MSG_NOTICE([Qt QPA runtime availability is not applicable because the Qt UI is disabled])
+fi
 
+AC_ARG_WITH([udev-rules-dir],
+            [AS_HELP_STRING([--with-udev-rules-dir=@<:@auto/no/PATH@:>@],
+                            [install udev rules in PATH])],
+            [with_udev_rules_dir="$withval"],
+            [with_udev_rules_dir=auto])
+AS_CASE([$with_udev_rules_dir],
+        [auto], [UDEV_RULES_DIR=`$PKG_CONFIG --variable=udevdir udev 2>/dev/null`
+                 if test -n "$UDEV_RULES_DIR"; then
+                         UDEV_RULES_DIR="$UDEV_RULES_DIR/rules.d"
+                 else
+                         UDEV_RULES_DIR='${prefix}/lib/udev/rules.d'
+                 fi],
+        [no], [UDEV_RULES_DIR=],
+        [yes|''], [AC_MSG_ERROR([--with-udev-rules-dir requires auto, no, or an absolute PATH])],
+        [/*], [UDEV_RULES_DIR="$with_udev_rules_dir"],
+        [AC_MSG_ERROR([--with-udev-rules-dir requires auto, no, or an absolute PATH])])
+AC_SUBST([UDEV_RULES_DIR])
+AM_CONDITIONAL([INSTALL_UDEV_RULES], [test "x$with_udev_rules_dir" != "xno"])
+
+AC_ARG_WITH([systemd-user-unit-dir],
+            [AS_HELP_STRING([--with-systemd-user-unit-dir=@<:@auto/no/PATH@:>@],
+                            [install the systemd user unit in PATH])],
+            [with_systemd_user_unit_dir="$withval"],
+            [with_systemd_user_unit_dir=auto])
+AS_CASE([$with_systemd_user_unit_dir],
+        [auto], [SYSTEMD_USER_UNIT_DIR=`$PKG_CONFIG --variable=systemduserunitdir systemd 2>/dev/null`
+                 if test -z "$SYSTEMD_USER_UNIT_DIR"; then
+                         SYSTEMD_USER_UNIT_DIR='${prefix}/lib/systemd/user'
+                 fi],
+        [no], [SYSTEMD_USER_UNIT_DIR=],
+        [yes|''], [AC_MSG_ERROR([--with-systemd-user-unit-dir requires auto, no, or an absolute PATH])],
+        [/*], [SYSTEMD_USER_UNIT_DIR="$with_systemd_user_unit_dir"],
+        [AC_MSG_ERROR([--with-systemd-user-unit-dir requires auto, no, or an absolute PATH])])
+AC_SUBST([SYSTEMD_USER_UNIT_DIR])
+AM_CONDITIONAL([INSTALL_SYSTEMD_USER_UNIT], [test "x$with_systemd_user_unit_dir" != "xno"])
+
+AC_ARG_WITH([xorg-conf-dir],
+            [AS_HELP_STRING([--with-xorg-conf-dir=@<:@auto/no/PATH@:>@],
+                            [install the X.org policy in PATH])],
+            [with_xorg_conf_dir="$withval"],
+            [with_xorg_conf_dir=auto])
+AS_CASE([$with_xorg_conf_dir],
+        [auto], [XORG_CONF_DIR=`$PKG_CONFIG --variable=sysconfigdir xorg-server 2>/dev/null`
+                 if test -z "$XORG_CONF_DIR"; then
+                         XORG_CONF_DIR='${datadir}/X11/xorg.conf.d'
+                 fi],
+        [no], [XORG_CONF_DIR=],
+        [yes|''], [AC_MSG_ERROR([--with-xorg-conf-dir requires auto, no, or an absolute PATH])],
+        [/*], [XORG_CONF_DIR="$with_xorg_conf_dir"],
+        [AC_MSG_ERROR([--with-xorg-conf-dir requires auto, no, or an absolute PATH])])
+AC_SUBST([XORG_CONF_DIR])
+AM_CONDITIONAL([INSTALL_XORG_CONF], [test "x$with_xorg_conf_dir" != "xno"])
 
 AC_MSG_CHECKING([whether to build with debugging on])
 AC_ARG_ENABLE([debug],
@@ -104,7 +199,12 @@ AC_MSG_NOTICE([Build configuration:
 
                 debug: $debug
               doxygen: $have_doxygen
+            xwiishow: $have_xwiishow
                qt-ui: $have_qt_ui
+       Qt QPA runtime: $qt_qpa_runtime
 
+           udev rules: ${UDEV_RULES_DIR:-no}
+    systemd user unit: ${SYSTEMD_USER_UNIT_DIR:-no}
+       X.org conf dir: ${XORG_CONF_DIR:-no}
 
         Run "${MAKE-make}" to start compilation process])

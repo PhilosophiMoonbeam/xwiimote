@@ -1,4 +1,5 @@
 # Ignore generated files
+res/wiilandd.service
 driver/.tmp_versions
 driver/Module.symvers
 driver/modules.order

@@ -16,6 +16,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <inttypes.h>
+#include <limits.h>
 #include <math.h>
 #include <ncurses.h>
 #include <poll.h>
@@ -39,6 +40,10 @@ enum window_mode {
 static struct xwii_iface *iface;
 static unsigned int mode = MODE_ERROR;
 static bool freeze = false;
+static bool rumble_writable;
+static bool led_writable[4] = { true, true, true, true };
+
+static void rumble_show(bool on);
 
 /* error messages */
 
@@ -150,15 +155,28 @@ static void key_toggle(void)
 
 	if (xwii_iface_opened(iface) & XWII_IFACE_CORE) {
 		xwii_iface_close(iface, XWII_IFACE_CORE);
+		if (!(xwii_iface_opened(iface) & XWII_IFACE_PRO_CONTROLLER))
+			rumble_writable = false;
 		key_clear();
+		rumble_show(false);
 		print_info("Info: Disable key events");
 	} else {
 		ret = xwii_iface_open(iface, XWII_IFACE_CORE |
 					     XWII_IFACE_WRITABLE);
-		if (ret)
+		if (!ret) {
+			rumble_writable = true;
+		} else {
+			rumble_writable = false;
+			ret = xwii_iface_open(iface, XWII_IFACE_CORE);
+		}
+
+		if (ret == -EACCES || ret == -EPERM)
+			print_error("Cannot read keys: check input-device ACLs/udev rules");
+		else if (ret)
 			print_error("Error: Cannot enable key events: %d", ret);
 		else
 			print_info("Info: Enable key events");
+		rumble_show(false);
 	}
 }
 
@@ -2123,7 +2141,8 @@ static void drums_toggle(void)
 
 static void rumble_show(bool on)
 {
-	mvprintw(1, 21, on ? "RUMBLE" : "      ");
+	mvprintw(1, 21, rumble_writable ? (on ? "RUMBLE" : "      ") :
+					 "  N/A ");
 }
 
 static void rumble_toggle(void)
@@ -2131,11 +2150,19 @@ static void rumble_toggle(void)
 	static bool on = false;
 	int ret;
 
+	if (!rumble_writable) {
+		print_error("Rumble unavailable: input device lacks write access");
+		rumble_show(false);
+		return;
+	}
+
 	on = !on;
 	ret = xwii_iface_rumble(iface, on);
 	if (ret) {
-		print_error("Error: Cannot toggle rumble motor: %d", ret);
-		on = !on;
+		print_error("Rumble unavailable: cannot write to input device (%d)",
+			    ret);
+		on = false;
+		rumble_writable = false;
 	}
 
 	rumble_show(on);
@@ -2147,18 +2174,30 @@ static bool led_state[4];
 
 static void led_show(int n, bool on)
 {
-	mvprintw(5, 59 + n*5, on ? "(#%i)" : " -%i ", n+1);
+	if (led_writable[n])
+		mvprintw(5, 59 + n*5, on ? "(#%i)" : " -%i ", n+1);
+	else
+		mvprintw(5, 59 + n*5, " N/A");
 }
 
 static void led_toggle(int n)
 {
 	int ret;
 
+	if (!led_writable[n]) {
+		print_error("LED %i unavailable: sysfs attribute lacks write access",
+			    n + 1);
+		led_show(n, led_state[n]);
+		return;
+	}
+
 	led_state[n] = !led_state[n];
 	ret = xwii_iface_set_led(iface, XWII_LED(n+1), led_state[n]);
 	if (ret) {
-		print_error("Error: Cannot toggle LED %i: %d", n+1, ret);
+		print_error("LED %i unavailable: cannot write sysfs attribute (%d)",
+			    n + 1, ret);
 		led_state[n] = !led_state[n];
+		led_writable[n] = false;
 	}
 	led_show(n, led_state[n]);
 }
@@ -2250,9 +2289,6 @@ static void refresh_all(void)
 	devtype_refresh();
 	extension_refresh();
 	mp_refresh();
-
-	if (geteuid() != 0)
-		mvprintw(20, 22, "Warning: Please run as root! (sysfs+evdev access needed)");
 }
 
 static void setup_window(void)
@@ -2262,7 +2298,7 @@ static void setup_window(void)
 	i = 0;
 	/* 80x24 Box */
 	mvprintw(i++, 0, "+- Keys ----------+ +------+ +---------------------------------+---------------+");
-	mvprintw(i++, 0, "|       +-+       | |      |  Accel x:       y:       z:       | XWIIMOTE SHOW |");
+	mvprintw(i++, 0, "|       | |       | |      |  Accel x:       y:       z:       | WIILAND SHOW  |");
 	mvprintw(i++, 0, "|       | |       | +------+ +---------------------------------+---------------+");
 	mvprintw(i++, 0, "|     +-+ +-+     | IR #1:     x     #2:     x     #3:     x     #4:     x     |");
 	mvprintw(i++, 0, "|     |     |     | +--------------------------------+-------------------------+");
@@ -2394,18 +2430,47 @@ static void handle_resize(void)
 
 /* device watch events */
 
+static void open_available_interfaces(void)
+{
+	const unsigned int controls = XWII_IFACE_CORE |
+				      XWII_IFACE_PRO_CONTROLLER;
+	unsigned int available, bit, missing, opened;
+	int ret;
+
+	available = xwii_iface_available(iface);
+	opened = xwii_iface_opened(iface);
+	if (!(opened & controls))
+		rumble_writable = false;
+
+	for (bit = XWII_IFACE_CORE; bit <= XWII_IFACE_PRO_CONTROLLER;
+	     bit <<= 1) {
+		if (!(bit & controls) || !(bit & available) || (bit & opened))
+			continue;
+
+		ret = xwii_iface_open(iface, bit | XWII_IFACE_WRITABLE);
+		if (!ret)
+			rumble_writable = true;
+		opened = xwii_iface_opened(iface);
+	}
+
+	ret = xwii_iface_open(iface, available);
+	opened = xwii_iface_opened(iface);
+	missing = available & ~opened;
+	if (missing && (ret == -EACCES || ret == -EPERM))
+		print_error("Cannot read some inputs: check device ACLs/udev rules");
+	else if (missing)
+		print_error("Error: Cannot open some readable interfaces: %d", ret);
+
+	if ((available & controls) && !rumble_writable)
+		print_info("Info: Read-only input; rumble is unavailable");
+}
+
 static void handle_watch(void)
 {
 	static unsigned int num;
-	int ret;
 
 	print_info("Info: Watch Event #%u", ++num);
-
-	ret = xwii_iface_open(iface, xwii_iface_available(iface) |
-				     XWII_IFACE_WRITABLE);
-	if (ret)
-		print_error("Error: Cannot open interface: %d", ret);
-
+	open_available_interfaces();
 	refresh_all();
 }
 
@@ -2510,11 +2575,16 @@ static int run_iface(struct xwii_iface *iface)
 	while (true) {
 		ret = poll(fds, fds_num, -1);
 		if (ret < 0) {
-			if (errno != EINTR) {
-				ret = -errno;
-				print_error("Error: Cannot poll fds: %d", ret);
-				break;
-			}
+			if (errno == EINTR)
+				continue;
+			ret = -errno;
+			print_error("Error: Cannot poll fds: %d", ret);
+			break;
+		}
+		if (fds[0].revents & (POLLERR | POLLHUP | POLLNVAL)) {
+			ret = -EIO;
+			print_error("Error: Terminal input disconnected");
+			break;
 		}
 
 		ret = xwii_iface_dispatch(iface, &event, sizeof(event));
@@ -2592,13 +2662,16 @@ static int run_iface(struct xwii_iface *iface)
 			return 0;
 		else if (ret)
 			return ret;
-		refresh();
+		if (refresh() == ERR) {
+			print_error("Error: Cannot update terminal display");
+			return -EIO;
+		}
 	}
 
 	return ret;
 }
 
-static int enumerate()
+static int enumerate(void)
 {
 	struct xwii_monitor *mon;
 	char *ent;
@@ -2606,12 +2679,12 @@ static int enumerate()
 
 	mon = xwii_monitor_new(false, false);
 	if (!mon) {
-		printf("Cannot create monitor\n");
+		fprintf(stderr, "xwiishow: cannot create device monitor\n");
 		return -EINVAL;
 	}
 
 	while ((ent = xwii_monitor_poll(mon))) {
-		printf("  Found device #%d: %s\n", ++num, ent);
+		printf("%d\t%s\n", ++num, ent);
 		free(ent);
 	}
 
@@ -2627,7 +2700,7 @@ static char *get_dev(int num)
 
 	mon = xwii_monitor_new(false, false);
 	if (!mon) {
-		printf("Cannot create monitor\n");
+		fprintf(stderr, "xwiishow: cannot create device monitor\n");
 		return NULL;
 	}
 
@@ -2640,94 +2713,181 @@ static char *get_dev(int num)
 	xwii_monitor_unref(mon);
 
 	if (!ent)
-		printf("Cannot find device with number #%d\n", num);
+		fprintf(stderr, "xwiishow: no device with ordinal %d\n", num);
 
 	return ent;
 }
 
+static void usage(FILE *out)
+{
+	fprintf(out, "Usage:\n");
+	fprintf(out, "  xwiishow -h|--help\n");
+	fprintf(out, "  xwiishow list\n");
+	fprintf(out, "  xwiishow <positive-ordinal>\n");
+	fprintf(out, "  xwiishow /sys/path/to/device\n");
+	fprintf(out, "UI commands:\n");
+	fprintf(out, "  q: Quit application\n");
+	fprintf(out, "  f: Freeze/Unfreeze screen\n");
+	fprintf(out, "  s: Refresh static values (like battery or calibration)\n");
+	fprintf(out, "  k: Toggle key events\n");
+	fprintf(out, "  r: Toggle rumble motor (when writable)\n");
+	fprintf(out, "  a: Toggle accelerometer\n");
+	fprintf(out, "  i: Toggle IR camera\n");
+	fprintf(out, "  m: Toggle motion plus\n");
+	fprintf(out, "  n: Toggle normalization for motion plus\n");
+	fprintf(out, "  b: Toggle balance board\n");
+	fprintf(out, "  p: Toggle pro controller\n");
+	fprintf(out, "  g: Toggle guitar controller\n");
+	fprintf(out, "  d: Toggle drums controller\n");
+	fprintf(out, "  1-4: Toggle LEDs (when writable)\n");
+}
+
+static int parse_ordinal(const char *arg, int *ordinal)
+{
+	char *end;
+	long value;
+
+	if (!arg[0] || arg[0] < '0' || arg[0] > '9')
+		return -EINVAL;
+
+	errno = 0;
+	value = strtol(arg, &end, 10);
+	if (errno == ERANGE || value > INT_MAX)
+		return -ERANGE;
+	if (*end || value <= 0)
+		return -EINVAL;
+
+	*ordinal = value;
+	return 0;
+}
+
 int main(int argc, char **argv)
 {
-	int ret = 0;
+	const char *selector, *syspath, *term;
+	struct xwii_iface *device;
+	SCREEN *screen;
 	char *path = NULL;
+	int ordinal, ret, cleanup_ret;
 
-	if (argc < 2 || !strcmp(argv[1], "-h")) {
-		printf("Usage:\n");
-		printf("\txwiishow [-h]: Show help\n");
-		printf("\txwiishow list: List connected devices\n");
-		printf("\txwiishow <num>: Show device with number #num\n");
-		printf("\txwiishow /sys/path/to/device: Show given device\n");
-		printf("UI commands:\n");
-		printf("\tq: Quit application\n");
-		printf("\tf: Freeze/Unfreeze screen\n");
-		printf("\ts: Refresh static values (like battery or calibration)\n");
-		printf("\tk: Toggle key events\n");
-		printf("\tr: Toggle rumble motor\n");
-		printf("\ta: Toggle accelerometer\n");
-		printf("\ti: Toggle IR camera\n");
-		printf("\tm: Toggle motion plus\n");
-		printf("\tn: Toggle normalization for motion plus\n");
-		printf("\tb: Toggle balance board\n");
-		printf("\tp: Toggle pro controller\n");
-		printf("\tg: Toggle guitar controller\n");
-		printf("\td: Toggle drums controller\n");
-		printf("\t1: Toggle LED 1\n");
-		printf("\t2: Toggle LED 2\n");
-		printf("\t3: Toggle LED 3\n");
-		printf("\t4: Toggle LED 4\n");
-		ret = -1;
-	} else if (!strcmp(argv[1], "list")) {
-		printf("Listing connected Wii Remote devices:\n");
-		ret = enumerate();
-		printf("End of device list\n");
-	} else {
-		if (argv[1][0] != '/')
-			path = get_dev(atoi(argv[1]));
+	if (argc == 2 &&
+	    (!strcmp(argv[1], "-h") || !strcmp(argv[1], "--help"))) {
+		usage(stdout);
+		return EXIT_SUCCESS;
+	}
+	if (argc != 2) {
+		fprintf(stderr, "xwiishow: expected exactly one selector\n");
+		usage(stderr);
+		return EXIT_FAILURE;
+	}
+	if (!strcmp(argv[1], "list"))
+		return enumerate() ? EXIT_FAILURE : EXIT_SUCCESS;
 
-		ret = xwii_iface_new(&iface, path ? path : argv[1]);
-		free(path);
-		if (ret) {
-			printf("Cannot create xwii_iface '%s' err:%d\n",
-								argv[1], ret);
-		} else {
-
-			initscr();
-			curs_set(0);
-			raw();
-			noecho();
-			timeout(0);
-
-			handle_resize();
-			key_clear();
-			accel_clear();
-			ir_clear();
-			mp_clear();
-			nunchuk_clear();
-			classic_clear();
-			bboard_clear();
-			pro_clear();
-			guit_clear();
-			drums_clear();
-			refresh_all();
-			refresh();
-
-			ret = xwii_iface_open(iface,
-					      xwii_iface_available(iface) |
-					      XWII_IFACE_WRITABLE);
-			if (ret)
-				print_error("Error: Cannot open interface: %d",
-					    ret);
-
-			ret = run_iface(iface);
-			xwii_iface_unref(iface);
-			if (ret) {
-				print_error("Program failed; press any key to exit");
-				refresh();
-				timeout(-1);
-				getch();
-			}
-			endwin();
+	if (argv[1][0] == '/') {
+		if (strncmp(argv[1], "/sys/", 5)) {
+			fprintf(stderr,
+				"xwiishow: device path must be an absolute sysfs path under /sys\n");
+			return EXIT_FAILURE;
 		}
+		selector = argv[1];
+	} else {
+		ret = parse_ordinal(argv[1], &ordinal);
+		if (ret) {
+			fprintf(stderr,
+				"xwiishow: selector must be a positive ordinal or an absolute /sys path: %s\n",
+				argv[1]);
+			return EXIT_FAILURE;
+		}
+		path = get_dev(ordinal);
+		if (!path)
+			return EXIT_FAILURE;
+		selector = path;
 	}
 
-	return abs(ret);
+	ret = xwii_iface_new(&device, selector);
+	free(path);
+	if (ret) {
+		fprintf(stderr, "xwiishow: cannot open device '%s': %d\n",
+			argv[1], ret);
+		return EXIT_FAILURE;
+	}
+
+	iface = device;
+	syspath = xwii_iface_get_syspath(device);
+	printf("Using Wii Remote: %s\n", syspath ? syspath : argv[1]);
+	fflush(stdout);
+
+	if (!isatty(STDIN_FILENO)) {
+		fprintf(stderr,
+			"xwiishow: interactive UI requires a terminal on stdin; use 'xwiishow list' for pipelines\n");
+		xwii_iface_unref(device);
+		return EXIT_FAILURE;
+	}
+	if (!isatty(STDOUT_FILENO)) {
+		fprintf(stderr,
+			"xwiishow: interactive UI requires a terminal on stdout; use 'xwiishow list' for redirected output\n");
+		xwii_iface_unref(device);
+		return EXIT_FAILURE;
+	}
+	term = getenv("TERM");
+	if (!term || !term[0] || !strcmp(term, "dumb")) {
+		fprintf(stderr,
+			"xwiishow: interactive UI requires a usable TERM value (for example, TERM=xterm-256color)\n");
+		xwii_iface_unref(device);
+		return EXIT_FAILURE;
+	}
+
+	screen = newterm(NULL, stdout, stdin);
+	if (!screen) {
+		fprintf(stderr,
+			"xwiishow: cannot initialize ncurses for TERM=%s; check the terminal type and terminfo database\n",
+			term);
+		xwii_iface_unref(device);
+		return EXIT_FAILURE;
+	}
+	set_term(screen);
+
+	ret = 0;
+	if (raw() == ERR || noecho() == ERR || keypad(stdscr, true) == ERR) {
+		ret = -EIO;
+	} else if (LINES < 24 || COLS < 80) {
+		ret = -ENOSPC;
+	} else {
+		(void)curs_set(0);
+		timeout(0);
+
+		handle_resize();
+		key_clear();
+		accel_clear();
+		ir_clear();
+		mp_clear();
+		nunchuk_clear();
+		classic_clear();
+		bboard_clear();
+		pro_clear();
+		guit_clear();
+		drums_clear();
+		refresh_all();
+		open_available_interfaces();
+
+		if (refresh() == ERR)
+			ret = -EIO;
+		else
+			ret = run_iface(device);
+	}
+
+	cleanup_ret = endwin();
+	delscreen(screen);
+	xwii_iface_unref(device);
+
+	if (ret == -ENOSPC)
+		fprintf(stderr,
+			"xwiishow: interactive UI requires a terminal at least 80 columns by 24 lines\n");
+	else if (ret)
+		fprintf(stderr, "xwiishow: interactive session failed: %d\n", ret);
+	if (cleanup_ret == ERR) {
+		fprintf(stderr, "xwiishow: failed to restore terminal state\n");
+		ret = ret ? ret : -EIO;
+	}
+
+	return ret ? EXIT_FAILURE : EXIT_SUCCESS;
 }

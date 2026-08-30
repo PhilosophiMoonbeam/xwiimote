@@ -1,222 +1,348 @@
 Overview {#mainpage}
 ========
 
-WiiLand is an open-source device driver for Nintendo Wii / Wii U remotes. It
-contains tools and libraries which work together with the official hid-wiimote
-kernel driver, available since linux-3.1.
+WiiLand is an open-source user-space stack for Nintendo Wii and Wii U remotes
+and compatible devices, including the Wii Balance Board, Wii U Pro Controller,
+and extensions. It uses the official Linux `hid-wiimote` kernel driver through
+the `libxwiimote` library.
 
-If you want to use a Nintendo Wii Remote or any compatible device (including the
-Nintendo Wii Balance Board, Nintendo Wii U Pro Controller, and more) on your
-linux system, the WiiLand software stack provides everything you need.
+The common input path is:
+
+		hid-wiimote -> libxwiimote -> wiilandd -> Linux uinput/evdev
+		                         -> Wayland compositor/libinput
+		                         -> X.org input stack
+		                         -> SDL, Steam, Wine/Proton, and native apps
+
+`wiilandd` creates display-server-neutral virtual Linux input devices. The
+same gamepad and desktop profiles work in a Wayland session and in an X.org
+session; the daemon does not require XWayland and does not call a
+display-server-specific input API. Consumers see ordinary evdev devices
+through their normal input stack.
+
+Virtual devices are named `WiiLand Virtual Controller` and `WiiLand Virtual
+Desktop`. Older builds or application profiles may refer to
+`WiiLand Wayland Controller` and `WiiLand Wayland Desktop`; the observable
+rename is intentional. Applications that match input devices by name may need
+to be remapped to the new names.
 
 This distribution is hosted at:
   https://github.com/PhilosophiMoonbeam/wiiland
-Use this website to contact the maintainers or developers or to file bug
-reports.
+Use this website to contact the maintainers, developers, or issue tracker.
 
-Install
-=======
+Build and install
+=================
 
-To install the libxwiimote.so library and the related tools, use:
-	$ ./configure [--enable-debug] [--prefix=/usr]
+Build dependencies
+-------------------
+
+The normal build requires:
+
+* a C compiler, a C++17-capable compiler, GNU make, and `pkg-config`;
+* Autoconf/Automake and Libtool when generating a build from a checkout;
+* `libudev` development headers and library;
+* Linux headers providing `linux/uinput.h`.
+
+`ncurses` development headers are optional. They enable the `xwiishow`
+terminal frontend when `--enable-xwiishow` is enabled (the default is
+automatic). Qt 6 Widgets development headers and libraries are optional.
+They enable the `wiiland-config` control center with `--enable-qt-ui`; the
+default is also automatic. Qt platform plugins are runtime components, not
+build dependencies, and are not checked by `configure`.
+
+Runtime and permission requirements
+-----------------------------------
+
+At runtime, load the distribution's `hid-wiimote` kernel module, provide the
+`libudev` shared library, and run BlueZ for Bluetooth pairing. `wiilandd` needs
+read access to the `hid-wiimote` `/dev/input/event*` nodes and write access to
+`/dev/uinput`. Install the WiiLand udev rules or use the distribution's normal
+logind, udev, or input/uinput-group policy. The daemon, not the Qt frontend,
+opens these input devices and `/dev/uinput`.
+
+If `wiiland-config` is installed, the Qt Wayland platform plugin must be
+installed for a native Wayland session and Qt's `xcb` platform plugin must be
+installed for an X.org session. The required plugin must be able to connect
+to the active session display. WiiLand does not silently switch to another
+plugin or retry with a different display backend.
+
+Configure, build, and install
+-----------------------------
+
+From a release tarball, use the included `configure`. From a checkout where
+it is absent, generate it with:
+
+	$ ./autogen.sh [configure-options]
+
+A complete distribution-style invocation is:
+
+	$ ./configure \
+		--prefix=/usr \
+		--sysconfdir=/etc \
+		--enable-xwiishow=auto \
+		--enable-qt-ui=auto \
+		--with-udev-rules-dir=auto \
+		--with-systemd-user-unit-dir=auto \
+		--with-xorg-conf-dir=auto
 	$ make
 	$ make install
-If "configure" is not available, use:
-	$ ./autogen.sh [<configure-flags>]
 
-Dependencies:
-	- libudev: Used for device enumeration
-	- ncurses: Used for UI of xwiishow
-	- Linux uinput: Used by wiilandd to expose Wayland-native virtual
-		input devices
-	- Qt 6 Widgets: Optional; used when building wiiland-config with
-		--enable-qt-ui
-	- Qt 6 Wayland platform plugin: Runtime requirement for the frontend's
-		native Wayland backend (often packaged as qt6-wayland)
+`--enable-xwiishow=auto|yes|no` controls the optional ncurses frontend.
+`--enable-qt-ui=auto|yes|no` controls the optional Qt 6 frontend; `yes`
+turns a missing or unusable Qt 6 Widgets development setup into a configure
+error. `--enable-debug` enables a debug build.
 
-This software packages contains:
-	libxwiimote.so: A userspace library which helps accessing connected Wii
-		Remotes in the system. It can be used by applications to use Wii
-		Remotes as input. You can also use the direct kernel interface,
-		though.
-	xwiishow: A test application which lists all connected Wii Remotes. If a
-		Wii Remote is passed as argument, it continuously reads input
-		from the device and prints it to the screen.
-	wiilandd: A Wayland-native bridge which reads libxwiimote events
-		and creates Linux uinput virtual controllers. Wayland compositors,
-		SDL, Wine/Proton, and native games can consume these devices
-		through the normal evdev/libinput stack without XWayland.
-	wiiland-config: Optional Qt 6 desktop frontend for configuring
-		wiilandd profiles, running diagnostics, and collecting validation
-		traces. Build with --enable-qt-ui when Qt6Widgets is installed.
-	50-xorg-fix-wiiland.conf: Legacy Xorg blacklist example kept in the
-		source tree for distributions that still maintain Xorg sessions.
-		The Wayland install path does not install it by default.
-	manpages: Several manpages are provided. One overview page and several
-		other pages for each tool and feature. They are installed by
-		the autotools scripts automatically alongside the library and
-		applications.
+The integration-directory options each accept `auto`, `no`, or an absolute
+custom path:
 
-The following tools are available but not installed into the system:
-	xwiidump: A test application which reads the EEPROM memory of a
-		connected Wii Remote and prints it to stdout. This requires
-		debugfs support in the kernel and the hid-wiimote kernel module.
+* `--with-udev-rules-dir=auto|no|PATH` installs the udev rules. `auto`
+  uses the `udev` pkg-config directory, with `${prefix}/lib/udev/rules.d`
+  as fallback.
+* `--with-systemd-user-unit-dir=auto|no|PATH` installs the user unit.
+  `auto` uses the systemd pkg-config directory, with
+  `${prefix}/lib/systemd/user` as fallback.
+* `--with-xorg-conf-dir=auto|no|PATH` installs the X.org `InputClass`
+  policy. `auto` uses the X.org server sysconfig directory, with
+  `${datadir}/X11/xorg.conf.d` as fallback.
 
-Following software is not part of this package:
-	hid-wiimote.ko: The wiimote kernel module is available in the official
-		linux kernel sources and should already be installed in your
-		system if you run linux-3.1 or newer.
-	wiimote.so: The BlueZ bluetoothd wiimote plugin is part of the upstream
-		BlueZ package and available since bluez-4.96. It should be
-		already installed on your system.
+`no` leaves that integration metadata out of the install. A custom `PATH`
+must be absolute. These switches change installed integration files; they
+do not change the display-neutral uinput backend.
 
-Usage
-=====
+Installed package contents
+--------------------------
 
-Please see the website for help:
-  https://github.com/PhilosophiMoonbeam/wiiland
+The package installs:
 
-For Wayland game sessions, run:
+* `libxwiimote.so`, its public header, and `libxwiimote.pc`;
+* `wiilandd`, the uinput daemon;
+* `xwiishow` when the ncurses frontend is enabled;
+* `wiiland-config` and its desktop entry/icon when the Qt frontend is enabled;
+* `wiilandd-hardware-report`, an installed host and hardware diagnostic
+  command;
+* `wiilandd.conf` under `${sysconfdir}/wiiland` and as a documentation
+  example;
+* `70-udev-wiiland.rules` and `70-wiiland-uinput.rules` when udev
+  installation is enabled;
+* `wiilandd.service` in the configured systemd user-unit directory when user
+  units are enabled;
+* `50-xorg-fix-wiiland.conf` in the configured X.org directory when X.org
+  policy installation is enabled; and
+* the WiiLand, libxwiimote, daemon, and enabled-frontend manpages.
+
+`xwiidump` is built as a non-installed diagnostic program. It reads Wii
+Remote EEPROM data and requires kernel `debugfs` support.
+
+Pair a remote
+=============
+
+Pair through the desktop's Bluetooth settings, or use the current
+`bluetoothctl`. For the command-line method, make the remote discoverable
+(for example with its sync or pairing buttons), then:
+
+	$ bluetoothctl
+	[bluetooth]# power on
+	[bluetooth]# agent on
+	[bluetooth]# default-agent
+	[bluetooth]# scan on
+	[bluetooth]# pair XX:XX:XX:XX:XX:XX
+	[bluetooth]# trust XX:XX:XX:XX:XX:XX
+	[bluetooth]# connect XX:XX:XX:XX:XX:XX
+	[bluetooth]# scan off
+	[bluetooth]# quit
+
+Replace the address with the one reported by `scan on`; desktop Bluetooth
+panels provide the equivalent discovery, pairing, and connection operations.
+The obsolete `xwiibind` pairing workflow is not part of WiiLand.
+
+Configure profiles
+==================
+
+The daemon reads `/etc/wiiland/wiilandd.conf` first, then
+`$XDG_CONFIG_HOME/wiiland/wiilandd.conf`, or
+`$HOME/.config/wiiland/wiilandd.conf` when `XDG_CONFIG_HOME` is unset.
+Later values override earlier values. `--config PATH` selects one explicit
+file instead of this hierarchy; `--no-config` uses built-in defaults.
+`res/wiilandd.conf` is the installed sample and a useful starting point.
+
+The default `gamepad` profile creates one `WiiLand Virtual Controller` per
+remote for games and other evdev consumers. `desktop` additionally creates a
+`WiiLand Virtual Desktop` mouse/keyboard device: D-pad repeat and valid IR
+events move the pointer, A/B click, +/- send Enter/Escape, Home sends the
+overview key, and 1/2 send Page Down/Page Up. `both` enables both devices.
+These profiles and commands are identical on Wayland and X.org:
+
 	$ wiilandd --list
-	$ wiilandd
-
-For desktop pointer/keyboard control, run:
+	$ wiilandd --profile gamepad
 	$ wiilandd --profile desktop
-
-For one process that exposes both gamepad and desktop controls, run:
 	$ wiilandd --profile both
 
-To tune desktop pointer speed and IR gain persistently:
-	$ mkdir -p ~/.config/wiiland
-	$ printf 'profile=desktop\npointer-speed=24\nir-speed=10\n' > ~/.config/wiiland/wiilandd.conf
+Set persistent defaults in the user file, for example:
 
-For Steam-style or non-Steam motion aiming, keep the normal gamepad profile and
-add a WiiLand aim output. `right-stick` feeds camera aim through ABS_RX/ABS_RY;
-`mouse` feeds a virtual relative pointer for games that accept mouse aim:
-	$ printf 'profile=gamepad\naim-mode=right-stick\naim-source=auto\naim-activation=b\n' > ~/.config/wiiland/wiilandd.conf
+	$ mkdir -p "${XDG_CONFIG_HOME:-$HOME/.config}/wiiland"
+	$ printf '%s\n' 'profile=both' 'pointer-speed=24' 'ir-speed=10' \
+		> "${XDG_CONFIG_HOME:-$HOME/.config}/wiiland/wiilandd.conf"
 
-IR tracking defaults to `ir-tracking=dual`, which follows the midpoint of the
-widest valid sensor-bar dot pair so source-order swaps do not jerk relative aim.
-Screen/corner calibration is optional: keep `ir-aim-mapping=relative` for
-calibration-free camera aim, or set `ir-aim-mapping=absolute` with
-`ir-screen-left/right/top/bottom` when you want Wii-menu-style positional aim.
+The sample also documents IR tracking and optional screen calibration,
+desktop button remapping, per-sysfs-path and per-device-type profile rules,
+and motion aiming. `aim-mode=right-stick` exposes camera aim on
+`ABS_RX/ABS_RY` for Steam, SDL, Wine/Proton, and native games;
+`aim-mode=mouse` exposes relative aim through the virtual desktop pointer.
+Use `wiilandd --device N --calibrate-aim` on a flat, still surface and copy
+the emitted key/value lines into the same configuration file when calibration
+is wanted.
 
-For Wii-style flat-surface motion calibration, place the Wii Remote face down
-with buttons against a stable table and paste the generated offsets into the
-same config:
-	$ wiilandd --device 1 --calibrate-aim >> ~/.config/wiiland/wiilandd.conf
+X.org raw-device policy
+=======================
 
+When the X.org integration is installed, `50-xorg-fix-wiiland.conf` tells
+X.org to ignore raw Wii Remote event nodes that would otherwise create a
+duplicate pointer. Its InputClass exceptions retain the existing Classic and
+Pro Controller behavior. This is X.org policy only: it does not block
+`libxwiimote`, `wiilandd`, or either `WiiLand Virtual *` uinput device.
+Wayland compositors do not read this file. If a packager uses
+`--with-xorg-conf-dir=no`, install no X.org policy and configure equivalent
+raw-device handling only if that X.org deployment needs it.
 
-System-wide defaults can use `/etc/wiiland/wiilandd.conf`; user config files
-override system defaults.
+User service
+============
 
-Per-device rules can override that default by sysfs path substring:
-	$ printf 'profile=gamepad\ndevice.bluetooth.profile=desktop\n' > ~/.config/wiiland/wiilandd.conf
+When the systemd user unit is installed, it is a user service wanted by
+`default.target`. It runs `wiilandd --check-config` as an `ExecCondition`
+before starting, so an invalid configuration is reported without entering
+the restart loop. Enable and start it in either display-server session:
 
-For the optional Qt 6 frontend, configure with `--enable-qt-ui` and run:
+	$ systemctl --user daemon-reload
+	$ systemctl --user enable --now wiilandd.service
+	$ systemctl --user status wiilandd.service
+
+After editing configuration, restart the unit to apply it:
+
+	$ systemctl --user restart wiilandd.service
+	$ journalctl --user -u wiilandd.service
+
+If systemd or the installed unit is unavailable, `wiiland-config` reports
+that state and does not replace the service with a privately spawned daemon.
+
+Qt control center and deterministic QPA checks
+==============================================
+
+When built with `--enable-qt-ui`, run:
+
 	$ wiiland-config
-Qt 6 prefers its native Wayland QPA plugin when `WAYLAND_DISPLAY` is set or
-`XDG_SESSION_TYPE=wayland`; the status bar reports the active display backend.
-`QT_QPA_PLATFORM=wayland wiiland-config` explicitly requires native Wayland and
-is useful for packaging checks. The xcb plugin remains a deliberate fallback
-for X11 sessions rather than an application dependency.
 
-For hardware-free diagnostics in packaging or CI, run:
-	$ wiilandd --check-config --config res/wiilandd.conf
-	$ wiilandd --dump-config --config res/wiilandd.conf
-	$ wiilandd --doctor --config res/wiilandd.conf
+The frontend uses Qt Widgets/QPA and contains no X11- or Wayland-specific
+input API. It validates configuration before atomic save, launches daemon
+diagnostics and traces, and controls the installed user
+service with `systemctl --user`. The default user file is read by the next
+service start, so the GUI can restart that unit to apply it. An explicitly
+selected file is not loaded by the packaged unit; the GUI disables its restart
+action and shows the exact `wiilandd --config PATH` command instead. The status
+area reports the QPA backend selected by Qt.
+
+For deterministic package checks, explicitly require each plugin rather than
+assuming that environment detection or fallback proves availability:
+
+	$ QT_QPA_PLATFORM=wayland wiiland-config
+	$ QT_QPA_PLATFORM=xcb wiiland-config
+
+The first command must start and connect through Qt's native Wayland plugin;
+the second must start and connect through Qt's X11/xcb plugin. A missing
+plugin or unusable display is an actual check failure. `configure` does not
+test either runtime plugin.
+
+Diagnostics and validation
+==========================
+
+The following checks do not require a connected remote unless noted:
+
+	$ wiilandd --version
+	$ wiilandd --help
+	$ wiilandd --check-config
+	$ wiilandd --dump-config
+	$ wiilandd --doctor
 	$ wiilandd --axis-map
 	$ wiilandd --validation-checklist
 	$ wiilandd --self-test
-	$ wiilandd --dry-run --trace-events --verbose
 
-Current mainline hid-wiimote Guitar and Drums events use standard BTN, D-pad,
-and HAT codes; libxwiimote translates those events rather than relying on
-obsolete out-of-range aliases. wiilandd also normalizes the different raw
-controller ranges to the ranges advertised by its unified virtual gamepad, so
-sticks, triggers, motion sensors, whammy, touch strip, and drum pressures reach
-their full usable travel in SDL, Steam Input, Wine/Proton, and native games.
+`--doctor` reports the detected Wayland/X11 session variables and sockets,
+the resolved profile/backend, and `/dev/uinput` access. A Wayland socket is
+not expected in an X.org-only session. `--check-config` validates without
+enumerating devices; `--dump-config` shows the resolved layered values;
+`--axis-map` and `--validation-checklist` print deterministic mapping and
+hardware-coverage data. Help and list modes bypass configuration, so they
+remain usable while investigating a broken config.
 
-`wiilandd --help` and `wiilandd --list` intentionally bypass configuration so
-diagnostics still work when a local config file is broken. At runtime the daemon
-opens only the hid-wiimote interfaces needed by the selected profile and aim
-source. A failed optional extension open no longer disconnects an otherwise
-usable remote, and bounded event draining keeps D-pad pointer repeat responsive
-under continuous sensor input.
+Use a dry run for event diagnostics without creating virtual devices:
 
-The Wayland bridge needs read access to hid-wiimote `/dev/input/event*` nodes and
-write access to `/dev/uinput`. See ./doc/WIILAND for the migration plan, backend
-rationale, the sample config in ./res/wiilandd.conf, the installable udev access
-rule in ./res/70-wiiland-uinput.rules, and the example user service in
-./res/wiilandd.service.in. The service uses `wiilandd --check-config` as a
-systemd condition before starting, so broken configuration is reported without
-entering a restart loop. The installed unit is generated with the configured
-`bindir`, so `/usr` and `/usr/local` prefix builds use the matching `wiilandd`
-binary path.
+	$ wiilandd --list
+	$ wiilandd --dry-run --trace-events --verbose \
+		--device N --profile both
+	$ wiilandd --dry-run --trace-events=motion-plus --device N
+	$ wiilandd --dry-run --trace-events=ir --device N
 
-To run the packaged user service in graphical sessions:
-	$ systemctl --user daemon-reload
-	$ systemctl --user enable wiilandd.service
-	$ systemctl --user start wiilandd.service
+Replace `N` with a number from `--list` or a `/sys` device path. The installed
+report gathers host/session, Bluetooth, kernel-module, version, config,
+permission, device, axis-map, checklist, and doctor information:
 
-`make install` installs the uinput udev rule, systemd user service, and sample
-configuration under the selected prefix.
+	$ wiilandd-hardware-report
+	$ wiilandd-hardware-report N
+	$ wiilandd-hardware-report N --trace-events=motion-plus
+	$ wiilandd-hardware-report N --trace-events=ir
 
-Documentation
-=============
-
-./doc/WIILAND: Wayland migration plan, validation matrix, and packaging notes
-./doc/wiiland.7, ./doc/libxwiimote.7, ./doc/xwiishow.1, ./doc/wiilandd.1:
-	Installed manpages
-./doc/DEVICES: Enumeration of all Nintendo Wii / Wii U related devices
-./doc/DEV_*: Device communication/protocol descriptions
+With a device argument it captures a live dry-run trace; exercise the
+hardware and stop with Ctrl-C. The report records diagnostics and manual
+validation placeholders; it does not claim that a real-hardware matrix has
+passed. Validate consumers separately in an SDL tester, Steam Input,
+Wine/Proton, native Wayland/X.org applications, and XWayland applications
+where those environments are part of a deployment.
 
 Development
 ===========
 
-Please see ./DEV for development information.
+See `./DEV` and the manpages for development and API details. The hardware
+free daemon smoke script is `tests/wiilandd-smoke.sh`; the install smoke
+script is `tests/wiilandd-install-smoke.sh`. For real hardware, use the
+installed report above and preserve its output with the kernel, distribution,
+Bluetooth adapter, device type, session type, and application results.
 
-Run `tests/wiilandd-smoke.sh` to compile the hardware-free `wiilandd` smoke
-binary, exercise deterministic self-tests, validate the sample config, and
-render the daemon manpage when `groff` is installed.
+Documentation
+=============
 
-Run `tools/wiilandd-hardware-report.sh` on a Wayland session with real hardware
-attached to collect the required validation metadata and dry-run event traces.
+`./doc/WIILAND`: architecture and implementation reference
+
+`./doc/wiiland.7`, `./doc/libxwiimote.7`, `./doc/wiilandd.1`,
+`./doc/wiiland-config.1`, and `./doc/xwiishow.1`: installed manpages
+
+`./doc/DEVICES` and `./doc/DEV_*`: device enumeration and protocol descriptions
 
 Copying
 =======
 
-Please see ./COPYING for more information.
+See `./COPYING` for licensing and authorship information.
 
 Compatibility
 =============
 
-Two other commonly used Wii-Remote libraries are cwiid and wiiuse. Both provide
-a full user-space driver and were used heavily in the past. We do not provide
-API compatibility to them as both APIs are very restricted:
+Two other commonly used Wii-Remote libraries are cwiid and wiiuse. Both
+provide a full user-space driver and were used heavily in the past. WiiLand
+does not provide API compatibility with them:
 
-	- cwiid: This API is highly asynchronous with threads. It does not allow
-	  a single-threaded application to use it. This makes it very hard to
-	  use and we decided not to provide a compatibility layer as we do not
-	  want to support such library-API designs.
-	- wiiuse: This API is tightly bound to the idea that the application is
-	  supposed to discover and connect the Bluetooth devices. It uses a
-	  static array for all used Wii Remotes and requires callbacks for
-	  notification. Same as cwiid, we do not provide a compatibility layer
-	  as the API is very different from our API.
+* cwiid is highly asynchronous and thread-oriented, which does not permit a
+  single-threaded application to use the API naturally.
+* wiiuse is tightly bound to application-managed Bluetooth discovery and
+  connection, static remote arrays, and callbacks; its API is substantially
+  different from WiiLand's.
 
-We designed our API to have as few restrictions as possible. We do not force an
-application to use a special programming technique. Instead, an application can
-use our API to support event-based, callback-based or thread-based event-loops
-or any other kind that it wants. We achieve this by keeping the user-space API
-very similar to the kernel-API so the application can integrate this into any
-infrastructure it wants.
+The WiiLand API has few restrictions and can support event-based,
+callback-based, thread-based, or other event loops. It remains close to the
+kernel API so applications can integrate it into their existing
+infrastructure.
+
+WiiLand is forked from xwiimote by David Herrmann. See `./COPYING` for
+authorship and contributor credits.
 
 Contact
 =======
 
 Website, issue tracker, and current maintainer contact:
   https://github.com/PhilosophiMoonbeam/wiiland
-
-WiiLand is forked from xwiimote by David Herrmann. See ./COPYING for authorship
-and contributor credits.

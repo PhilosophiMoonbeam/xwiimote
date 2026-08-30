@@ -1,10 +1,10 @@
 /*
  * WiiLand - tools - wiilandd
- * Wayland-native virtual input bridge using Linux uinput.
+ * Linux virtual-input bridge using uinput.
  *
- * This deliberately does not talk to X11. It consumes libxwiimote events from
- * hid-wiimote and exposes a virtual evdev gamepad that Wayland compositors,
- * SDL, Wine/Proton, and native games can consume through libinput/evdev.
+ * It consumes libxwiimote events from hid-wiimote and exposes virtual evdev
+ * devices that Linux desktop sessions, SDL, Wine/Proton, and native games can
+ * consume through evdev/libinput.
  */
 
 #include <errno.h>
@@ -127,6 +127,7 @@
 #define AIM_CALIBRATION_MAX_JITTER 512
 #define POINTER_TICK_INTERVAL_US 16000
 #define MAX_EVENTS_PER_DRAIN 256
+#define RECONCILE_INTERVAL_US 1000000
 #define VIRTUAL_AXIS_MIN (-32768)
 #define VIRTUAL_AXIS_MAX 32767
 #define VIRTUAL_TRIGGER_MAX 1023
@@ -670,7 +671,7 @@ static int create_virtual_desktop(const char *syspath)
 		return -errno;
 
 	memset(&udev, 0, sizeof(udev));
-	snprintf(udev.name, sizeof(udev.name), "WiiLand Wayland Desktop");
+	snprintf(udev.name, sizeof(udev.name), "WiiLand Virtual Desktop");
 	udev.id.bustype = BUS_BLUETOOTH;
 	udev.id.vendor = 0x057e;
 	udev.id.product = 0x0337;
@@ -690,7 +691,7 @@ static int create_virtual_desktop(const char *syspath)
 		goto err_close;
 	}
 
-	info("created virtual Wayland desktop device for %s\n", syspath);
+	info("created virtual desktop device for %s\n", syspath);
 	return fd;
 
 err_close:
@@ -713,7 +714,7 @@ static int create_virtual_controller(const char *syspath)
 		return -errno;
 
 	memset(&udev, 0, sizeof(udev));
-	snprintf(udev.name, sizeof(udev.name), "WiiLand Wayland Controller");
+	snprintf(udev.name, sizeof(udev.name), "WiiLand Virtual Controller");
 	udev.id.bustype = BUS_BLUETOOTH;
 	udev.id.vendor = 0x057e;
 	udev.id.product = 0x0337;
@@ -737,7 +738,7 @@ static int create_virtual_controller(const char *syspath)
 		goto err_close;
 	}
 
-	info("created virtual Wayland controller for %s\n", syspath);
+	info("created virtual controller for %s\n", syspath);
 	return fd;
 
 err_close:
@@ -1863,6 +1864,8 @@ static int drain_device(struct bridge_device *dev)
 
 		trace_xwii_event(dev, &event);
 		ret = handle_xwii_event(dev, &event);
+		if (ret == -EAGAIN || ret == -EWOULDBLOCK)
+			return 0;
 		if (ret)
 			return ret;
 	}
@@ -1994,6 +1997,85 @@ static void cleanup_devices(struct bridge_device *devices)
 	for (i = 0; i < MAX_DEVICES; ++i)
 		remove_device(&devices[i]);
 }
+static void free_syspaths(char **syspaths, size_t count)
+{
+	size_t i;
+
+	for (i = 0; i < count; ++i)
+		free(syspaths[i]);
+	free(syspaths);
+}
+
+static int enumerate_syspaths(char ***out, size_t *out_count)
+{
+	struct xwii_monitor *mon;
+	char **syspaths = NULL;
+	char **resized;
+	char *syspath;
+	size_t count = 0;
+
+	mon = xwii_monitor_new(false, false);
+	if (!mon)
+		return -ENOMEM;
+
+	while ((syspath = xwii_monitor_poll(mon))) {
+		resized = realloc(syspaths, (count + 1) * sizeof(*syspaths));
+		if (!resized) {
+			free(syspath);
+			xwii_monitor_unref(mon);
+			free_syspaths(syspaths, count);
+			return -ENOMEM;
+		}
+		syspaths = resized;
+		syspaths[count++] = syspath;
+	}
+	xwii_monitor_unref(mon);
+	*out = syspaths;
+	*out_count = count;
+	return 0;
+}
+
+static bool syspath_is_present(char **syspaths, size_t count,
+			       const char *syspath)
+{
+	size_t i;
+
+	for (i = 0; i < count; ++i) {
+		if (!strcmp(syspaths[i], syspath))
+			return true;
+	}
+	return false;
+}
+
+static void reconcile_devices(struct bridge_device *devices)
+{
+	char **syspaths;
+	size_t count, i;
+	unsigned int slot;
+	int ret;
+
+	ret = enumerate_syspaths(&syspaths, &count);
+	if (ret) {
+		fprintf(stderr, "wiilandd: cannot enumerate devices: %d\n", ret);
+		return;
+	}
+
+	for (slot = 0; slot < MAX_DEVICES; ++slot) {
+		if (devices[slot].iface &&
+		    !syspath_is_present(syspaths, count,
+					devices[slot].syspath))
+			remove_device(&devices[slot]);
+	}
+
+	for (i = 0; i < count; ++i) {
+		ret = add_device(devices, syspaths[i]);
+		if (ret)
+			fprintf(stderr, "wiilandd: cannot add %s: %d\n",
+				syspaths[i], ret);
+	}
+	free_syspaths(syspaths, count);
+}
+
 
 static bool any_pointer_motion(struct bridge_device *devices)
 {
@@ -2017,6 +2099,8 @@ static int tick_pointers(struct bridge_device *devices)
 			continue;
 
 		ret = tick_pointer(&devices[i]);
+		if (ret == -EAGAIN || ret == -EWOULDBLOCK)
+			continue;
 		if (ret)
 			return ret;
 	}
@@ -2044,6 +2128,25 @@ static int prepare_pointer_poll(struct bridge_device *devices,
 	*timeout = wait_us <= 0 ? 0 : (int)((wait_us + 999) / 1000);
 	return 0;
 }
+static int prepare_reconcile_poll(int64_t *next_reconcile_us, int *timeout)
+{
+	int64_t now_us, wait_us;
+	int reconcile_timeout;
+
+	now_us = monotonic_time_us();
+	if (now_us < 0)
+		return -errno;
+	if (!*next_reconcile_us)
+		*next_reconcile_us = now_us + RECONCILE_INTERVAL_US;
+
+	wait_us = *next_reconcile_us - now_us;
+	reconcile_timeout = wait_us <= 0 ? 0 :
+			    (int)((wait_us + 999) / 1000);
+	if (*timeout < 0 || reconcile_timeout < *timeout)
+		*timeout = reconcile_timeout;
+	return 0;
+}
+
 
 static int tick_pointers_if_due(struct bridge_device *devices,
 				int64_t *next_tick_us)
@@ -2079,6 +2182,7 @@ static int poll_devices(struct bridge_device *devices, struct xwii_monitor *mon)
 	char *syspath;
 	unsigned int i, nfds;
 	int64_t next_tick_us = 0;
+	int64_t next_reconcile_us = 0;
 	int device_fd, ret, mon_fd, timeout = -1;
 
 	while (!should_stop) {
@@ -2103,12 +2207,17 @@ static int poll_devices(struct bridge_device *devices, struct xwii_monitor *mon)
 			owners[nfds++] = (int)i;
 		}
 
-		if (nfds == 0)
+		if (nfds == 0 && !mon)
 			return 0;
 
 		ret = prepare_pointer_poll(devices, &next_tick_us, &timeout);
 		if (ret)
 			return ret;
+		if (mon) {
+			ret = prepare_reconcile_poll(&next_reconcile_us, &timeout);
+			if (ret)
+				return ret;
+		}
 		ret = poll(fds, nfds, timeout);
 		if (ret < 0) {
 			if (errno == EINTR)
@@ -2123,14 +2232,15 @@ static int poll_devices(struct bridge_device *devices, struct xwii_monitor *mon)
 					continue;
 
 				if (owners[i] == -1) {
-					while ((syspath = xwii_monitor_poll(mon))) {
-						ret = add_device(devices, syspath);
-						if (ret)
-							fprintf(stderr,
-								"wiilandd: cannot add %s: %d\n",
-								syspath, ret);
+					while ((syspath = xwii_monitor_poll(mon)))
 						free(syspath);
-					}
+					reconcile_devices(devices);
+					/*
+					 * Reconciliation can remove or replace device
+					 * slots, invalidating the remaining owner
+					 * mappings from this poll snapshot.
+					 */
+					break;
 				} else {
 					ret = drain_device(&devices[owners[i]]);
 					if (ret) {
@@ -2147,6 +2257,18 @@ static int poll_devices(struct bridge_device *devices, struct xwii_monitor *mon)
 		ret = tick_pointers_if_due(devices, &next_tick_us);
 		if (ret)
 			return ret;
+		if (mon) {
+			int64_t now_us = monotonic_time_us();
+
+			if (now_us < 0)
+				return -errno;
+			if (now_us >= next_reconcile_us) {
+				reconcile_devices(devices);
+				do {
+					next_reconcile_us += RECONCILE_INTERVAL_US;
+				} while (next_reconcile_us <= now_us);
+			}
+		}
 	}
 
 	return 0;
@@ -2394,9 +2516,25 @@ static int run_calibrate_aim(const char *arg)
 	if (ret)
 		goto out;
 
-	ret = xwii_iface_open(iface, xwii_iface_available(iface));
-	if (ret)
-		goto out_iface;
+	{
+		unsigned int requested, opened;
+
+		requested = xwii_iface_available(iface) &
+			    (XWII_IFACE_ACCEL | XWII_IFACE_MOTION_PLUS);
+		if (!requested) {
+			ret = -ENODEV;
+			goto out_iface;
+		}
+
+		ret = xwii_iface_open(iface, requested);
+		opened = xwii_iface_opened(iface) & requested;
+		if (!opened) {
+			if (!ret)
+				ret = -ENODEV;
+			goto out_iface;
+		}
+		ret = 0;
+	}
 
 	fd = xwii_iface_get_fd(iface);
 	if (fd < 0) {
@@ -4722,7 +4860,7 @@ static const char *path_writable(const char *path)
 	return access(path, W_OK) == 0 ? "yes" : "no";
 }
 
-static const char *wayland_socket_type(const char *path)
+static const char *socket_type(const char *path)
 {
 	struct stat st;
 
@@ -4753,20 +4891,109 @@ static const char *resolve_wayland_socket(const char *display,
 		return NULL;
 	return path;
 }
+static bool local_x11_host(const char *host, size_t len)
+{
+	char hostname[256];
+	size_t hostname_len;
+
+	if (!len ||
+	    (len == 4 && !memcmp(host, "unix", len)) ||
+	    (len == 5 && !memcmp(host, "unix/", len)) ||
+	    (len == 9 && !memcmp(host, "localhost", len)) ||
+	    (len == 21 && !memcmp(host, "localhost.localdomain", len)))
+		return true;
+
+	if (gethostname(hostname, sizeof(hostname)) < 0)
+		return false;
+	hostname[sizeof(hostname) - 1] = '\0';
+	hostname_len = strlen(hostname);
+	return hostname_len == len && !memcmp(host, hostname, len);
+}
+
+static const char *resolve_x11_socket(const char *display, char *path,
+				      size_t path_size)
+{
+	const char *colon, *number, *end;
+	char *parsed_end;
+	size_t host_len;
+	unsigned long display_number;
+	int ret;
+
+	if (!display || !display[0])
+		return NULL;
+	colon = strrchr(display, ':');
+	if (!colon)
+		return NULL;
+	host_len = (size_t)(colon - display);
+	number = colon + 1;
+	if (*number < '0' || *number > '9')
+		return NULL;
+
+	errno = 0;
+	display_number = strtoul(number, &parsed_end, 10);
+	if (errno || parsed_end == number || display_number > INT_MAX)
+		return NULL;
+	end = parsed_end;
+	if (*end == '.') {
+		++end;
+		if (*end < '0' || *end > '9')
+			return NULL;
+		while (*end >= '0' && *end <= '9')
+			++end;
+	}
+	if (*end)
+		return NULL;
+	if (!local_x11_host(display, host_len))
+		return NULL;
+
+	ret = snprintf(path, path_size, "/tmp/.X11-unix/X%lu",
+		       display_number);
+	if (ret < 0 || (size_t)ret >= path_size)
+		return NULL;
+	return path;
+}
+
+static const char *display_server_name(const char *wayland,
+				       const char *x11,
+				       const char *session_type)
+{
+	bool have_wayland = wayland && wayland[0];
+	bool have_x11 = x11 && x11[0];
+
+	if (have_wayland && have_x11)
+		return "xwayland";
+	if (have_wayland)
+		return "wayland";
+	if (have_x11)
+		return "x11";
+	if (!session_type || !session_type[0] ||
+	    !strcmp(session_type, "tty") || !strcmp(session_type, "headless"))
+		return "headless";
+	return "unknown";
+}
+
 
 static void print_doctor(void)
 {
 	const char *wayland = getenv("WAYLAND_DISPLAY");
+	const char *x11 = getenv("DISPLAY");
 	const char *runtime_dir = getenv("XDG_RUNTIME_DIR");
 	const char *session_type = getenv("XDG_SESSION_TYPE");
 	const char *desktop = getenv("XDG_CURRENT_DESKTOP");
 	char wayland_socket[PATH_MAX];
-	const char *socket_path;
+	char x11_socket[PATH_MAX];
+	const char *wayland_socket_path;
+	const char *x11_socket_path;
 
-	socket_path = resolve_wayland_socket(wayland, runtime_dir, wayland_socket,
-					     sizeof(wayland_socket));
+	wayland_socket_path = resolve_wayland_socket(
+		wayland, runtime_dir, wayland_socket, sizeof(wayland_socket));
+	x11_socket_path = resolve_x11_socket(x11, x11_socket,
+					    sizeof(x11_socket));
 
+	printf("session.display-server=%s\n",
+	       display_server_name(wayland, x11, session_type));
 	printf("session.wayland=%s\n", wayland && wayland[0] ? "yes" : "no");
+	printf("session.x11=%s\n", x11 && x11[0] ? "yes" : "no");
 	printf("session.type=%s\n",
 	       session_type && session_type[0] ? session_type : "unknown");
 	printf("session.desktop=%s\n",
@@ -4774,11 +5001,19 @@ static void print_doctor(void)
 	printf("wayland.display=%s\n", wayland && wayland[0] ? wayland : "unknown");
 	printf("xdg.runtime.dir=%s\n",
 	       runtime_dir && runtime_dir[0] ? runtime_dir : "unknown");
-	printf("wayland.socket.path=%s\n", socket_path ? socket_path : "unknown");
-	printf("wayland.socket.type=%s\n", wayland_socket_type(socket_path));
-	printf("wayland.socket.exists=%s\n", path_exists(socket_path));
-	printf("wayland.socket.readable=%s\n", path_readable(socket_path));
-	printf("wayland.socket.writable=%s\n", path_writable(socket_path));
+	printf("wayland.socket.path=%s\n",
+	       wayland_socket_path ? wayland_socket_path : "unknown");
+	printf("wayland.socket.type=%s\n", socket_type(wayland_socket_path));
+	printf("wayland.socket.exists=%s\n", path_exists(wayland_socket_path));
+	printf("wayland.socket.readable=%s\n", path_readable(wayland_socket_path));
+	printf("wayland.socket.writable=%s\n", path_writable(wayland_socket_path));
+	printf("x11.display=%s\n", x11 && x11[0] ? x11 : "unknown");
+	printf("x11.socket.path=%s\n",
+	       x11_socket_path ? x11_socket_path : "unknown");
+	printf("x11.socket.type=%s\n", socket_type(x11_socket_path));
+	printf("x11.socket.exists=%s\n", path_exists(x11_socket_path));
+	printf("x11.socket.readable=%s\n", path_readable(x11_socket_path));
+	printf("x11.socket.writable=%s\n", path_writable(x11_socket_path));
 	printf("dev.uinput.exists=%s\n", path_exists("/dev/uinput"));
 	printf("dev.uinput.readable=%s\n", path_readable("/dev/uinput"));
 	printf("dev.uinput.writable=%s\n", path_writable("/dev/uinput"));
@@ -4843,8 +5078,9 @@ static void usage(FILE *out)
 		"\t    --dump-config  Print resolved configuration and exit\n"
 		"\t-v, --verbose    Print device lifecycle details\n"
 		"\n"
-		"wiilandd is a Wayland-native bridge: it creates Linux uinput\n"
-		"virtual controllers consumed by Wayland compositors through evdev/libinput.\n");
+		"wiilandd creates Linux uinput virtual input devices named\n"
+		"\"WiiLand Virtual Controller\" and \"WiiLand Virtual Desktop\"\n"
+		"through the common evdev/libinput input stack.\n");
 }
 
 int main(int argc, char **argv)

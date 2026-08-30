@@ -1,0 +1,14 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=WiiLand Control Center
+GenericName=Wii Remote Configuration
+Comment=Configure Wii Remote profiles, services, and diagnostics
+Exec=wiiland-config
+TryExec=wiiland-config
+Icon=io.github.philosophimoonbeam.wiiland
+Terminal=false
+Categories=Settings;Utility;
+Keywords=Wii;Wii Remote;controller;gamepad;input;profiles;service;diagnostics;
+StartupNotify=true
+StartupWMClass=wiiland-config

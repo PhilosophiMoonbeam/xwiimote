@@ -1,6 +1,7 @@
 .TH WIILANDD 1 "August 2026" "wiiland" "WiiLand Manual"
+
 .SH NAME
-wiilandd \- bridge Wii Remote input to Wayland through Linux uinput
+wiilandd \- bridge Wii Remote input to shared Linux virtual evdev devices
 .SH SYNOPSIS
 .B wiilandd
 .RI [ OPTIONS ]
@@ -10,28 +11,67 @@ wiilandd \- bridge Wii Remote input to Wayland through Linux uinput
 .RI [ OPTIONS ]
 .SH DESCRIPTION
 .B wiilandd
-is the Wayland-native input bridge for WiiLand. It reads Wii Remote events
-through
+is the display-server-neutral Wii Remote input daemon. It reads hid-wiimote
+events through
 .B libxwiimote
-and creates virtual Linux uinput controllers. Wayland compositors consume these
-virtual evdev devices through libinput, while native games, SDL, Wine, and
-Proton can consume them through the normal Linux input stack.
+and creates display-neutral virtual devices with Linux
+.BR uinput .
+Those devices appear as evdev nodes and are consumed by a Wayland compositor
+through libinput, by the X.org input stack, and by SDL, Steam, Wine/Proton, and
+native applications through their normal Linux input paths.
 .PP
-This program does not use X11 and does not require XWayland. It is intended to
-replace the old Xorg input-driver path for Wayland sessions.
+The ingestion and virtual-device path is the same in Wayland and X.org sessions;
+the daemon does not connect to either display server. On X.org, the installed
+InputClass policy suppresses matching raw Wii Remote input nodes to avoid
+duplicate input, while leaving libxwiimote ingestion and
+.B WiiLand Virtual *
+devices unaffected.
+.SH PAIRING
+Pair a Wii Remote through the desktop Bluetooth UI or the current
+.B bluetoothctl
+workflow. Make the remote discoverable, then use:
+.PP
+.RS
+.B bluetoothctl
+.br
+.B power on
+.br
+.B agent on
+.br
+.B default-agent
+.br
+.B scan on
+.br
+.B pair XX:XX:XX:XX:XX:XX
+.br
+.B trust XX:XX:XX:XX:XX:XX
+.br
+.B connect XX:XX:XX:XX:XX:XX
+.br
+.B scan off
+.br
+.B quit
+.RE
+.PP
+Replace the address with the one reported by
+.B scan on
+; desktop Bluetooth panels provide the equivalent discovery, pairing, and
+connection operations. The obsolete
+.B xwiibind
+pairing workflow is not part of WiiLand.
 .SH OPTIONS
 .TP
 .BR -h , " --help"
-Show help and exit.
+Show help and exit without loading configuration.
 .TP
 .BR -l , " --list"
 List connected Wii Remote devices and exit. Combine with
 .B --verbose
 to include devtype and extension attributes from sysfs. This does not create
-uinput devices.
+uinput devices or load configuration.
 .TP
 .BR --version
-Print the wiilandd version and exit.
+Print the wiilandd version and exit without loading configuration.
 .TP
 .BR -d , " --device " number | /sys/path
 Bridge one device instead of monitoring all connected and hotplugged devices.
@@ -50,7 +90,8 @@ compositor overview key, and 1/2 send Page Down/Page Up.
 .BR --backend " " uinput
 Select the input backend. Only
 .B uinput
-is currently supported; it is the default compositor-independent Wayland path.
+is currently supported; it is the shared Linux virtual-input path for Wayland,
+X.org, and non-display consumers.
 .TP
 .BR --pointer-speed " " 1-127
 Set the desktop profile pointer step in pixels per repeat tick. The default is
@@ -92,38 +133,61 @@ Load a key=value configuration file. Command-line options override loaded
 configuration.
 .TP
 .BR --no-config
-Skip the default configuration file.
+Skip configuration loading, including an explicit
+.B --config
+path, and use built-in defaults.
 .TP
 .BR -n , " --dry-run"
 Enumerate and open devices without creating /dev/uinput devices or emitting
 virtual input. Useful for smoke tests and service diagnostics.
 .TP
 .BR --check-config
-Load configuration, apply command-line overrides, and exit without enumerating
-devices. Useful for packaging, CI, and service preflight checks.
+Load configuration, apply command-line overrides, validate the resulting state,
+and exit without enumerating devices. Useful for packaging, service preflight,
+and configuration saves.
 .TP
 .BR --dump-config
 Print the fully resolved configuration after loading files and applying
-command-line overrides, then exit.
+command-line overrides, then exit. This is the effective configuration consumed
+by a normal daemon start.
 .TP
 .BR --axis-map
 Print the virtual gamepad axis and button mapping used by the gamepad profile,
-then exit. This is a hardware-validation aid and does not enumerate devices.
+then exit. This is a hardware-validation aid, does not enumerate devices, and
+does not load configuration.
 .TP
 .BR --validation-checklist
 Print the required real-hardware validation matrix, then exit. This is a
-hardware-report aid and does not enumerate devices.
+hardware-report aid, does not enumerate devices, and does not load
+configuration.
 .TP
 .BR --doctor
-Print runtime readiness diagnostics for the current session,
+Print runtime readiness diagnostics and exit without enumerating Wii devices.
+Configuration is loaded like a normal daemon start unless
+.B --no-config
+is given. The output classifies the session as
+.B wayland ,
+.B x11 ,
+.B xwayland ,
+.B headless ,
+or
+.B unknown
+from
 .BR WAYLAND_DISPLAY ,
+.BR DISPLAY ,
+and
+.BR XDG_SESSION_TYPE .
+It also reports the raw session fields
+.BR XDG_SESSION_TYPE
+and
+.BR XDG_CURRENT_DESKTOP ,
+the Wayland display and
 .BR XDG_RUNTIME_DIR ,
-the resolved Wayland socket path,
-.BR /dev/uinput ,
-backend, and profile, then exit. This loads configuration like a normal daemon
-start; combine with
-.BR --no-config
-to inspect only built-in defaults. This does not enumerate Wii devices.
+resolved Wayland socket path/type/existence/readability/writability, the X11
+display and local socket path/type/existence/readability/writability, and
+.BR /dev/uinput
+existence/readability/writability. These are informational environment and
+filesystem checks; the daemon does not connect to either display server.
 .TP
 .BR --self-test
 Run deterministic profile, config, button-map, IR, and pointer-motion tests, then exit.
@@ -146,7 +210,9 @@ Capture accelerometer zero and MotionPlus gyro bias from a flat, still Wii
 Remote and print persistent
 .B wiilandd.conf
 key=value lines. Place the Wii Remote face down with buttons against a stable
-surface for the sample window.
+surface for the sample window. If only one sensor source produces a stable
+window, the command prints that source's offsets and a warning for the other;
+at least one stable source is sufficient for success.
 .TP
 .BR --aim-calibration-duration " " 1-30
 Set the
@@ -156,31 +222,42 @@ sample window in seconds. The default is 8.
 .BR -v , " --verbose"
 Print device lifecycle details.
 .SH PERMISSIONS
-The process must be allowed to read the hid-wiimote input devices and write to
-.BR /dev/uinput .
-Distributions usually provide input-device access through logind/udev. Access
+The daemon must be allowed to read the hid-wiimote input event nodes and write
 to
-.B /dev/uinput
-may require a udev rule, a system service, or an input/uinput group policy.
+.BR /dev/uinput .
+The installed udev rules grant active-seat access with
+.B TAG+="uaccess"
+and retain an
+.B input
+group,
+.B 0660
+fallback. A system or user service still runs with the permissions of its
+account; the daemon does not elevate privileges.
 .SH CONFIGURATION
 Unless
 .B --no-config
 is set,
 .B wiilandd
-loads
+loads the optional
 .B /etc/wiiland/wiilandd.conf
-first, then
+first, then the optional user file
 .B $XDG_CONFIG_HOME/wiiland/wiilandd.conf
 or
 .B $HOME/.config/wiiland/wiilandd.conf
-when present. Later files override earlier values. Use
+when
+.B XDG_CONFIG_HOME
+is unset. Later files override earlier values. Use
 .B --config
-to load one explicit file instead of the default hierarchy. Help and list modes
-do not load configuration, so diagnostics remain available even with a broken
-config file. Supported keys are:
+to load one required explicit file instead of this hierarchy; command-line
+options override values loaded from it. Help, version, list, axis-map, and
+validation-checklist modes do not load configuration, while diagnostics such
+as
+.B --doctor
+do. Supported keys are:
 .TP
 .B backend=uinput
-Input backend. Only uinput is currently supported.
+The shared Linux uinput backend. It is the only currently supported backend and
+does not depend on a display server.
 .TP
 .B profile=gamepad|desktop|both
 Default virtual input profile.
@@ -304,25 +381,78 @@ or
 Rules are evaluated in file order; later matching rules win.
 .SH FILES
 .TP
+.B /etc/wiiland/wiilandd.conf
+Optional system-wide daemon defaults.
+.TP
+.B $XDG_CONFIG_HOME/wiiland/wiilandd.conf
+Optional per-user overrides; when
+.B XDG_CONFIG_HOME
+is unset, the equivalent path is
+.B $HOME/.config/wiiland/wiilandd.conf .
+.TP
 .B res/wiilandd.conf
-Documented sample configuration for packaging and local copies.
+Documented sample configuration installed as the system configuration and
+available under the package documentation examples directory.
 .TP
 .B res/70-wiiland-uinput.rules
-udev rules for active-seat access to hid-wiimote event nodes and
+udev permissions for hid-wiimote event nodes and
 .BR /dev/uinput .
+The
+.B uaccess
+tag and
+.B input
+group fallback support active-seat users in both Wayland and X.org sessions.
+.TP
+.B res/70-udev-wiiland.rules
+udev rule for writable hid-wiimote LED sysfs attributes used by tools such as
+.BR xwiishow .
+.TP
+.B res/50-xorg-fix-wiiland.conf
+Optional X.org InputClass policy for raw Wii Remote nodes; it does not filter
+libxwiimote or WiiLand virtual devices.
 .TP
 .B res/wiilandd.service
-systemd user service bound to
-.BR graphical-session.target .
-It uses
-.B --check-config
-as an
+Installed systemd user service with
+.B WantedBy=default.target
+.
+Its
 .B ExecCondition
-before starting, so invalid configuration does not enter a restart loop.
-After installation, enable it with
-.BR "systemctl --user enable wiilandd.service" ;
-start it immediately with
+runs
+.B wiilandd --check-config
+before
+.B ExecStart
+; invalid configuration therefore prevents startup. The unit uses
+.B Restart=on-failure
+with a 2-second delay. Enable and start it with
+.BR "systemctl --user enable wiilandd.service"
+and
 .BR "systemctl --user start wiilandd.service" .
+.SH X.ORG INTEGRATION
+When installed, the X.org configuration contains an
+.B InputClass
+named
+.B Nintendo Wii Remote Raw Input Blacklist
+that matches
+.B Nintendo Wii Remote
+on
+.B /dev/input/event*
+and sets
+.B Option "Ignore" "on"
+.
+The Classic Controller and Pro Controller InputClass entries explicitly set
+.B Ignore
+to
+.B off
+for their matching products. This suppresses duplicate raw-node handling by
+X.org only; it does not block hid-wiimote, libxwiimote, the daemon, or devices
+named
+.B WiiLand Virtual Controller
+and
+.B WiiLand Virtual Desktop
+.
+.PP
+The same uinput devices therefore remain available to the X.org stack and to
+Wayland compositors, SDL, Steam, Wine/Proton, and native applications.
 .SH GAMEPAD MAPPING
 The gamepad profile exposes core and extension buttons as evdev button codes and
 extension sensors on stable evdev absolute axes so SDL, Wine/Proton, and native
@@ -367,9 +497,10 @@ Linux input instead of spoofing a DualSense, DualShock, or Steam Controller.
 Run
 .BR "wiilandd --device 1 --calibrate-aim"
 and keep the Wii Remote face down, buttons against a flat stable surface, for
-the printed sample window. The command rejects short or unstable samples and
-prints only the stable accelerometer and MotionPlus offsets it captured. Paste
-the generated
+the printed sample window. Short or unstable samples are rejected. If only
+accelerometer or only MotionPlus samples are stable, the command still succeeds
+and prints the available source's offsets with a warning for the unavailable or
+unstable source. Paste the generated
 .BR aim-accel-zero-* ,
 .BR aim-motion-plus-bias-* ,
 and
@@ -465,18 +596,55 @@ The four weight sensors use
 and
 .BR ABS_TILT_Y .
 .SH BACKEND
-The default backend is Linux uinput because it is compositor-independent and is
-already consumed by Wayland compositors and game stacks. WiiLand opens only the
-hid-wiimote interfaces needed by the selected profile and aim source. Optional
-extension-open failures do not discard an otherwise usable remote, and bounded
-event draining keeps desktop pointer repeat responsive during continuous sensor
-traffic. The gamepad profile is safe as a login default; use
+The default and only supported backend is Linux uinput. It is display-server
+independent and is consumed through evdev/libinput by Wayland compositors and
+the X.org input stack, as well as directly by SDL, Steam, Wine/Proton, and
+native applications. WiiLand opens only the hid-wiimote interfaces needed by
+the selected profile and aim source. An optional extension-open failure does
+not discard an otherwise usable remote.
+.PP
+Event dispatch drains at most 256 events per pass. The monitor path reconciles
+the device set at most once per second, and removes failed devices so they can
+be observed and added again on later hotplug/reconciliation events. These
+bounds keep pointer repeat responsive under sensor traffic and keep each
+recovery pass bounded.
+.PP
+The gamepad profile is safe as a login default; use
 .B --profile=desktop
 or
 .B --profile=both
-when the Wii Remote should also drive the desktop pointer and keyboard. A future
-optional libei backend can provide compositor-mediated emulated input where
-available.
+when the Wii Remote should also drive the desktop pointer and keyboard.
+Virtual devices are named
+.B WiiLand Virtual Controller
+and
+.B WiiLand Virtual Desktop
+.
+.SH HARDWARE REPORT
+The installed
+.B wiilandd-hardware-report
+command collects finite host, permission, configuration, doctor, axis-map,
+device, and manual-validation diagnostics. Run it without arguments for the
+host report, or pass a device number or sysfs path (as accepted by
+.BR --device )
+to continue into a live dry-run trace. The report may pass one trace selector,
+such as
+.BR --trace-events=ir
+or
+.BR --trace-events=motion-plus .
+It reports whether required probes succeed; it does not claim that physical
+hardware passed until the operator exercises the listed validation matrix.
+.SH COMPATIBILITY
+Older releases exposed the virtual identities
+.B WiiLand Wayland Controller
+and
+.B WiiLand Wayland Desktop
+.
+The current identities are
+.B WiiLand Virtual Controller
+and
+.B WiiLand Virtual Desktop
+for every display server. Applications or stored controller profiles that
+match device names may need to be remapped to the new names.
 .SH SEE ALSO
 .BR wiiland (7),
 .BR libxwiimote (7),

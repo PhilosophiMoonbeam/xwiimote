@@ -1,20 +1,21 @@
 #!/bin/sh
-# Collect WiiLand diagnostics for a real-hardware Wayland validation report.
+# Collect WiiLand diagnostics for real-hardware Wayland and X.org validation.
 set -eu
 
 usage() {
 	cat <<EOF
 Usage:
-  $0
-  $0 <number-or-/sys/path> [extra wiilandd args]
+  wiilandd-hardware-report
+  wiilandd-hardware-report <number-or-/sys/path> [extra wiilandd args]
 
 Collect finite WiiLand host, permission, config, doctor, axis-map, device, and
-manual validation diagnostics. With a device argument, continue into live
-dry-run trace capture and pass remaining arguments to wiilandd.
+manual Wayland/X.org validation diagnostics. With a device argument, continue
+into live dry-run trace capture and pass non-conflicting arguments to wiilandd.
 EOF
 }
 
 wiilandd=${WIILANDD:-wiilandd}
+core_failures=0
 device=
 case "${1:-}" in
 -h|--help)
@@ -28,6 +29,46 @@ case "${1:-}" in
 	shift
 	;;
 esac
+trace_selectors=0
+validate_trace_args() {
+	while [ "$#" -gt 0 ]; do
+		arg=$1
+		case "$arg" in
+		--trace-events|--trace-events=*)
+			trace_selectors=$((trace_selectors + 1))
+			shift
+			;;
+		-d|--device|--device=*|-p|--profile|--profile=*|-n|--dry-run|--dry-run=*|\
+		-h|--help|--version|-l|--list|--calibrate-aim|--check-config|\
+		--self-test|--axis-map|--validation-checklist|--doctor|--dump-config)
+			printf 'wiilandd-hardware-report: conflicting trace argument: %s\n' \
+				"$arg" >&2
+			usage >&2
+			exit 2
+			;;
+		-c|--config|--backend|--ir-speed|--ir-deadzone|--ir-smoothing|\
+		--ir-tracking|--ir-aim-mapping|--pointer-speed|--aim-mode|\
+		--aim-source|--aim-activation|--aim-sensitivity|--aim-deadzone|\
+		--aim-smoothing|--aim-invert-x|--aim-invert-y|\
+		--aim-calibration-duration)
+			shift
+			if [ "$#" -gt 0 ]; then
+				shift
+			fi
+			;;
+		*)
+			shift
+			;;
+		esac
+	done
+
+	if [ "$trace_selectors" -gt 1 ]; then
+		printf 'wiilandd-hardware-report: exactly one trace selector is allowed\n' >&2
+		usage >&2
+		exit 2
+	fi
+}
+validate_trace_args "$@"
 default_repo_dir=$(CDPATH=; cd -- "$(dirname -- "$0")/.." && pwd)
 repo_dir=${WIILAND_REPO_DIR:-$default_repo_dir}
 module_dir=${HID_WIIMOTE_MODULE_DIR:-/sys/module/hid_wiimote}
@@ -43,18 +84,21 @@ section() {
 }
 
 run_optional() {
+	printf '$ optional:'
+	printf ' %s' "$@"
+	printf '\n'
 	if command -v "$1" >/dev/null 2>&1; then
 		if ! "$@"; then
-			printf 'failed:'
+			printf 'optional failed:'
 			printf ' %s' "$@"
 			printf '\n'
 		fi
 	else
-		printf 'unavailable: %s\n' "$1"
+		printf 'optional unavailable: %s\n' "$1"
 	fi
 }
 run_pkg_version() {
-	printf '%s pkg-config version: ' "$1"
+	printf 'optional.%s.pkg-config.version=' "$1"
 	if command -v pkg-config >/dev/null 2>&1; then
 		if ! pkg-config --modversion "$1" 2>/dev/null; then
 			printf 'unavailable\n'
@@ -64,14 +108,27 @@ run_pkg_version() {
 	fi
 }
 
+record_core_failure() {
+	core_failures=$((core_failures + 1))
+	printf 'core.failure.%s=%s\n' "$core_failures" "$1"
+}
+
 run_wiilandd_probe() {
 	printf '$ %s' "$wiilandd"
 	printf ' %s' "$@"
 	printf '\n'
-	if ! "$wiilandd" "$@"; then
+	if ! command -v "$wiilandd" >/dev/null 2>&1 || ! "$wiilandd" "$@"; then
 		printf 'failed: %s' "$wiilandd"
 		printf ' %s' "$@"
 		printf '\n'
+		return 1
+	fi
+	return 0
+}
+
+run_required_wiilandd_probe() {
+	if ! run_wiilandd_probe "$@"; then
+		record_core_failure "wiilandd.$1"
 	fi
 }
 
@@ -167,13 +224,13 @@ report_event_nodes() {
 }
 capture_bluetooth_controllers() {
 	if ! command -v bluetoothctl >/dev/null 2>&1; then
-		printf 'bluetoothctl controllers: unavailable\n'
+		printf 'optional.bluetoothctl.controllers=unavailable\n'
 		return 0
 	fi
 
-	printf '$ bluetoothctl list\n'
+	printf '$ optional: bluetoothctl list\n'
 	if ! bluetoothctl list >"$bt_file"; then
-		printf 'failed: bluetoothctl list\n'
+		printf 'optional failed: bluetoothctl list\n'
 		return 0
 	fi
 	cat "$bt_file"
@@ -182,9 +239,9 @@ capture_bluetooth_controllers() {
 		if [ "$kind" != Controller ] || [ -z "${address:-}" ]; then
 			continue
 		fi
-		printf '$ bluetoothctl show %s\n' "$address"
+		printf '$ optional: bluetoothctl show %s\n' "$address"
 		if ! bluetoothctl show "$address"; then
-			printf 'failed: bluetoothctl show %s\n' "$address"
+			printf 'optional failed: bluetoothctl show %s\n' "$address"
 		fi
 	done <"$bt_file"
 }
@@ -262,14 +319,37 @@ report_device_uevent() {
 
 report_device_attrs() {
 	file=$1
+	row_number=0
 
-	while read -r index syspath; do
+	while read -r index syspath extra ||
+	      [ -n "${index:-}${syspath:-}${extra:-}" ]; do
+		row_number=$((row_number + 1))
+		if [ -z "${index:-}" ] && [ -z "${syspath:-}" ] &&
+		   [ -z "${extra:-}" ]; then
+			continue
+		fi
+		if [ "$index ${syspath:-} ${extra:-}" = \
+		     'No Wii Remote devices found' ]; then
+			continue
+		fi
+
+		reason=
 		case "$index" in
 		''|*[!0-9]*)
-			continue
+			reason='invalid-index'
 			;;
 		esac
-		if [ -z "${syspath:-}" ]; then
+		if [ -z "$reason" ] && [ -z "${syspath:-}" ]; then
+			reason='missing-syspath'
+		fi
+		if [ -z "$reason" ] && [ -n "${extra:-}" ]; then
+			reason='extra-fields'
+		fi
+		if [ -n "$reason" ]; then
+			printf 'device-list.row.%s.malformed=%s\n' "$row_number" "$reason"
+			printf 'device-list.row.%s.parsed=%s|%s|%s\n' \
+				"$row_number" "${index:-}" "${syspath:-}" "${extra:-}"
+			record_core_failure "wiilandd.list.malformed-row.$row_number"
 			continue
 		fi
 
@@ -291,13 +371,16 @@ report_manual_validation_placeholders() {
 	section manual-validation
 	printf 'manual.sdl=TODO: validate virtual gamepad in an SDL input tester\n'
 	printf 'manual.wine-proton=TODO: validate virtual gamepad in one Wine/Proton game\n'
-	printf 'manual.native-wayland-desktop=TODO: validate desktop profile pointer/buttons under the target compositor\n'
+	printf 'manual.native-wayland-desktop=TODO: validate desktop profile pointer/buttons under a native Wayland compositor\n'
+	printf 'manual.native-xorg-desktop=TODO: validate desktop profile pointer/buttons in a native X.org session\n'
+	printf 'manual.native-x11-consumer=TODO: validate a native X11 application in a native X.org session\n'
+	printf 'manual.xwayland-consumer=TODO: validate an X11 application through XWayland in a Wayland session\n'
 	printf 'manual.steam-motion-aim=TODO: validate aim-mode=right-stick in one Steam Input game\n'
 	printf 'manual.nonsteam-motion-aim=TODO: validate aim-mode=right-stick in one native or XWayland non-Steam game\n'
 	printf 'manual.mouse-motion-aim=TODO: validate aim-mode=mouse in one game that accepts mouse aim\n'
 	printf 'manual.motion-aim-calibration=TODO: run wiilandd --device <N> --calibrate-aim on a flat stable surface and paste generated offsets into the test config\n'
 	printf 'manual.ir-screen-calibration=optional: for absolute IR aim, record ir-screen-left/right/top/bottom and sensor bar placement used during validation\n'
-	printf 'manual.notes=TODO: record pass/fail details, game/app names, and deviations\n'
+	printf 'manual.notes=TODO: record pass/fail details, game/app names, display server, and deviations\n'
 }
 
 report_timestamp() {
@@ -313,7 +396,7 @@ report_timestamp() {
 
 
 section host
-printf 'report.schema.version=1\n'
+printf 'report.schema.version=2\n'
 report_timestamp
 run_optional uname -srmo
 report_os_release
@@ -323,9 +406,9 @@ run_optional modinfo hid-wiimote
 report_module_parameters
 run_pkg_version libxwiimote
 if command -v loginctl >/dev/null 2>&1 && [ -n "${XDG_SESSION_ID:-}" ]; then
-	loginctl show-session "$XDG_SESSION_ID" -p Type -p Desktop -p Name || true
+	run_optional loginctl show-session "$XDG_SESSION_ID" -p Type -p Desktop -p Name
 else
-	printf 'session: unavailable\n'
+	printf 'optional.session-probe=unavailable\n'
 fi
 printf 'XDG_CURRENT_DESKTOP=%s\n' "${XDG_CURRENT_DESKTOP:-}"
 printf 'XDG_SESSION_DESKTOP=%s\n' "${XDG_SESSION_DESKTOP:-}"
@@ -334,6 +417,18 @@ printf 'DESKTOP_SESSION=%s\n' "${DESKTOP_SESSION:-}"
 printf 'GDMSESSION=%s\n' "${GDMSESSION:-}"
 printf 'KDE_SESSION_VERSION=%s\n' "${KDE_SESSION_VERSION:-}"
 printf 'WAYLAND_DISPLAY=%s\n' "${WAYLAND_DISPLAY:-}"
+printf 'DISPLAY=%s\n' "${DISPLAY:-}"
+if [ "${XAUTHORITY+x}" = x ]; then
+	printf 'XAUTHORITY.set=yes\n'
+	if [ -n "$XAUTHORITY" ] && [ -r "$XAUTHORITY" ]; then
+		printf 'XAUTHORITY.readable=yes\n'
+	else
+		printf 'XAUTHORITY.readable=no\n'
+	fi
+else
+	printf 'XAUTHORITY.set=no\n'
+	printf 'XAUTHORITY.readable=no\n'
+fi
 printf 'SWAYSOCK=%s\n' "${SWAYSOCK:-}"
 printf 'HYPRLAND_INSTANCE_SIGNATURE=%s\n' "${HYPRLAND_INSTANCE_SIGNATURE:-}"
 
@@ -342,28 +437,44 @@ run_optional id
 report_path_access dev.uinput /dev/uinput
 
 section wiilandd
-run_wiilandd_probe --version
+if command -v "$wiilandd" >/dev/null 2>&1; then
+	printf 'wiilandd.available=yes\n'
+else
+	printf 'wiilandd.available=no\n'
+	record_core_failure wiilandd.missing
+fi
+if ! run_wiilandd_probe --version; then :; fi
 report_git_commit
-run_wiilandd_probe --check-config
-run_wiilandd_probe --dump-config
-run_wiilandd_probe --axis-map
-run_wiilandd_probe --validation-checklist
-run_wiilandd_probe --doctor
+run_required_wiilandd_probe --check-config
+run_required_wiilandd_probe --dump-config
+if ! run_wiilandd_probe --axis-map; then :; fi
+run_required_wiilandd_probe --validation-checklist
+run_required_wiilandd_probe --doctor
 
 section devices
 if capture_device_list; then
 	report_device_attrs "$list_file"
+else
+	record_core_failure wiilandd.list
 fi
 report_manual_validation_placeholders
+
+section result
+printf 'report.core-failures=%s\n' "$core_failures"
+if [ "$core_failures" -gt 0 ]; then
+	printf 'report.status=failed\n'
+	exit 1
+fi
+printf 'report.status=ok\n'
 
 if [ -z "$device" ]; then
 	cat <<EOF
 
 Pass a device number or sysfs path to capture live dry-run traces:
-  WIILANDD=$wiilandd $0 <number-or-/sys/path> [extra wiilandd args]
+  WIILANDD=$wiilandd wiilandd-hardware-report <number-or-/sys/path> [extra wiilandd args]
 For focused traces:
-  WIILANDD=$wiilandd $0 <number-or-/sys/path> --trace-events=motion-plus
-  WIILANDD=$wiilandd $0 <number-or-/sys/path> --trace-events=ir
+  WIILANDD=$wiilandd wiilandd-hardware-report <number-or-/sys/path> --trace-events=motion-plus
+  WIILANDD=$wiilandd wiilandd-hardware-report <number-or-/sys/path> --trace-events=ir
 
 During trace capture, exercise every button, stick, trigger, accelerometer,
 MotionPlus axis, IR pointer source, and attached extension. Stop with Ctrl-C.
@@ -373,4 +484,8 @@ fi
 
 section trace
 printf 'Tracing %s. Stop with Ctrl-C after exercising the hardware matrix.\n' "$device"
-exec "$wiilandd" --dry-run --trace-events --verbose --device "$device" --profile both "$@"
+if [ "$trace_selectors" -eq 0 ]; then
+	exec "$wiilandd" --dry-run --trace-events --verbose \
+		--device "$device" --profile both "$@"
+fi
+exec "$wiilandd" --dry-run --verbose --device "$device" --profile both "$@"

@@ -19,7 +19,13 @@ LIBXWIIMOTE_AGE = 0
 ACLOCAL_AMFLAGS = -I m4 ${ACLOCAL_FLAGS}
 AM_MAKEFLAGS = --no-print-directory
 AUTOMAKE_OPTIONS = color-tests
-AM_DISTCHECK_CONFIGURE_FLAGS = --enable-debug
+AM_DISTCHECK_CONFIGURE_FLAGS = \
+	--enable-debug \
+	--enable-xwiishow=no \
+	--enable-qt-ui=no \
+	--with-udev-rules-dir=no \
+	--with-systemd-user-unit-dir=no \
+	--with-xorg-conf-dir=no
 
 SUBDIRS = .
 
@@ -36,14 +42,26 @@ EXTRA_DIST = \
 	LICENSE \
 	res/50-xorg-fix-wiiland.conf \
 	res/70-udev-wiiland.rules \
+	res/70-wiiland-uinput.rules \
+	res/io.github.philosophimoonbeam.wiiland-config.desktop \
+	res/io.github.philosophimoonbeam.wiiland.svg \
+	res/wiilandd.conf \
+	res/wiilandd.service.in \
+	doc/wiiland.7 \
+	doc/libxwiimote.7 \
+	doc/xwiishow.1 \
+	doc/wiilandd.1 \
+	doc/wiiland-config.1 \
 	tests/xwii_stubs.c \
 	tests/wiilandd-smoke.sh \
 	tests/wiilandd-install-smoke.sh \
+	tests/cli-smoke.sh \
+	tests/wiiland-config-smoke.sh \
 	tools/wiilandd-hardware-report.sh \
+	tools/wiiland-config.cpp \
 	.github/workflows/ci.yml \
 	libxwiimote.sym
-EXTRA_DIST += res/wiilandd.service.in
-EXTRA_DIST += tools/wiiland-config.cpp
+
 
 
 #
@@ -51,18 +69,26 @@ EXTRA_DIST += tools/wiiland-config.cpp
 #
 
 lib_LTLIBRARIES = libxwiimote.la
-bin_PROGRAMS = xwiishow wiilandd
+bin_PROGRAMS = wiilandd
+if HAVE_XWIISHOW
+bin_PROGRAMS += xwiishow
+endif
 if HAVE_QT_UI
 bin_PROGRAMS += wiiland-config
 endif
+bin_SCRIPTS = wiilandd-hardware-report
 noinst_PROGRAMS = xwiidump
 include_HEADERS = lib/xwiimote.h
 man_MANS = \
 	doc/wiiland.7 \
 	doc/libxwiimote.7 \
-	doc/xwiishow.1 \
 	doc/wiilandd.1
-EXTRA_DIST += $(man_MANS)
+if HAVE_XWIISHOW
+man_MANS += doc/xwiishow.1
+endif
+if HAVE_QT_UI
+man_MANS += doc/wiiland-config.1
+endif
 dist_doc_DATA = \
 	doc/WIILAND
 
@@ -73,22 +99,51 @@ EXTRA_DIST += \
 	$(pkgconfig_DATA) \
 	libxwiimote.pc.in
 
-udevrulesdir = $(libdir)/udev/rules.d
+if INSTALL_UDEV_RULES
+udevrulesdir = @UDEV_RULES_DIR@
 dist_udevrules_DATA = \
+	res/70-udev-wiiland.rules \
 	res/70-wiiland-uinput.rules
+endif
 
-systemduserdir = $(prefix)/lib/systemd/user
-nodist_systemduser_DATA = \
+if INSTALL_XORG_CONF
+xorgconfdir = @XORG_CONF_DIR@
+dist_xorgconf_DATA = \
+	res/50-xorg-fix-wiiland.conf
+endif
+
+if INSTALL_SYSTEMD_USER_UNIT
+systemduserunitdir = @SYSTEMD_USER_UNIT_DIR@
+nodist_systemduserunit_DATA = \
 	res/wiilandd.service
+endif
+
+wiilandconfigdir = $(sysconfdir)/wiiland
+dist_wiilandconfig_DATA = \
+	res/wiilandd.conf
 
 wiilandexamplesdir = $(docdir)/examples
 dist_wiilandexamples_DATA = \
 	res/wiilandd.conf
 
+if HAVE_QT_UI
+applicationsdir = $(datadir)/applications
+dist_applications_DATA = \
+	res/io.github.philosophimoonbeam.wiiland-config.desktop
+iconscalableappsdir = $(datadir)/icons/hicolor/scalable/apps
+dist_iconscalableapps_DATA = \
+	res/io.github.philosophimoonbeam.wiiland.svg
+endif
+
+wiilandd-hardware-report: $(srcdir)/tools/wiilandd-hardware-report.sh
+	$(AM_V_GEN)$(INSTALL_SCRIPT) $(srcdir)/tools/wiilandd-hardware-report.sh $@
+
 res/wiilandd.service: $(srcdir)/res/wiilandd.service.in Makefile
 	$(AM_V_at)$(MKDIR_P) res
 	$(AM_V_GEN)sed -e 's|@bindir[@]|$(bindir)|g' \
 		$(srcdir)/res/wiilandd.service.in >$@
+
+CLEANFILES = wiilandd-hardware-report
 distclean-local:
 	$(AM_V_at)if test "$(abs_builddir)" != "$(abs_srcdir)"; then \
 		rm -f res/wiilandd.service; \
@@ -227,9 +282,26 @@ wiilandd_uinput_test_LDADD = \
 wiilandd_uinput_test_LDFLAGS = \
 	$(AM_LDFLAGS)
 
-check-local: wiilandd
+check_local_programs = wiilandd
+if HAVE_XWIISHOW
+check_local_programs += xwiishow xwiidump
+endif
+if HAVE_QT_UI
+check_local_programs += wiiland-config
+endif
+check-local: $(check_local_programs)
 	$(AM_V_at)./wiilandd --self-test
 	$(AM_V_at)$(SHELL) $(top_srcdir)/tests/wiilandd-smoke.sh
+if HAVE_XWIISHOW
+	$(AM_V_at)XWIISHOW=$(abs_builddir)/xwiishow \
+		XWIIDUMP=$(abs_builddir)/xwiidump \
+		$(SHELL) $(top_srcdir)/tests/cli-smoke.sh
+endif
+if HAVE_QT_UI
+	$(AM_V_at)QT_QPA_PLATFORM=offscreen WIILAND_CONFIG_SMOKE_TEST=1 \
+		$(SHELL) $(top_srcdir)/tests/wiiland-config-smoke.sh offscreen \
+		$(abs_builddir)/wiiland-config
+endif
 
 #
 # xwiidump

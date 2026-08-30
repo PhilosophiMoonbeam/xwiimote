@@ -1,9 +1,9 @@
-# Udev wiimote permission setup
-# This is an example rule to change the permissions on LED devices on wiimotes.
-# It changes the "group" field to "input" and marks it writeable.
+# Udev permissions for wiimote LED brightness attributes.
+# Keep the input group writable so tools such as xwiishow can control LEDs
+# without requiring root. Active-seat uaccess applies to device nodes, not
+# sysfs attributes, so direct non-shell helpers are used for these attributes.
 #
-# This rule is required if you want to control wiimote LEDs without being root.
-# It is not required for input events as these are already changed to "input"
-# group by default udev rules.
+# This rule complements 70-wiiland-uinput.rules: the installed rule covers
+# event reads and /dev/uinput writes, while this example covers LED writes.
 
-SUBSYSTEM=="leds", ACTION=="add", DRIVERS=="wiimote", RUN+="/bin/sh -c 'chgrp input /sys%p/brightness'", RUN+="/bin/sh -c 'chmod g+w /sys%p/brightness'"
+SUBSYSTEM=="leds", ACTION=="add", DRIVERS=="wiimote", RUN{program}+="/usr/bin/chgrp input /sys%p/brightness", RUN{program}+="/usr/bin/chmod g+w /sys%p/brightness"

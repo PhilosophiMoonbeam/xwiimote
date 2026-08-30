@@ -7,9 +7,8 @@
 /*
  * WiiLand EEPROM Dump
  * This tool reads the whole eeprom of a wiimote and dumps the output to
- * stdout. This requires debugfs support and euid 0/root.
- * Pass as argument the eeprom input file. This requires that debugfs is
- * mounted and compiled into the kernel.
+ * stdout. This requires debugfs support in the kernel and the hid-wiimote
+ * kernel module. The caller must have permission to read the eeprom file.
  *
  * Debugfs compiled:
  *   zgrep DEBUG_FS /proc/config.gz
@@ -23,7 +22,14 @@
 #include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <unistd.h>
+
+static void usage(const char *prog, FILE *stream)
+{
+	fprintf(stream, "Usage: %s FILE\n", prog);
+	fprintf(stream, "Read a Wii Remote EEPROM file and write its contents to stdout.\n");
+}
 
 static void show(const char *buf, size_t len)
 {
@@ -33,10 +39,21 @@ static void show(const char *buf, size_t len)
 		printf(" 0x%02hhx", buf[i]);
 }
 
-static void dump(int fd)
+static ssize_t read_retry(int fd, void *buf, size_t len)
+{
+	ssize_t ret;
+
+	do
+		ret = read(fd, buf, len);
+	while (ret < 0 && errno == EINTR);
+
+	return ret;
+}
+
+static int dump(int fd, const char *file)
 {
 	char buf[1];
-	int ret;
+	ssize_t ret;
 	size_t off, i;
 
 	off = 0;
@@ -44,35 +61,46 @@ static void dump(int fd)
 		printf("0x%08zu:", off);
 
 		for (i = 0; i < 8; ++i) {
-			ret = read(fd, buf, sizeof(buf));
+			ret = read_retry(fd, buf, sizeof(buf));
 			if (ret > 0) {
 				show(buf, ret);
 			} else if (ret < 0) {
-				printf(" (read error %d)", errno);
-				if (lseek(fd, 1, SEEK_CUR) < 0) {
-					printf(" (Seek failed %d)", errno);
-					goto out;
-				}
+				int error;
+
+				error = errno;
+				/* Keep the established stdout dump format. */
+				printf(" (read error %d)", error);
+				fprintf(stderr,
+					"Cannot read eeprom file '%s' at offset 0x%08zx: %s\n",
+					file, off, strerror(error));
+				return EXIT_FAILURE;
 			} else {
 				printf(" (eof)");
-				goto out;
+				if (i != 0) {
+					fprintf(stderr,
+						"Unexpected end of eeprom file '%s' at offset 0x%08zx\n",
+						file, off);
+					return EXIT_FAILURE;
+				}
+				return EXIT_SUCCESS;
 			}
 			++off;
 		}
 		printf("\n");
 	}
-
-out:
-	return;
 }
 
 static int open_eeprom(const char *file)
 {
 	int fd;
 
-	fd = open(file, O_RDONLY);
+	do
+		fd = open(file, O_RDONLY);
+	while (fd < 0 && errno == EINTR);
+
 	if (fd < 0)
-		fprintf(stderr, "Cannot open eeprom file %d\n", errno);
+		fprintf(stderr, "Cannot open eeprom file '%s': %s\n",
+			file, strerror(errno));
 
 	return fd;
 }
@@ -80,19 +108,28 @@ static int open_eeprom(const char *file)
 int main(int argc, char **argv)
 {
 	int fd;
+	int status;
 
-	if (argc < 2 || !*argv[1]) {
-		fprintf(stderr, "Please give path to eeprom file as first argument\n");
+	if (argc == 2 && (!strcmp(argv[1], "-h") || !strcmp(argv[1], "--help"))) {
+		usage(argv[0], stdout);
+		return EXIT_SUCCESS;
+	}
+
+	if (argc != 2 || !*argv[1]) {
+		usage(argv[0], stderr);
 		return EXIT_FAILURE;
 	}
 
 	fd = open_eeprom(argv[1]);
-	if (fd >= 0) {
-		dump(fd);
-		close(fd);
-	} else {
+	if (fd < 0)
+		return EXIT_FAILURE;
+
+	status = dump(fd, argv[1]);
+	if (close(fd) < 0) {
+		fprintf(stderr, "Cannot close eeprom file '%s': %s\n",
+			argv[1], strerror(errno));
 		return EXIT_FAILURE;
 	}
 
-	return EXIT_SUCCESS;
+	return status;
 }

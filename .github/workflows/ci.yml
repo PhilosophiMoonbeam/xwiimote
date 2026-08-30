@@ -9,23 +9,147 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Install smoke dependencies
+      - name: Install build and integration dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y autoconf automake build-essential groff libncurses-dev libtool libudev-dev pkg-config qt6-base-dev
+          sudo apt-get install -y \
+            autoconf \
+            automake \
+            build-essential \
+            desktop-file-utils \
+            groff \
+            libncurses-dev \
+            libqt6waylandclient6 \
+            libtool \
+            libudev-dev \
+            pkg-config \
+            qt6-base-dev \
+            qt6-qpa-plugins \
+            qt6-wayland \
+            shellcheck \
+            udev \
+            weston \
+            xauth \
+            xvfb
+      - name: Check shell scripts
+        run: |
+          shellcheck \
+            tests/cli-smoke.sh \
+            tests/wiiland-config-smoke.sh \
+            tests/wiilandd-install-smoke.sh \
+            tests/wiilandd-smoke.sh \
+            tools/wiilandd-hardware-report.sh
       - name: Run wiilandd smoke script
         run: tests/wiilandd-smoke.sh
-      - name: Build and test package
+      - name: Build and test full package
         run: |
+          set -eu
           NOCONFIGURE=1 ./autogen.sh
-          ./configure --prefix=/usr --enable-qt-ui=yes
+          ./configure \
+            --prefix=/usr \
+            --sysconfdir=/etc \
+            --enable-xwiishow=yes \
+            --enable-qt-ui=yes \
+            --with-udev-rules-dir=auto \
+            --with-systemd-user-unit-dir=auto \
+            --with-xorg-conf-dir=auto
           make -j"$(nproc)"
           make check
       - name: Exercise kernel uinput integration
         run: |
+          set -eu
           sudo modprobe uinput || test -e /dev/uinput
           sudo ./wiilandd-uinput-test
       - name: Install staged package
         run: |
+          set -eu
           make DESTDIR="$PWD/stage" install
-          tests/wiilandd-install-smoke.sh "$PWD/stage" /usr yes
+          tests/wiilandd-install-smoke.sh "$PWD/stage" /usr yes /etc
+      - name: Validate installed package assets
+        run: |
+          set -eu
+          stage="$PWD/stage"
+          for rule in "$stage/usr/lib/udev/rules.d/"*.rules; do
+            udevadm verify "$rule"
+          done
+          desktop-file-validate \
+            "$stage/usr/share/applications/io.github.philosophimoonbeam.wiiland-config.desktop"
+          for manual in "$stage/usr/share/man/man1/"*.1 \
+              "$stage/usr/share/man/man7/"*.7; do
+            groff -man -Tutf8 "$manual" >/dev/null
+          done
+      - name: Exercise xcb GUI under Xvfb
+        run: |
+          set -eu
+          xvfb-run --auto-servernum --server-args="-screen 0 1280x800x24" \
+            env QT_QPA_PLATFORM=xcb WIILAND_CONFIG_SMOKE_TEST=1 \
+            ./tests/wiiland-config-smoke.sh xcb ./wiiland-config
+      - name: Exercise native Wayland GUI under Weston
+        run: |
+          set -eu
+          runtime="$RUNNER_TEMP/wiiland-wayland-runtime"
+          socket=wiiland-wayland-0
+          weston_log="$RUNNER_TEMP/wiiland-weston.log"
+          weston_pid=
+          cleanup() {
+            status=$?
+            trap - EXIT INT TERM
+            if [ -n "$weston_pid" ] &&
+                kill -0 "$weston_pid" 2>/dev/null; then
+              kill "$weston_pid" 2>/dev/null || :
+              attempts=0
+              while kill -0 "$weston_pid" 2>/dev/null &&
+                  [ "$attempts" -lt 50 ]; do
+                attempts=$((attempts + 1))
+                sleep 0.1
+              done
+              if kill -0 "$weston_pid" 2>/dev/null; then
+                kill -KILL "$weston_pid" 2>/dev/null || :
+              fi
+              wait "$weston_pid" 2>/dev/null || :
+            fi
+            rm -rf "$runtime"
+            exit "$status"
+          }
+          trap cleanup EXIT INT TERM
+          umask 077
+          mkdir -p "$runtime"
+          chmod 700 "$runtime"
+          export XDG_RUNTIME_DIR="$runtime"
+          export WAYLAND_DISPLAY="$socket"
+          weston \
+            --backend=headless \
+            --renderer=pixman \
+            --shell=kiosk \
+            --socket="$WAYLAND_DISPLAY" \
+            --idle-time=0 \
+            >"$weston_log" 2>&1 &
+          weston_pid=$!
+          ready=no
+          attempts=0
+          while [ "$attempts" -lt 100 ]; do
+            if [ -S "$runtime/$socket" ]; then
+              ready=yes
+              break
+            fi
+            if ! kill -0 "$weston_pid" 2>/dev/null; then
+              cat "$weston_log"
+              exit 1
+            fi
+            attempts=$((attempts + 1))
+            sleep 0.1
+          done
+          if [ "$ready" != yes ]; then
+            cat "$weston_log"
+            exit 1
+          fi
+          env \
+            DISPLAY= \
+            XDG_SESSION_TYPE=wayland \
+            QT_QPA_PLATFORM=wayland \
+            WIILAND_CONFIG_SMOKE_TEST=1 \
+            ./tests/wiiland-config-smoke.sh wayland ./wiiland-config
+      - name: Verify distribution archive
+        run: |
+          set -eu
+          make distcheck

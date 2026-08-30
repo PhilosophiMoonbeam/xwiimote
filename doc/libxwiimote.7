@@ -2,24 +2,55 @@
 .\" Written 2012 by David Herrmann
 .\" Dedicated to the Public Domain
 .\"
-.TH "LIBXWIIMOTE" 7 "February 2012" "David Herrmann" "Wii Remote Driver"
+.TH "LIBXWIIMOTE" 7 "August 2026" "WiiLand" "WiiLand Manual"
 .SH NAME
-libxwiimote \- WiiLand compatibility user-space library
+libxwiimote \- display-server-independent Wii Remote access library
 
 .SH SYNOPSIS
 .B #include <xwiimote.h>
 
 .SH DESCRIPTION
 The libxwiimote compatibility library manages connected Wii Remotes from
-user-space. If you write an application that wants to support Wii Remotes as
-input devices but you cannot rely on X or the kernel to provide a suitable input
-device for you (for example, because you need finer grained access), then you
-can use this library to access Wii Remotes.
-
+user-space. It discovers hid-wiimote devices through udev and exposes their
+kernel input interfaces through the existing
+.B xwii_*
+API. It does not require, connect to, or route events through Wayland, X.org,
+XWayland, or any other display server.
+.PP
+The
+.B wiilandd
+daemon uses this library for ingestion and translates events into Linux uinput
+virtual evdev devices. Applications may also use the library directly when
+they need finer-grained access than a display or kernel input path provides.
+The resulting event data is therefore suitable for either Wayland or X.org
+sessions and for non-display consumers; this manual makes no new API or ABI
+claims.
+.PP
 This library provides a simple, but still comprehensive, API to access
 connected Wii Remotes. The API documentation is still in process. Please read
 the tools in wiiland/tools/ or the header in wiiland/lib/xwiimote.h for
 information on the API.
+.SH PERMISSIONS
+The process using libxwiimote needs permission to read the hid-wiimote
+.B /dev/input/event*
+nodes for read-only interfaces. Opening an interface with
+.B XWII_IFACE_WRITABLE
+requests read/write access and may additionally require write permission;
+the library does not elevate privileges. LED and other sysfs attributes have
+their own permissions.
+.PP
+The packaged
+.B res/70-wiiland-uinput.rules
+rule tags hid-wiimote event nodes for active-seat access and supplies an
+.B input
+group,
+.B 0660
+fallback. The packaged
+.B res/70-udev-wiiland.rules
+rule grants the input group write access to wiimote LED brightness attributes
+for tools that use them. Install the rules through the distribution's normal
+udev configuration; active-seat ACL and group policy determine the effective
+permissions.
 
 .SH BUGS
 The library does not support all Wii Remote peripherals, yet. Please consider

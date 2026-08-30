@@ -1,168 +1,208 @@
-= WiiLand Plan =
+= WiiLand =
 
-Status: active migration plan for distributions where Wayland is the primary
-session and Xorg input drivers are legacy compatibility only.
+Status: final architecture, operations, and validation guide for one Linux
+installation that supports Wayland and X.org sessions equally.
 
-== Decision ==
+== Architecture ==
 
-The default Wayland path is a Linux uinput bridge, shipped as wiilandd and
-exposed explicitly as backend=uinput/--backend uinput. It consumes
-hid-wiimote/libxwiimote compatibility-library events and creates virtual evdev
-devices. Wayland compositors already ingest those devices through libinput and
-native game stacks already ingest them through evdev, SDL, Wine, and Proton.
+WiiLand is a display-neutral input stack with four layers:
 
-This is intentionally not an XWayland or Xorg input-driver port. Wayland clients
-cannot generally inject input into other clients. Compositor-specific virtual
-input protocols are not portable enough for the default backend. libei is the
-preferred future compositor-mediated backend once it is broadly available; it
-will be an optional backend, not a replacement for the uinput baseline.
+1.  The kernel hid-wiimote driver and BlueZ expose the paired Wii Remote as
+    input interfaces.  libxwiimote is the userspace ingestion API used by
+    wiilandd.  It supplies core buttons, extension buttons and axes,
+    accelerometer, MotionPlus, IR, and Balance Board data.
 
-== Current shipped behavior ==
+2.  wiilandd decodes those events and creates Linux uinput virtual evdev
+    devices.  The gamepad profile creates one device named "WiiLand Virtual
+    Controller" per remote.  The desktop profile creates a device named
+    "WiiLand Virtual Desktop"; `both` creates both profiles.  The daemon does
+    not call a display-server API and does not require XWayland.
 
-wiilandd:
-  - monitors hid-wiimote devices through libxwiimote compatibility library;
-  - decodes the standard BTN_1..BTN_5, D-pad, and HAT-axis events emitted by
-    current mainline hid-wiimote Guitar and Drums devices;
-  - creates one virtual uinput gamepad per Wii Remote by default;
-  - optionally creates a virtual desktop mouse/keyboard with --profile desktop
-    or --profile both;
-  - forwards core, Nunchuk, Classic Controller, Pro Controller, Guitar, and
-    Drums button events to the gamepad profile;
-  - forwards accelerometer, MotionPlus, Nunchuk, Classic Controller,
-    Pro Controller, Guitar, Drums, and Balance Board axes to the gamepad
-    profile;
-  - normalizes each controller family's raw stick, trigger, sensor, whammy,
-    touch-strip, and pressure ranges to the ranges advertised by the unified
-    virtual gamepad, so applications receive full axis travel;
-  - maps Wii Remote core input in the desktop profile: D-pad repeat and valid
-    IR events move the pointer, A/B click, +/- send Enter/Escape, Home sends
-    the compositor overview key, and 1/2 send Page Down/Page Up;
-  - supports key=value configuration for default profile, syspath and devtype
-    profile overrides, desktop button actions, D-pad pointer speed, IR pointer
-    gain, IR jitter deadzone, IR smoothing, IR tracker selection, optional IR
-    screen calibration, modern motion-aim output, and persistent flat-surface
-    aim calibration through /etc/wiiland/wiilandd.conf,
-    ~/.config/wiiland/wiilandd.conf, or --config; res/wiilandd.conf is the
-    distributable sample;
-  - exposes first-class motion aiming for Steam and non-Steam games:
-    aim-mode=right-stick maps the selected sensor to ABS_RX/ABS_RY camera aim,
-    aim-mode=mouse maps it to REL_X/REL_Y pointer aim, aim-source=auto prefers
-    IR when visible, then calibrated MotionPlus, then calibrated accelerometer
-    tilt, --calibrate-aim emits flat-surface offsets, and IR can stay relative
-    or use optional screen bounds for absolute positional aim;
-  - provides --self-test for deterministic profile, button-map, config, and
-    pointer-motion validation without hardware;
-  - provides --axis-map, --validation-checklist, and --doctor for
-    machine-readable virtual gamepad mapping, required hardware-validation
-    coverage, and runtime readiness diagnostics;
-  - ships CI and make-check coverage for mainline Guitar/Drums decoding plus
-    hardware-free wiilandd profile, button-map, axis-scaling, config,
-    dump-config, axis-map, validation-checklist, doctor, and trace behavior;
-    CI also builds the Autotools package and validates the staged udev,
-    systemd-user, example-config, and wiilandd binary install paths;
-  - opens only the hid-wiimote interfaces required by each device profile and
-    aim source, preserving battery and event-loop capacity in desktop-only and
-    non-IR configurations;
-  - keeps an otherwise usable remote connected when an optional extension
-    interface fails to open, bounds each event-drain batch, and schedules D-pad
-    pointer repeat against a monotonic deadline so sensor traffic cannot starve
-    desktop motion;
-  - provides --dry-run --trace-events for hardware validation reports without
-    creating virtual input devices;
-  - handles hotplug and extension changes without Xorg configuration.
+3.  A Wayland compositor consumes the virtual evdev devices through libinput.
+    An X.org server consumes the same virtual devices through its normal input
+    stack.  In an XWayland session, the compositor still consumes the device
+    and forwards the resulting seat input to XWayland clients.
 
-wiiland-config:
-  - uses Qt 6 Widgets through the Qt Platform Abstraction rather than X11 APIs;
-  - selects the native Wayland platform plugin in a Wayland session and reports
-    the active display backend in its status bar;
-  - requires the Qt Wayland platform plugin at runtime for native operation,
-    while retaining Qt's xcb fallback for deliberate X11 sessions.
+4.  Applications consume the resulting seat or controller events through their
+    normal interfaces: native Wayland applications, native X11 applications,
+    XWayland applications, SDL, Steam Input, and Wine/Proton.
 
-Required runtime permissions:
-  - normal input read access for hid-wiimote evdev nodes;
-  - write access to /dev/uinput, normally via a distribution udev rule or a
-    service running with the input/uinput capability policy. The sample service
-    uses --check-config as an ExecCondition, so invalid configuration suppresses
-    startup without entering the runtime restart policy.
+uinput is the shared boundary because it is a kernel input interface, not a
+display protocol.  One wiilandd instance can therefore publish identical
+evdev devices to whichever session is active, without separate compositor
+plugins or display-specific injection permissions.  Each session consumes the
+same virtual devices through its own normal input stack; the session does not
+change how the Wii Remote is decoded.
 
-== Roadmap ==
+For a native X.org installation, the X.org integration provides
+`res/50-xorg-fix-wiiland.conf` InputClass rules that suppress matching raw
+Nintendo Wii Remote event nodes so X.org does not create duplicate pointer
+input from accelerometer/IR axes.  The rules do not block libxwiimote access,
+wiilandd, or devices named "WiiLand Virtual Controller" and "WiiLand Virtual
+Desktop".  The Classic Controller and Pro Controller exceptions in that file
+remain enabled.  This policy has no role in a Wayland session.
 
-1. Modern motion aiming
-   Shipped as aim-mode=right-stick or aim-mode=mouse with aim-source=auto
-   fallback from IR to MotionPlus to accelerometer, robust dual-source IR
-   midpoint tracking with optional absolute screen bounds, configurable
-   hold-to-aim activation, sensitivity, deadzone, smoothing, axis inversion, and
-   Wii-style flat-surface calibration for accelerometer zero and MotionPlus gyro
-   bias.
-   This makes Wii Remote hardware useful as a modern Linux game controller in
-   Steam, Proton/Wine, SDL, XWayland games, and native Wayland games without
-   spoofing a DualSense/DualShock device identity.
+== Pairing and operating the bridge ==
 
-2. Desktop profile
-   Shipped as --profile desktop and --profile both with D-pad motion,
-   configurable IR pointer motion, jitter deadzone, smoothing, and configurable
-   desktop button actions.
+Pair a remote with the desktop Bluetooth UI or with the current `bluetoothctl`
+command-line workflow.  The obsolete xwiibind workflow is not part of WiiLand.
+The hid-wiimote driver must be available; no kernel-driver configuration is
+needed.  `wiilandd --list --verbose` shows connected devices, devtypes, and
+extension attributes without creating virtual devices.
 
-3. Per-device policy
-   Shipped as device.<syspath-substring>.profile and
-   device-type.<devtype-substring>.profile rules for choosing gamepad, desktop,
-   or both per controller path/type. Bluetooth-address matching remains a future
-   refinement if hardware reports show a stable identifier surface worth
-   standardizing.
+The daemon defaults to `backend=uinput` and `profile=gamepad`.  Use
+`wiilandd --profile desktop` for pointer/keyboard output or
+`wiilandd --profile both` for both virtual devices.  Desktop output maps valid
+IR events and D-pad repeat to pointer motion; A/B click, +/- Enter/Escape,
+Home overview, and 1/2 Page Down/Page Up.  Motion aiming is configured with
+`aim-mode=mouse` or `aim-mode=right-stick`; `aim-source=auto` prefers IR,
+then calibrated MotionPlus, then calibrated accelerometer tilt.
 
-4. Optional libei backend
-   Add --backend=libei when libei and compositor support are common enough.
-   libei gives user-mediated emulated input through a compositor EIS endpoint;
-   uinput remains the fallback because it works across compositors and native
-   game stacks today.
+Applications may have remembered mappings for the former observable names
+"WiiLand Wayland Controller" and "WiiLand Wayland Desktop".  The current names
+are "WiiLand Virtual Controller" and "WiiLand Virtual Desktop"; select the new
+devices or redo an application's mapping when necessary.  This is an
+application configuration change, not a change to the evdev contract.
 
-5. Distribution integration
-   Automake installs the uinput udev rule, graphical-session-scoped systemd
-   user service, and sample config from res/. Keep the legacy Xorg blacklist
-   file for legacy Xorg sessions only.
+== Permissions and service lifecycle ==
 
-6. Test hardware matrix
-   Completion requires direct reports for:
-   - original Wii Remote: core buttons, accelerometer, IR desktop pointer;
-   - original Wii Remote plus external MotionPlus addon: hotplug detection and
-     MotionPlus X/Y/Z axes;
-   - Wii Remote Plus / built-in MotionPlus: core buttons, accelerometer,
-     MotionPlus X/Y/Z axes;
-   - Nunchuk: stick, C/Z buttons, accelerometer passthrough;
-   - Classic Controller: sticks, triggers, face buttons;
-   - Wii U Pro Controller: sticks, triggers, face buttons;
-   - Guitar: fret buttons, strum bar, whammy, stick;
-   - Drums: pad hits, cymbal/tom pressure axes, bass and hi-hat pedals;
-   - Balance Board: all four weight sensors.
+wiilandd needs read access to the hid-wiimote `/dev/input/event*` nodes and
+write access to `/dev/uinput`.  Install the udev rules
+`res/70-udev-wiiland.rules` and `res/70-wiiland-uinput.rules` (or the packaged
+equivalents).  The latter grants active-seat access to input nodes with
+`TAG+="uaccess"` and retains `GROUP="input", MODE="0660"` as a fallback; the
+former grants group write access to Wii Remote LED sysfs attributes.  No
+display-server client access is needed.
 
-   Each report must record kernel version, libxwiimote version, wiilandd
-   --version output, git commit, compositor, distribution, Bluetooth adapter,
-   device devtype (for example gen10/gen15/gen20), extension state, and whether
-   SDL, Wine/Proton, and native Wayland desktop profile behavior matched
-   expectations.
+The packaged user unit is `wiilandd.service` and is installed in the systemd
+user-unit directory selected at configure time.  It is pulled by
+`default.target`.  Its `ExecCondition` runs `wiilandd --check-config` before
+`ExecStart`; invalid configuration therefore suppresses that start and does
+not enter the runtime restart policy.  A process that starts and then fails
+uses `Restart=on-failure` with `RestartSec=2s`.  Enable and start it in the
+user manager with:
 
-   Recommended capture sequence:
-     tools/wiilandd-hardware-report.sh
-     tools/wiilandd-hardware-report.sh N
-     tools/wiilandd-hardware-report.sh N --trace-events=motion-plus
-     tools/wiilandd-hardware-report.sh N --trace-events=ir
+    systemctl --user enable wiilandd.service
+    systemctl --user start wiilandd.service
 
-   The first command records finite report schema version, host, UTC capture
-   timestamp, distribution, compositor/session environment, Bluetooth
-   controller, hid-wiimote module-parameter, permission, config, version, git
-   commit/dirty state, axis map, validation checklist, doctor diagnostics,
-   device-list, devtype, extension, sysfs uevent identity, battery, event-node
-   access diagnostics, and manual validation placeholders for SDL, Wine/Proton,
-   and native Wayland desktop behavior.
-   The second command captures sequenced, filtered --dry-run --trace-events
-   --verbose output for one device. Extra arguments are passed to wiilandd; use
-   --trace-events=motion-plus when validating MotionPlus only,
-   --trace-events=ir when tuning IR pointer input, or use the number from
-   --list or a sysfs path.
+Use `systemctl --user status wiilandd.service` for lifecycle diagnostics.
+`wiilandd --doctor` reports the current session variables, resolved Wayland
+socket, `/dev/uinput`, backend, and profile; it does not enumerate Wii
+devices.  `wiilandd --check-config` validates the effective configuration
+without enumerating devices.
 
-   After dry-run traces show expected events, repeat without --dry-run and
-   validate the virtual gamepad in an SDL input tester, one Steam Input game,
-   one non-Steam native or XWayland game, one Wine/Proton game, aim-mode=mouse,
-   aim-mode=right-stick, and the desktop pointer/buttons under a native Wayland
-   compositor. Do not mark the Wayland migration complete until this matrix has
-   real hardware evidence.
+== Configuration and GUI ==
+
+Unless `--no-config` is supplied, wiilandd reads
+`/etc/wiiland/wiilandd.conf` first, then
+`$XDG_CONFIG_HOME/wiiland/wiilandd.conf`, or
+`$HOME/.config/wiiland/wiilandd.conf` when `XDG_CONFIG_HOME` is unset.  Later
+values override earlier values.  `--config path` selects one explicit
+key=value file instead of the default hierarchy, and command-line options
+override loaded values.  `--dump-config` prints the resolved result.
+`res/wiilandd.conf` is the installed/sample configuration; it is not an
+additional implicit layer.
+
+The optional `wiiland-config` control center uses Qt 6 Widgets and Qt Platform
+Abstraction (QPA), with no direct X11 or Wayland display API.  Qt selects the
+native Wayland plugin in a Wayland session and the xcb plugin in an X.org
+session.  The same configuration editor and status display are therefore
+available in both sessions.  To select explicitly:
+
+    QT_QPA_PLATFORM=wayland wiiland-config
+    QT_QPA_PLATFORM=xcb wiiland-config
+
+The corresponding Qt QPA platform plugin must be installed at runtime; the
+configure check verifies Qt 6 Widgets but does not verify those runtime
+plugins.
+
+== Configure and installed artifacts ==
+
+Native integration is controlled by these configure switches:
+
+    --enable-qt-ui=auto|yes|no
+    --with-udev-rules-dir=auto|no|PATH
+    --with-systemd-user-unit-dir=auto|no|PATH
+    --with-xorg-conf-dir=auto|no|PATH
+
+With the relevant options enabled, installation provides `wiilandd`,
+`wiilandd-hardware-report`, optional `wiiland-config`, the man pages, and
+`doc/WIILAND`.  It installs `res/wiilandd.conf` under
+`$(sysconfdir)/wiiland/wiilandd.conf` and also as a documentation example.
+The udev rules go to the configured udev rules directory; the user unit goes
+to the configured systemd user-unit directory; and
+`50-xorg-fix-wiiland.conf` goes to the configured X.org
+`xorg.conf.d` directory.  The Qt desktop entry and icon are installed only
+when the Qt UI is built.  Set each `--with-...-dir` option to `no` to omit
+that integration artifact.
+
+== Reproducible validation ==
+
+This guide records the acceptance procedure; no physical Wii Remote hardware
+validation is implied by this source tree or by an execution without paired
+hardware.  First perform deterministic, hardware-free checks:
+
+    wiilandd --self-test
+    wiilandd --check-config
+    wiilandd --dump-config
+    wiilandd --axis-map
+    wiilandd --validation-checklist
+    wiilandd --doctor
+    wiilandd-hardware-report
+
+The report records schema version, host and UTC time, distribution, session
+type/compositor, Bluetooth controller, hid-wiimote parameters, permissions,
+libxwiimote and wiilandd versions, commit/dirty state, resolved config, axis
+map, checklist, doctor diagnostics, device list, devtype, extension, sysfs
+identity, battery, event-node access, and manual-validation fields.  It exits
+with a failure status for core diagnostic failures; manual fields remain
+explicit acceptance placeholders.
+
+With a paired device, use the device number from `--list` or its sysfs path:
+
+    wiilandd-hardware-report N
+    wiilandd-hardware-report N --trace-events=motion-plus
+    wiilandd-hardware-report N --trace-events=ir
+
+These commands perform dry-run, verbose traces and do not create virtual
+devices.  Exercise every button, stick, trigger, accelerometer, MotionPlus
+axis, IR source, and attached extension.  After traces are correct, stop the
+user service if it is running and create live devices with:
+
+    wiilandd --device N --profile both
+
+Alternatively, set `profile=both` in the effective configuration and restart
+the user service.  Record the following paired matrix.  Each row records
+kernel, libxwiimote, wiilandd version, distribution, Bluetooth adapter,
+devtype, extension state, session, consumer, expected result, and pass/fail
+details.
+
+Hardware coverage:
+
+  - original Wii Remote: core buttons, accelerometer, and IR desktop pointer;
+  - original Wii Remote with external MotionPlus: extension hotplug and X/Y/Z;
+  - Wii Remote Plus with built-in MotionPlus: core, accelerometer, and X/Y/Z;
+  - Nunchuk: stick, C/Z buttons, and accelerometer passthrough;
+  - Classic Controller: sticks, triggers, and face buttons;
+  - Wii U Pro Controller: sticks, triggers, and face buttons;
+  - Guitar: fret buttons, strum bar, whammy, and stick;
+  - Drums: pad hits, cymbal/tom pressure, bass, and hi-hat pedals;
+  - Balance Board: all four weight sensors.
+
+Session and consumer coverage for each applicable hardware/profile pair:
+
+  - native Wayland compositor: gamepad and desktop profiles through libinput;
+  - native X.org session: virtual devices through X.org, with the raw-node
+    InputClass policy installed and verified not to suppress virtual names;
+  - XWayland application in a Wayland session;
+  - SDL input tester;
+  - one Steam Input game, including `aim-mode=right-stick`;
+  - one native Wayland or XWayland non-Steam game;
+  - one Wine/Proton game;
+  - desktop pointer/buttons with `aim-mode=mouse` where applicable.
+
+For motion validation, run `--calibrate-aim` on a flat, still remote, put its
+generated key=value lines in the test configuration, and record any optional
+IR screen bounds.  Mark a row only after observing the expected virtual
+device/events in that session and consumer; do not substitute a report
+placeholder for paired hardware evidence.
