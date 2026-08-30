@@ -36,7 +36,7 @@ SUBDIRS = .
 #
 
 EXTRA_DIST = \
-	README \
+	README.md \
 	COPYING \
 	DEV \
 	LICENSE \
@@ -45,6 +45,8 @@ EXTRA_DIST = \
 	res/70-wiiland-uinput.rules \
 	res/io.github.philosophimoonbeam.wiiland-config.desktop \
 	res/io.github.philosophimoonbeam.wiiland.svg \
+	res/wiiland-logo.png \
+	res/wiiland-logo.svg \
 	res/wiilandd.conf \
 	res/wiilandd.service.in \
 	doc/wiiland.7 \
