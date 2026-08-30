@@ -24,15 +24,33 @@ uses resolver 3, edition 2024, and package version 2.0.0.  The principal
 packages are:
 
 * `crates/wiiland-hid` — native Rust ownership, decoding, and control of
-  devices exposed by Linux `hid-wiimote`.
+  devices exposed by Linux `hid-wiimote`; consumers use its root facade.
 * `crates/wiiland-core` — pure configuration, mapping, pointer, aim, and trace
   logic.
 * `crates/wiilandd` — the `wiilandd` daemon and
   `wiilandd-hardware-report`.
+* `crates/wiiland-ipc` — source-level, `rlib`-only Rust DTOs and blocking
+  versioned Unix-socket `Client` for daemon consumers.
 * `crates/wiiland-config` — optional eframe/egui Wayland/X11 control center.
 * `crates/xwiishow` — optional ratatui/crossterm diagnostic TUI.
 * `crates/xwiidump` — non-installed EEPROM diagnostic.
 * `xtask` — typed build, install, documentation, and distribution workflows.
+
+The supported integration boundary has two mutually exclusive ownership paths:
+an application may add `wiiland-hid` as a source-level Cargo path dependency
+and own Linux HID interfaces directly, or it may add `wiiland-ipc` as a
+source-level path dependency and use `Client` while `wiilandd` owns hardware.
+The README contains concise examples using the public root facades. Do not
+depend on raw decoder/model modules or kernel implementation details.
+
+`wiiland-ipc::Client::connect` negotiates protocol major version automatically.
+`connect_default` targets the private per-user
+`$XDG_RUNTIME_DIR/wiiland/wiilandd.sock` endpoint only for an absolute runtime
+directory. There is no global system socket. These source-level integration
+crates are not installed development libraries or standalone clients:
+packaging must not emit C headers, development libraries, static/shared
+libraries, pkg-config metadata, or a client executable. Neither path promises
+a stable Rust ABI or a C ABI.
 
 The daemon remains display-neutral: device ingestion and uinput output do not
 call a display-server API. The GUI's winit backend is selected by the active

@@ -5,6 +5,7 @@ members = [
     "crates/wiiland-core",
     "crates/wiilandd",
     "crates/wiiland-config",
+    "crates/wiiland-ipc",
     "crates/xwiishow",
     "crates/xwiidump",
     "xtask",
@@ -29,6 +30,8 @@ tempfile = "3.20.0"
 tar = "0.4.44"
 xz2 = "0.1.7"
 walkdir = "2.5.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
 
 [profile.dev]
 opt-level = 0

@@ -4,7 +4,7 @@ use ratatui::Frame;
 use ratatui::text::Text;
 use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 
-use crate::app::{App, ViewMode, key_name};
+use crate::app::{App, ViewMode, button_at, key_name};
 
 pub fn render(frame: &mut Frame<'_>, app: &App) {
     let area = frame.area();
@@ -343,9 +343,9 @@ fn open_names(app: &App) -> String {
 }
 fn key_list(keys: &[bool; 28]) -> String {
     let mut names = Vec::new();
-    for (i, pressed) in keys.iter().enumerate() {
-        if *pressed {
-            names.push(key_name(i as u32));
+    for (index, pressed) in keys.iter().enumerate() {
+        if *pressed && let Some(button) = button_at(index) {
+            names.push(key_name(button));
         }
     }
     if names.is_empty() {

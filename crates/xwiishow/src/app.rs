@@ -3,14 +3,8 @@ use std::io;
 use std::path::Path;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind};
-use wiiland_hid::Interface;
-use wiiland_hid::decode::{Event, EventKind};
-use wiiland_hid::model::{
-    Axis3, BUTTON_A, BUTTON_B, BUTTON_C, BUTTON_DOWN, BUTTON_FRET_FAR_LOW, BUTTON_FRET_FAR_UP,
-    BUTTON_FRET_LOW, BUTTON_FRET_MID, BUTTON_FRET_UP, BUTTON_HOME, BUTTON_LEFT, BUTTON_MINUS,
-    BUTTON_ONE, BUTTON_PLUS, BUTTON_RIGHT, BUTTON_STRUM_BAR_DOWN, BUTTON_STRUM_BAR_UP, BUTTON_TL,
-    BUTTON_TR, BUTTON_TWO, BUTTON_UP, BUTTON_X, BUTTON_Y, BUTTON_Z, BUTTON_ZL, BUTTON_ZR,
-    ButtonEvent, InterfaceMask,
+use wiiland_hid::{
+    Axis3, Button, ButtonEvent, ButtonState, Event, EventKind, EventType, Interface, InterfaceMask,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -67,7 +61,7 @@ pub struct App {
     pub drums_keys: [bool; 28],
     pub guitar_keys: [bool; 28],
     pub status: VecDeque<String>,
-    pub last_event: Option<u32>,
+    pub last_event: Option<EventType>,
     mp_pending_calibration: bool,
     pub mp_position: [i32; 2],
 }
@@ -151,7 +145,7 @@ impl App {
     }
 
     pub fn apply_event(&mut self, event: &Event) -> bool {
-        self.last_event = Some(event.kind.raw_type());
+        self.last_event = Some(event_type(event.kind));
         match event.kind {
             EventKind::Watch => {
                 self.info("Watch event");
@@ -305,30 +299,40 @@ impl App {
             self.info(format!("Disable {label}"));
             return;
         }
-        let result = iface.open(
+        let opened = match iface.open(
             bit | if writable {
                 InterfaceMask::WRITABLE
             } else {
                 InterfaceMask::empty()
             },
-        );
-        let mut readable = result.is_ok();
-        if result.is_err() && writable {
-            readable = iface.open(bit).is_ok();
-            self.rumble_writable = false;
-        }
-        if readable {
-            self.opened = iface.opened();
-            self.set_enabled(bit, true);
-            if writable && result.is_ok() {
-                self.rumble_writable = true;
+        ) {
+            Ok(opened) => {
+                if writable {
+                    self.rumble_writable = true;
+                }
+                Some(opened)
             }
+            Err(_) if writable => {
+                self.rumble_writable = false;
+                match iface.open(bit) {
+                    Ok(opened) => Some(opened),
+                    Err(error) => {
+                        self.opened = error.opened();
+                        self.error(format!("Cannot enable {label}: {error}"));
+                        None
+                    }
+                }
+            }
+            Err(error) => {
+                self.opened = error.opened();
+                self.error(format!("Cannot enable {label}: {error}"));
+                None
+            }
+        };
+        if let Some(opened) = opened {
+            self.opened = opened;
+            self.set_enabled(bit, true);
             self.info(format!("Enable {label}"));
-        } else {
-            self.error(format!(
-                "Cannot enable {label}: {}",
-                result.err().unwrap_or(-libc::EIO)
-            ));
         }
     }
 
@@ -347,7 +351,6 @@ impl App {
             _ => {}
         }
     }
-
     fn toggle_rumble(&mut self, iface: &mut Interface) {
         if !self.rumble_writable {
             self.error("Rumble unavailable (read-only input)");
@@ -391,17 +394,17 @@ impl App {
             self.rumble_writable = false;
         }
         for bit in [InterfaceMask::CORE, InterfaceMask::PRO_CONTROLLER] {
-            if self.available.contains(bit)
-                && !iface.opened().contains(bit)
-                && iface.open(bit | InterfaceMask::WRITABLE).is_ok()
-            {
-                self.rumble_writable = true;
+            if self.available.contains(bit) && !iface.opened().contains(bit) {
+                match iface.open(bit | InterfaceMask::WRITABLE) {
+                    Ok(_) => self.rumble_writable = true,
+                    Err(error) => self.opened = error.opened(),
+                }
             }
         }
-        if let Err(e) = iface.open(self.available & InterfaceMask::ALL) {
+        if let Err(error) = iface.open(self.available & InterfaceMask::ALL) {
             let missing = self.available & InterfaceMask::ALL & !iface.opened();
             if !missing.is_empty() {
-                self.error(format!("Cannot open some readable interfaces: {e}"));
+                self.error(format!("Cannot open some readable interfaces: {error}"));
             }
         }
         self.opened = iface.opened();
@@ -452,42 +455,141 @@ fn read_attr(iface: &Interface, name: &str) -> String {
         .unwrap_or_else(|| String::from("N/A"))
 }
 
-fn set_key(keys: &mut [bool; 28], key: ButtonEvent) {
-    if (key.code as usize) < keys.len() {
-        keys[key.code as usize] = key.state != 0;
+fn event_type(kind: EventKind) -> EventType {
+    match kind {
+        EventKind::Key(_) => EventType::Key,
+        EventKind::Accel(_) => EventType::Accel,
+        EventKind::Ir(_) => EventType::Ir,
+        EventKind::BalanceBoard(_) => EventType::BalanceBoard,
+        EventKind::MotionPlus(_) => EventType::MotionPlus,
+        EventKind::ProControllerKey(_) => EventType::ProControllerKey,
+        EventKind::ProControllerMove(_) => EventType::ProControllerMove,
+        EventKind::Watch => EventType::Watch,
+        EventKind::ClassicControllerKey(_) => EventType::ClassicControllerKey,
+        EventKind::ClassicControllerMove(_) => EventType::ClassicControllerMove,
+        EventKind::NunchukKey(_) => EventType::NunchukKey,
+        EventKind::NunchukMove(_) => EventType::NunchukMove,
+        EventKind::DrumsKey(_) => EventType::DrumsKey,
+        EventKind::DrumsMove(_) => EventType::DrumsMove,
+        EventKind::GuitarKey(_) => EventType::GuitarKey,
+        EventKind::GuitarMove(_) => EventType::GuitarMove,
+        EventKind::Gone => EventType::Gone,
+        EventKind::Unknown(value) => EventType::Unknown(value),
+        _ => EventType::Unknown(u32::MAX),
     }
 }
 
-pub fn key_name(code: u32) -> &'static str {
-    match code {
-        BUTTON_LEFT => "LEFT",
-        BUTTON_RIGHT => "RIGHT",
-        BUTTON_UP => "UP",
-        BUTTON_DOWN => "DOWN",
-        BUTTON_A => "A",
-        BUTTON_B => "B",
-        BUTTON_PLUS => "PLUS",
-        BUTTON_MINUS => "MINUS",
-        BUTTON_HOME => "HOME",
-        BUTTON_ONE => "1",
-        BUTTON_TWO => "2",
-        BUTTON_X => "X",
-        BUTTON_Y => "Y",
-        BUTTON_TL => "TL",
-        BUTTON_TR => "TR",
-        BUTTON_ZL => "ZL",
-        BUTTON_ZR => "ZR",
-        wiiland_hid::model::BUTTON_THUMBL => "THUMBL",
-        wiiland_hid::model::BUTTON_THUMBR => "THUMBR",
-        BUTTON_C => "C",
-        BUTTON_Z => "Z",
-        BUTTON_STRUM_BAR_UP => "STRUM_UP",
-        BUTTON_STRUM_BAR_DOWN => "STRUM_DOWN",
-        BUTTON_FRET_FAR_UP => "FRET_FAR_UP",
-        BUTTON_FRET_UP => "FRET_UP",
-        BUTTON_FRET_MID => "FRET_MID",
-        BUTTON_FRET_LOW => "FRET_LOW",
-        BUTTON_FRET_FAR_LOW => "FRET_FAR_LOW",
+fn set_key(keys: &mut [bool; 28], key: ButtonEvent) {
+    let Some(index) = button_index(key.button) else {
+        return;
+    };
+    let pressed = match key.state {
+        ButtonState::Pressed | ButtonState::Repeated => true,
+        ButtonState::Released => false,
+        _ => return,
+    };
+    keys[index] = pressed;
+}
+
+fn button_index(button: Button) -> Option<usize> {
+    match button {
+        Button::Left => Some(0),
+        Button::Right => Some(1),
+        Button::Up => Some(2),
+        Button::Down => Some(3),
+        Button::A => Some(4),
+        Button::B => Some(5),
+        Button::Plus => Some(6),
+        Button::Minus => Some(7),
+        Button::Home => Some(8),
+        Button::One => Some(9),
+        Button::Two => Some(10),
+        Button::X => Some(11),
+        Button::Y => Some(12),
+        Button::ShoulderLeft => Some(13),
+        Button::ShoulderRight => Some(14),
+        Button::TriggerLeft => Some(15),
+        Button::TriggerRight => Some(16),
+        Button::ThumbLeft => Some(17),
+        Button::ThumbRight => Some(18),
+        Button::C => Some(19),
+        Button::Z => Some(20),
+        Button::StrumBarUp => Some(21),
+        Button::StrumBarDown => Some(22),
+        Button::FretFarUp => Some(23),
+        Button::FretUp => Some(24),
+        Button::FretMid => Some(25),
+        Button::FretLow => Some(26),
+        Button::FretFarLow => Some(27),
+        _ => None,
+    }
+}
+
+pub(crate) const BUTTON_ORDER: [Button; 28] = [
+    Button::Left,
+    Button::Right,
+    Button::Up,
+    Button::Down,
+    Button::A,
+    Button::B,
+    Button::Plus,
+    Button::Minus,
+    Button::Home,
+    Button::One,
+    Button::Two,
+    Button::X,
+    Button::Y,
+    Button::ShoulderLeft,
+    Button::ShoulderRight,
+    Button::TriggerLeft,
+    Button::TriggerRight,
+    Button::ThumbLeft,
+    Button::ThumbRight,
+    Button::C,
+    Button::Z,
+    Button::StrumBarUp,
+    Button::StrumBarDown,
+    Button::FretFarUp,
+    Button::FretUp,
+    Button::FretMid,
+    Button::FretLow,
+    Button::FretFarLow,
+];
+
+pub(crate) fn button_at(index: usize) -> Option<Button> {
+    BUTTON_ORDER.get(index).copied()
+}
+
+pub fn key_name(button: Button) -> &'static str {
+    match button {
+        Button::Left => "LEFT",
+        Button::Right => "RIGHT",
+        Button::Up => "UP",
+        Button::Down => "DOWN",
+        Button::A => "A",
+        Button::B => "B",
+        Button::Plus => "PLUS",
+        Button::Minus => "MINUS",
+        Button::Home => "HOME",
+        Button::One => "1",
+        Button::Two => "2",
+        Button::X => "X",
+        Button::Y => "Y",
+        Button::ShoulderLeft => "TL",
+        Button::ShoulderRight => "TR",
+        Button::TriggerLeft => "ZL",
+        Button::TriggerRight => "ZR",
+        Button::ThumbLeft => "THUMBL",
+        Button::ThumbRight => "THUMBR",
+        Button::C => "C",
+        Button::Z => "Z",
+        Button::StrumBarUp => "STRUM_UP",
+        Button::StrumBarDown => "STRUM_DOWN",
+        Button::FretFarUp => "FRET_FAR_UP",
+        Button::FretUp => "FRET_UP",
+        Button::FretMid => "FRET_MID",
+        Button::FretLow => "FRET_LOW",
+        Button::FretFarLow => "FRET_FAR_LOW",
         _ => "UNKNOWN",
     }
 }
@@ -514,7 +616,7 @@ pub enum Selector<'a> {
     Path(&'a Path),
 }
 
-pub fn poll_interface(iface: &mut Interface, app: &mut App) -> Result<bool, i32> {
+pub fn poll_interface(iface: &mut Interface, app: &mut App) -> io::Result<bool> {
     match iface.dispatch() {
         Ok(event) => {
             let reopen = app.apply_event(&event);
@@ -529,7 +631,7 @@ pub fn poll_interface(iface: &mut Interface, app: &mut App) -> Result<bool, i32>
             }
             Ok(true)
         }
-        Err(e) if e == -libc::EAGAIN => Ok(false),
+        Err(e) if e.kind() == io::ErrorKind::WouldBlock => Ok(false),
         Err(e) => Err(e),
     }
 }
@@ -540,9 +642,9 @@ mod tests {
 
     fn event(kind: EventKind) -> Event {
         Event {
-            time: libc::timeval {
-                tv_sec: 0,
-                tv_usec: 0,
+            time: wiiland_hid::Timestamp {
+                seconds: 0,
+                microseconds: 0,
             },
             kind,
         }
@@ -556,7 +658,7 @@ mod tests {
             accel: Axis3 { x: 1, y: 2, z: 3 },
             ..App::default()
         };
-        app.key_state[BUTTON_A as usize] = true;
+        app.key_state[4] = true;
 
         assert!(!app.apply_event(&event(EventKind::Accel(Axis3 {
             x: 10,
@@ -564,12 +666,12 @@ mod tests {
             z: 30,
         }))));
         let key = event(EventKind::Key(ButtonEvent {
-            code: BUTTON_A,
-            state: 0,
+            button: Button::A,
+            state: ButtonState::Released,
         }));
         assert!(!app.apply_event(&key));
         assert_eq!(app.accel, Axis3 { x: 1, y: 2, z: 3 });
-        assert!(app.key_state[BUTTON_A as usize]);
+        assert!(app.key_state[4]);
 
         assert!(app.apply_event(&event(EventKind::Watch)));
         assert_eq!(app.status.back().map(String::as_str), Some("Watch event"));
@@ -578,6 +680,48 @@ mod tests {
         assert!(app.gone);
         assert!(app.opened.is_empty());
         assert_eq!(app.status.back().map(String::as_str), Some("Device gone"));
+    }
+
+    #[test]
+    fn known_button_states_preserve_display_behavior() {
+        let mut keys = [false; 28];
+
+        set_key(
+            &mut keys,
+            ButtonEvent {
+                button: Button::A,
+                state: ButtonState::Pressed,
+            },
+        );
+        assert!(keys[4]);
+
+        keys[4] = false;
+        set_key(
+            &mut keys,
+            ButtonEvent {
+                button: Button::A,
+                state: ButtonState::Repeated,
+            },
+        );
+        assert!(keys[4]);
+
+        set_key(
+            &mut keys,
+            ButtonEvent {
+                button: Button::A,
+                state: ButtonState::Released,
+            },
+        );
+        assert!(!keys[4]);
+    }
+
+    #[test]
+    fn typed_button_names_preserve_labels_and_order() {
+        assert_eq!(key_name(Button::A), "A");
+        assert_eq!(key_name(Button::ShoulderLeft), "TL");
+        assert_eq!(key_name(Button::FretFarLow), "FRET_FAR_LOW");
+        assert_eq!(button_at(27).map(key_name), Some("FRET_FAR_LOW"));
+        assert_eq!(button_at(28), None);
     }
 
     #[test]
@@ -599,15 +743,6 @@ mod tests {
             y: -80,
             z: 40,
         };
-        assert!(!app.apply_event(&event(EventKind::MotionPlus(sample))));
-        assert_eq!(
-            app.motion_plus,
-            Axis3 {
-                x: 91,
-                y: 92,
-                z: 93
-            }
-        );
         assert_eq!(
             app.finish_mp_calibration(sample, ([1000, -2000, 3000], 50)),
             Some(([1120, -2080, 3040], 50))

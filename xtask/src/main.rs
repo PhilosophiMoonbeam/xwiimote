@@ -283,7 +283,7 @@ fn root() -> PathBuf {
         .to_path_buf()
 }
 
-const BASE_BUILD_PACKAGES: [&str; 3] = ["wiiland-hid", "wiilandd", "xwiidump"];
+const BASE_BUILD_PACKAGES: [&str; 4] = ["wiiland-ipc", "wiiland-hid", "wiilandd", "xwiidump"];
 
 fn build_packages(features: Features) -> Vec<&'static str> {
     let mut packages = BASE_BUILD_PACKAGES.to_vec();
@@ -459,7 +459,13 @@ mod tests {
 
         assert_eq!(
             build_packages(features),
-            vec!["wiiland-hid", "wiilandd", "xwiidump", "wiiland-config"]
+            vec![
+                "wiiland-ipc",
+                "wiiland-hid",
+                "wiilandd",
+                "xwiidump",
+                "wiiland-config"
+            ]
         );
         assert_eq!(
             build_packages(Features {
@@ -480,6 +486,7 @@ mod tests {
         assert_eq!(
             build_packages(features),
             vec![
+                "wiiland-ipc",
                 "wiiland-hid",
                 "wiilandd",
                 "xwiidump",

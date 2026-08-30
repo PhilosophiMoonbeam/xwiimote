@@ -1,0 +1,14 @@
+[package]
+name = "wiiland-ipc"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[lib]
+name = "wiiland_ipc"
+path = "src/lib.rs"
+crate-type = ["rlib"]
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true

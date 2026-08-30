@@ -1,16 +1,15 @@
 use std::fmt;
 use std::fs;
+use std::io;
 use std::os::unix::fs::FileTypeExt;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+use crate::cli::{Action, Cli, IpcMode};
 use wiiland_core::calibration::CalibrationStats;
 use wiiland_core::mapping;
 use wiiland_core::{Config, Profile, TraceEvent, TraceFilter, TracePayload};
-use wiiland_hid::decode::EventKind;
-use wiiland_hid::{Interface, Monitor};
-
-use crate::cli::{Action, Cli};
+use wiiland_hid::{EventKind, Interface, InterfaceMask, Monitor, MonitorMode};
 
 #[derive(Debug)]
 pub struct CommandError {
@@ -35,6 +34,9 @@ impl fmt::Display for CommandError {
 }
 impl std::error::Error for CommandError {}
 
+fn io_errno(error: &io::Error) -> i32 {
+    -error.raw_os_error().unwrap_or(libc::EIO)
+}
 pub fn execute(cli: &Cli) -> Result<(), CommandError> {
     match cli.action {
         Action::Help => {
@@ -75,12 +77,56 @@ fn run_runtime(cli: &Cli) -> Result<(), CommandError> {
     runtime.set_dry_run(cli.dry_run);
     runtime.set_verbose(cli.verbose);
     runtime.set_trace(cli.trace);
+    let default_path = if matches!(&cli.ipc, IpcMode::Auto) {
+        Some(wiiland_ipc::default_socket_path())
+    } else {
+        None
+    };
+    if let Some(path) = ipc_path_for_mode(&cli.ipc, default_path)? {
+        runtime.enable_ipc(path.as_path()).map_err(|error| {
+            CommandError::new(
+                error.raw_os_error().unwrap_or(libc::EIO),
+                format!(
+                    "wiilandd: cannot bind IPC socket {}: {error}",
+                    path.display()
+                ),
+            )
+        })?;
+    }
     if let Some(device) = device {
         runtime.run_single(device).map_err(runtime_error)
     } else {
         runtime.run_monitor().map_err(runtime_error)
     }
 }
+
+fn ipc_path_for_mode(
+    mode: &IpcMode,
+    default_path: Option<Result<PathBuf, wiiland_ipc::ClientError>>,
+) -> Result<Option<PathBuf>, CommandError> {
+    match mode {
+        IpcMode::Disabled => Ok(None),
+        IpcMode::Path(path) => Ok(Some(path.clone())),
+        IpcMode::Auto => {
+            let Some(default_path) = default_path else {
+                return Err(CommandError::new(
+                    libc::EINVAL,
+                    "wiilandd: default IPC socket path was not provided",
+                ));
+            };
+            match default_path {
+                Ok(path) => Ok(Some(path)),
+                Err(wiiland_ipc::ClientError::RuntimeDirectoryMissing)
+                | Err(wiiland_ipc::ClientError::RuntimeDirectoryRelative(_)) => Ok(None),
+                Err(error) => Err(CommandError::new(
+                    libc::EINVAL,
+                    format!("wiilandd: cannot determine default IPC socket: {error}"),
+                )),
+            }
+        }
+    }
+}
+
 fn runtime_error(code: i32) -> CommandError {
     CommandError::new(
         code.unsigned_abs() as i32,
@@ -102,12 +148,20 @@ fn resolve_run_device_with(
     })
     .transpose()
 }
-
 fn list_devices(verbose: bool) -> Result<(), CommandError> {
-    let mut monitor = Monitor::new(false, false)
-        .ok_or_else(|| CommandError::new(libc::ENOMEM, "wiilandd: cannot create monitor"))?;
+    let mut monitor = Monitor::new(MonitorMode::Enumerate).map_err(|error| {
+        CommandError::new(
+            io_errno(&error).unsigned_abs() as i32,
+            format!("wiilandd: cannot create monitor: {error}"),
+        )
+    })?;
     let mut count = 0u32;
-    while let Some(path) = monitor.poll() {
+    while let Some(path) = monitor.poll().map_err(|error| {
+        CommandError::new(
+            io_errno(&error).unsigned_abs() as i32,
+            format!("wiilandd: cannot poll monitor: {error}"),
+        )
+    })? {
         count += 1;
         println!("{}\t{}", count, path.display());
         if verbose {
@@ -138,9 +192,11 @@ pub fn resolve_device_arg(arg: &str) -> Option<PathBuf> {
     let mut monitor = None;
     resolve_device_arg_with(arg, || {
         if monitor.is_none() {
-            monitor = Monitor::new(false, false);
+            monitor = Monitor::new(MonitorMode::Enumerate).ok();
         }
-        monitor.as_mut().and_then(Monitor::poll)
+        monitor
+            .as_mut()
+            .and_then(|monitor| monitor.poll().ok().flatten())
     })
 }
 
@@ -166,13 +222,11 @@ fn calibrate_aim(cli: &Cli) -> Result<(), CommandError> {
         .ok_or_else(|| CommandError::new(libc::ENODEV, "wiilandd: cannot resolve calibration device; run --list and pass --device <number|/sys/path>"))?;
     let mut iface = Interface::new(&path).map_err(|e| {
         CommandError::new(
-            (-e).unsigned_abs() as i32,
+            io_errno(&e).unsigned_abs() as i32,
             format!("wiilandd: cannot open {}: {}", path.display(), e),
         )
     })?;
-    let available = iface.available()
-        & (wiiland_hid::model::InterfaceMask::ACCEL
-            | wiiland_hid::model::InterfaceMask::MOTION_PLUS);
+    let available = iface.available() & (InterfaceMask::ACCEL | InterfaceMask::MOTION_PLUS);
     if available.is_empty() {
         return Err(CommandError::new(
             libc::ENODEV,
@@ -180,7 +234,10 @@ fn calibrate_aim(cli: &Cli) -> Result<(), CommandError> {
         ));
     }
     let opened_result = iface.open(available);
-    let opened = iface.opened() & available;
+    let opened = match &opened_result {
+        Ok(mask) => *mask,
+        Err(error) => error.opened(),
+    } & available;
     if opened.is_empty() {
         return Err(CommandError::new(
             libc::ENODEV,
@@ -207,10 +264,12 @@ fn calibrate_aim(cli: &Cli) -> Result<(), CommandError> {
                 EventKind::MotionPlus(value) => motion.add([value.x, value.y, value.z]),
                 _ => {}
             },
-            Err(e) if e == -libc::EAGAIN => std::thread::sleep(Duration::from_millis(20)),
+            Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
+                std::thread::sleep(Duration::from_millis(20))
+            }
             Err(e) => {
                 return Err(CommandError::new(
-                    (-e).unsigned_abs() as i32,
+                    io_errno(&e).unsigned_abs() as i32,
                     format!(
                         "wiilandd: calibration dispatch failed for {}: {}",
                         path.display(),
@@ -525,6 +584,41 @@ mod tests {
         assert_eq!(
             resolve_device_arg_with("2", || devices.next()).as_deref(),
             Some(Path::new("/sys/devices/second"))
+        );
+    }
+
+    #[test]
+    fn ipc_mode_selects_disabled_explicit_and_auto_paths() {
+        assert_eq!(ipc_path_for_mode(&IpcMode::Disabled, None).unwrap(), None);
+        assert_eq!(
+            ipc_path_for_mode(&IpcMode::Path(PathBuf::from("/tmp/custom.sock")), None,).unwrap(),
+            Some(PathBuf::from("/tmp/custom.sock"))
+        );
+        assert_eq!(
+            ipc_path_for_mode(&IpcMode::Auto, Some(Ok(PathBuf::from("/tmp/default.sock"))),)
+                .unwrap(),
+            Some(PathBuf::from("/tmp/default.sock"))
+        );
+        assert_eq!(
+            ipc_path_for_mode(
+                &IpcMode::Auto,
+                Some(Err(wiiland_ipc::ClientError::RuntimeDirectoryMissing)),
+            )
+            .unwrap(),
+            None
+        );
+    }
+    #[test]
+    fn auto_ipc_ignores_relative_runtime_directory() {
+        assert_eq!(
+            ipc_path_for_mode(
+                &IpcMode::Auto,
+                Some(Err(wiiland_ipc::ClientError::RuntimeDirectoryRelative(
+                    PathBuf::from("runtime"),
+                ))),
+            )
+            .unwrap(),
+            None
         );
     }
 }

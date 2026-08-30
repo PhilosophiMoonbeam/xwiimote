@@ -80,6 +80,81 @@ jobs:
           grep -F 'report.status=ok' \
             "$RUNNER_TEMP/wiiland-hardware-report" >/dev/null
 
+      - name: Smoke the real IPC socket and Rust client
+        run: |
+          set -euo pipefail
+          daemon="$PWD/target/debug/wiilandd"
+          runtime="$RUNNER_TEMP/wiiland-ipc-runtime"
+          socket="$runtime/wiiland-ipc.sock"
+          log="$RUNNER_TEMP/wiiland-ipc-daemon.log"
+          output="$RUNNER_TEMP/wiiland-ipc-status"
+          daemon_pid=
+          cleanup() {
+            status=$?
+            trap - EXIT INT TERM
+            if [ -n "$daemon_pid" ] && kill -0 "$daemon_pid" 2>/dev/null; then
+              kill "$daemon_pid" 2>/dev/null || :
+              wait "$daemon_pid" 2>/dev/null || :
+            fi
+            if [ "$status" -ne 0 ]; then
+              cat "$log"
+            fi
+            rm -rf "$runtime"
+            rm -f "$log" "$output"
+            exit "$status"
+          }
+          trap cleanup EXIT INT TERM
+          rm -rf "$runtime"
+          rm -f "$log" "$output"
+          umask 077
+          mkdir "$runtime"
+          chmod 700 "$runtime"
+          : >"$log"
+          "$daemon" \
+            --no-config \
+            --dry-run \
+            --ipc-socket "$socket" \
+            >"$log" 2>&1 &
+          daemon_pid=$!
+          ready=
+          for _ in $(seq 1 100); do
+            if ! kill -0 "$daemon_pid" 2>/dev/null; then
+              echo "wiilandd exited before its IPC status became available" >&2
+              exit 1
+            fi
+            if cargo run --locked -p wiiland-ipc --example status -- \
+              --socket "$socket" >"$output" 2>&1; then
+              ready=1
+              break
+            fi
+            sleep 0.1
+          done
+          if [ -z "$ready" ]; then
+            echo "timed out waiting for wiilandd IPC status" >&2
+            cat "$output" >&2
+            exit 1
+          fi
+          test -S "$socket"
+          test -n "$daemon_pid"
+          kill -0 "$daemon_pid"
+          cat "$output"
+          grep -E '^daemon_version=[^[:space:]]+$' "$output" >/dev/null
+          grep -E '^pid=[0-9]+$' "$output" >/dev/null
+          grep -Fx 'device_count=0' "$output" >/dev/null
+          grep -Fx 'dry_run=true' "$output" >/dev/null
+          grep -Fx "socket_path=$socket" "$output" >/dev/null
+          kill -0 "$daemon_pid"
+
+      - name: Enforce no C ABI artifacts
+        run: |
+          set -euo pipefail
+          metadata="$RUNNER_TEMP/wiiland-cargo-metadata.json"
+          cargo metadata --format-version 1 --no-deps --locked >"$metadata"
+          jq -e \
+            'all(.packages[] .targets[] .crate_types[];
+              . != "cdylib" and . != "staticlib")' \
+            "$metadata" >/dev/null
+
       - name: Build the release workspace
         run: cargo xtask build --release --features gui,tui,integrations
 
@@ -158,7 +233,7 @@ jobs:
 
       - name: Stage installation and validate assets
         run: |
-          set -eu
+          set -euo pipefail
           stage="$RUNNER_TEMP/wiiland-stage"
           cargo xtask install --release --destdir "$stage" \
             --prefix /usr \
@@ -167,13 +242,46 @@ jobs:
             --with-systemd-user-unit-dir /usr/lib/systemd/user \
             --with-xorg-conf-dir /usr/share/X11/xorg.conf.d \
             --features gui,tui,integrations
-          test -x "$stage/usr/bin/wiilandd"
-          test -x "$stage/usr/bin/wiilandd-hardware-report"
-          test -x "$stage/usr/bin/wiiland-config"
-          test -x "$stage/usr/bin/xwiishow"
-          test ! -e "$stage/usr/include/xwiimote.h"
+          bindir="$stage/usr/bin"
+          expected_bins="$RUNNER_TEMP/wiiland-staged-bins.expected"
+          actual_bins="$RUNNER_TEMP/wiiland-staged-bins.actual"
+          printf '%s\n' \
+            wiiland-config \
+            wiilandd \
+            wiilandd-hardware-report \
+            xwiishow \
+            | sort >"$expected_bins"
+          find "$bindir" -mindepth 1 -maxdepth 1 -printf '%f\n' \
+            | sort >"$actual_bins"
+          if ! diff -u "$expected_bins" "$actual_bins"; then
+            echo "staged binary directory must contain exactly the four manifest executables" >&2
+            exit 1
+          fi
+          while IFS= read -r binary; do
+            test -f "$bindir/$binary"
+            test -x "$bindir/$binary"
+          done <"$expected_bins"
           test ! -e "$stage/usr/lib/libxwiimote.so.2"
           test ! -e "$stage/usr/lib/pkgconfig/libxwiimote.pc"
+          forbidden="$(find "$stage" \( -type f -o -type l \) \( \
+            -name '*.h' -o \
+            -name '*.a' -o \
+            -name '*.so' -o \
+            -name '*.so.*' -o \
+            -name '*.pc' -o \
+            -name '*.rlib' \
+          \) -print -quit)"
+          if test -n "$forbidden"; then
+            find "$stage" \( -type f -o -type l \) \( \
+              -name '*.h' -o \
+              -name '*.a' -o \
+              -name '*.so' -o \
+              -name '*.so.*' -o \
+              -name '*.pc' -o \
+              -name '*.rlib' \
+            \) -print >&2
+            exit 1
+          fi
           for rule in "$stage/usr/lib/udev/rules.d/"*.rules; do
             test -s "$rule"
             udevadm verify "$rule"

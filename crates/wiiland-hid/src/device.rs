@@ -1,22 +1,51 @@
 use crate::backend::{self, Nodes, UdevContext, UdevDevice, UdevMonitor};
 use crate::decode::{self, Decoder, Event, EventKind, InterfaceKind};
-use crate::model::{self, InputEvent};
+use crate::model::{self, InputEvent, Timestamp};
 use crate::sys;
 use std::ffi::{CString, OsStr};
-use std::os::fd::RawFd;
+use std::io;
+use std::os::fd::{AsFd, BorrowedFd, RawFd};
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 use std::ptr;
+
+fn io_error(errno: i32) -> io::Error {
+    io::Error::from_raw_os_error(errno.unsigned_abs() as i32)
+}
+
+/// Error returned when opening one or more requested interfaces fails.
+#[derive(Debug)]
+pub struct OpenError {
+    opened: model::InterfaceMask,
+    error: io::Error,
+}
+
+impl OpenError {
+    pub fn opened(&self) -> model::InterfaceMask {
+        self.opened
+    }
+    pub fn source(&self) -> &io::Error {
+        &self.error
+    }
+}
+
+impl std::fmt::Display for OpenError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} (opened: 0x{:x})", self.error, self.opened.bits())
+    }
+}
+impl std::error::Error for OpenError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.error)
+    }
+}
 
 const MONITOR_EPOLL_TAG: u64 = u64::MAX;
 const RECOVERY_EPOLL_TAG: u64 = u64::MAX - 1;
 
 fn lifecycle_event(kind: EventKind) -> Event {
     Event {
-        time: libc::timeval {
-            tv_sec: 0,
-            tv_usec: 0,
-        },
+        time: Timestamp::default(),
         kind,
     }
 }
@@ -260,26 +289,31 @@ pub struct Interface {
 }
 
 impl Interface {
-    pub fn new(path: &Path) -> Result<Self, i32> {
-        let cpath = CString::new(path.as_os_str().as_encoded_bytes()).map_err(|_| -libc::EINVAL)?;
-        let udev = UdevContext::new().ok_or(-libc::ENOMEM)?;
-        let dev = UdevDevice::from_path(&udev, &cpath).ok_or(-libc::ENODEV)?;
+    pub fn new(path: &Path) -> io::Result<Self> {
+        let cpath = CString::new(path.as_os_str().as_encoded_bytes())
+            .map_err(|_| io::Error::from_raw_os_error(libc::EINVAL))?;
+        let udev = UdevContext::new().ok_or_else(|| io::Error::from_raw_os_error(libc::ENOMEM))?;
+        let dev = UdevDevice::from_path(&udev, &cpath)
+            .ok_or_else(|| io::Error::from_raw_os_error(libc::ENODEV))?;
         if dev.driver().is_none_or(|x| x.to_bytes() != b"wiimote")
             || dev.subsystem().is_none_or(|x| x.to_bytes() != b"hid")
         {
-            return Err(-libc::ENODEV);
+            return Err(io::Error::from_raw_os_error(libc::ENODEV));
         }
-        let syspath_c = dev.syspath().ok_or(-libc::ENODEV)?.to_owned();
+        let syspath_c = dev
+            .syspath()
+            .ok_or_else(|| io::Error::from_raw_os_error(libc::ENODEV))?
+            .to_owned();
         let syspath = PathBuf::from(OsStr::from_bytes(syspath_c.as_bytes()));
         let efd = unsafe { sys::epoll_create() };
         if efd < 0 {
-            return Err(-sys::errno());
+            return Err(io_error(-sys::errno()));
         }
         let wake_fd = unsafe { libc::eventfd(0, libc::EFD_CLOEXEC | libc::EFD_NONBLOCK) };
         if wake_fd < 0 {
             let errno = sys::errno();
             unsafe { libc::close(efd) };
-            return Err(-errno);
+            return Err(io_error(errno));
         }
         let mut wake_event = sys::EpollEvent {
             events: libc::EPOLLIN as u32,
@@ -291,7 +325,7 @@ impl Interface {
                 libc::close(wake_fd);
                 libc::close(efd);
             }
-            return Err(-errno);
+            return Err(io_error(errno));
         }
         let mut out = Self {
             efd,
@@ -307,14 +341,11 @@ impl Interface {
             next_input: 0,
             gone: false,
         };
-        out.refresh()?;
+        out.refresh().map_err(io_error)?;
         Ok(out)
     }
     pub fn syspath(&self) -> &Path {
         &self.syspath
-    }
-    pub fn fd(&self) -> RawFd {
-        self.efd
     }
     fn drain_recovery_wake(&self) {
         let mut value = 0u64;
@@ -356,7 +387,10 @@ impl Interface {
     pub fn available(&self) -> model::InterfaceMask {
         model::InterfaceMask::from_bits(self.nodes.available)
     }
-    pub fn open(&mut self, ifaces: model::InterfaceMask) -> Result<(), i32> {
+    pub fn open(
+        &mut self,
+        ifaces: model::InterfaceMask,
+    ) -> Result<model::InterfaceMask, OpenError> {
         let ifaces = ifaces.bits();
         let write = ifaces & backend::WRITABLE != 0;
         let requested = ifaces & backend::ALL_INTERFACES;
@@ -407,7 +441,14 @@ impl Interface {
                 }
             }
         }
-        if first != 0 { Err(first) } else { Ok(()) }
+        if first != 0 {
+            Err(OpenError {
+                opened: self.opened(),
+                error: io_error(first),
+            })
+        } else {
+            Ok(self.opened())
+        }
     }
     fn upload_rumble(&mut self, fd: RawFd) {
         let mut effect = libc::ff_effect {
@@ -457,7 +498,7 @@ impl Interface {
             }
         }
     }
-    pub fn watch(&mut self, enabled: bool) -> Result<(), i32> {
+    pub fn watch(&mut self, enabled: bool) -> io::Result<()> {
         if !enabled {
             if let Some(mon) = self.monitor.take() {
                 let fd = unsafe { sys::udev_monitor_get_fd(mon.0) };
@@ -471,7 +512,7 @@ impl Interface {
         let name = CString::new("udev").unwrap();
         let p = unsafe { sys::udev_monitor_new_from_netlink(self.udev.0, name.as_ptr()) };
         if p.is_null() {
-            return Err(-libc::ENOMEM);
+            return Err(io::Error::from_raw_os_error(libc::ENOMEM));
         }
         let mon = UdevMonitor(p);
         let input = CString::new("input").unwrap();
@@ -484,19 +525,19 @@ impl Interface {
             } != 0
             || unsafe { sys::udev_monitor_enable_receiving(p) } != 0
         {
-            return Err(-libc::ENOMEM);
+            return Err(io::Error::from_raw_os_error(libc::ENOMEM));
         }
         let fd = unsafe { sys::udev_monitor_get_fd(p) };
         let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
         if flags < 0 || unsafe { libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) } < 0 {
-            return Err(-sys::errno());
+            return Err(io_error(sys::errno()));
         };
         let mut ep = sys::EpollEvent {
             events: libc::EPOLLIN as u32,
             data: MONITOR_EPOLL_TAG,
         };
         if unsafe { sys::epoll_ctl(self.efd, libc::EPOLL_CTL_ADD, fd, &mut ep) } < 0 {
-            return Err(-sys::errno());
+            return Err(io_error(sys::errno()));
         };
         self.monitor = Some(mon);
         Ok(())
@@ -563,7 +604,7 @@ impl Interface {
             return Ok(Some(lifecycle_event(EventKind::Watch)));
         }
     }
-    pub fn dispatch(&mut self) -> Result<Event, i32> {
+    pub fn dispatch(&mut self) -> io::Result<Event> {
         self.drain_recovery_wake();
         for offset in 0..self.inputs.len() {
             let index = (self.next_input + offset) % self.inputs.len();
@@ -573,21 +614,22 @@ impl Interface {
                 return Ok(event);
             }
         }
-
         let mut eps = [sys::EpollEvent::default(); 32];
         let n = unsafe { sys::epoll_wait(self.efd, &mut eps, 0) };
         if n < 0 {
             let errno = sys::errno();
-            return if errno == libc::EINTR {
-                Err(-libc::EAGAIN)
+            return Err(io_error(if errno == libc::EINTR {
+                libc::EAGAIN
             } else {
-                Err(-errno)
-            };
+                errno
+            }));
         }
         for ep in eps.iter().take(n as usize) {
             let tag = ep.data;
             if tag == MONITOR_EPOLL_TAG {
-                if let Some(event) = monitor_epoll_event(ep.events, || self.monitor_event())? {
+                if let Some(event) =
+                    monitor_epoll_event(ep.events, || self.monitor_event()).map_err(io_error)?
+                {
                     return Ok(event);
                 }
                 continue;
@@ -598,13 +640,13 @@ impl Interface {
             let Some(index) = epoll_input_index(tag, self.inputs.len()) else {
                 continue;
             };
-            if let Some(event) = self.read_one(index)? {
+            if let Some(event) = self.read_one(index).map_err(io_error)? {
                 self.next_input = (index + 1) % self.inputs.len();
                 self.signal_recovery_if_pending();
                 return Ok(event);
             }
         }
-        Err(-libc::EAGAIN)
+        Err(io::Error::from_raw_os_error(libc::EAGAIN))
     }
     fn read_one(&mut self, index: usize) -> Result<Option<Event>, i32> {
         let fd = self.inputs[index].fd;
@@ -642,7 +684,6 @@ impl Interface {
             });
             return Ok(Some(event));
         }
-
         let input = InputEvent {
             time: input.time,
             event_type: input.type_,
@@ -681,10 +722,10 @@ impl Interface {
         }
         Ok(self.inputs[index].push(input))
     }
-    pub fn rumble(&mut self, on: bool) -> Result<(), i32> {
+    pub fn rumble(&mut self, on: bool) -> io::Result<()> {
         if self.rumble_fd < 0 || self.rumble_id < 0 {
-            return Err(-libc::ENODEV);
-        };
+            return Err(io::Error::from_raw_os_error(libc::ENODEV));
+        }
         let e = sys::InputEvent {
             type_: sys::EV_FF,
             code: self.rumble_id as u16,
@@ -702,43 +743,51 @@ impl Interface {
                 )
             };
             if r > 0 {
-                n += r as usize
+                n += r as usize;
             } else if r < 0 && sys::errno() == libc::EINTR {
                 continue;
             } else {
-                return Err(-sys::errno());
+                return Err(io_error(sys::errno()));
             }
         }
         Ok(())
     }
-    pub fn get_led(&self, led: usize) -> Result<bool, i32> {
+    pub fn get_led(&self, led: usize) -> io::Result<bool> {
         if led >= 4 {
-            return Err(-libc::EINVAL);
-        };
-        let p = self.nodes.leds[led].as_ref().ok_or(-libc::ENODEV)?;
-        let v = backend::read_attr(p)?;
+            return Err(io::Error::from_raw_os_error(libc::EINVAL));
+        }
+        let p = self.nodes.leds[led]
+            .as_ref()
+            .ok_or_else(|| io::Error::from_raw_os_error(libc::ENODEV))?;
+        let v = backend::read_attr(p).map_err(io_error)?;
         Ok(v.first() == Some(&b'1'))
     }
-    pub fn set_led(&self, led: usize, on: bool) -> Result<(), i32> {
+    pub fn set_led(&self, led: usize, on: bool) -> io::Result<()> {
         if led >= 4 {
-            return Err(-libc::EINVAL);
-        };
+            return Err(io::Error::from_raw_os_error(libc::EINVAL));
+        }
         backend::write_attr(
-            self.nodes.leds[led].as_ref().ok_or(-libc::ENODEV)?,
+            self.nodes.leds[led]
+                .as_ref()
+                .ok_or_else(|| io::Error::from_raw_os_error(libc::ENODEV))?,
             if on { b"1" } else { b"0" },
         )
+        .map_err(io_error)
     }
-    pub fn battery(&self) -> Result<u8, i32> {
-        let p = self.nodes.battery.as_ref().ok_or(-libc::ENODEV)?;
-        let v = backend::read_attr(p)?;
+    pub fn battery(&self) -> io::Result<u8> {
+        let p = self
+            .nodes
+            .battery
+            .as_ref()
+            .ok_or_else(|| io::Error::from_raw_os_error(libc::ENODEV))?;
+        let v = backend::read_attr(p).map_err(io_error)?;
         std::str::from_utf8(&v)
             .ok()
             .and_then(|x| x.trim().parse().ok())
-            .ok_or(-libc::EINVAL)
+            .ok_or_else(|| io::Error::from_raw_os_error(libc::EINVAL))
     }
-    pub fn attr(&self, name: &str) -> Result<Vec<u8>, i32> {
-        let p = self.syspath.join(name);
-        backend::read_attr(&p)
+    pub fn attr(&self, name: &str) -> io::Result<Vec<u8>> {
+        backend::read_attr(&self.syspath.join(name)).map_err(io_error)
     }
     pub fn set_mp_normalization(&mut self, x: i32, y: i32, z: i32, f: i32) {
         self.inputs[3].decoder.set_mp_normalization(x, y, z, f);
@@ -758,14 +807,22 @@ impl Drop for Interface {
     }
 }
 
+impl AsFd for Interface {
+    fn as_fd(&self) -> BorrowedFd<'_> {
+        unsafe { BorrowedFd::borrow_raw(self.efd) }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::{Axis3, Button, ButtonEvent, ButtonState};
 
     fn event(event_type: u16, code: u16, value: i32) -> InputEvent {
         InputEvent {
             time: libc::timeval {
                 tv_sec: 7,
+
                 tv_usec: 11,
             },
             event_type,
@@ -784,9 +841,9 @@ mod tests {
         let key = core.push(event(model::EV_KEY, model::BTN_1, 1)).unwrap();
         assert_eq!(
             key.kind,
-            EventKind::Key(decode::Key {
-                code: model::BUTTON_ONE,
-                state: 1
+            EventKind::Key(ButtonEvent {
+                button: Button::One,
+                state: ButtonState::Pressed
             })
         );
         let mut accel = InputInterface::new(1);
@@ -810,7 +867,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             frame.kind,
-            EventKind::Accel(decode::Abs {
+            EventKind::Accel(Axis3 {
                 x: 10,
                 y: -20,
                 z: 30
@@ -847,26 +904,23 @@ mod tests {
         let c_release = input.take_recovered().unwrap();
         assert_eq!(
             c_release.kind,
-            EventKind::NunchukKey(decode::Key {
-                code: model::BUTTON_C,
-                state: 0
+            EventKind::NunchukKey(ButtonEvent {
+                button: Button::C,
+                state: ButtonState::Released
             })
         );
         let z_press = input.take_recovered().unwrap();
         assert_eq!(
             z_press.kind,
-            EventKind::NunchukKey(decode::Key {
-                code: model::BUTTON_Z,
-                state: 1
+            EventKind::NunchukKey(ButtonEvent {
+                button: Button::Z,
+                state: ButtonState::Pressed
             })
         );
         let frame = input.take_recovered().unwrap();
         assert_eq!(
             frame.kind,
-            EventKind::NunchukMove([
-                decode::Abs { x: 4, y: 5, z: 0 },
-                decode::Abs { x: 6, y: 7, z: 8 }
-            ])
+            EventKind::NunchukMove([Axis3 { x: 4, y: 5, z: 0 }, Axis3 { x: 6, y: 7, z: 8 }])
         );
         assert!(input.take_recovered().is_none());
     }
@@ -883,7 +937,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             frame.kind,
-            EventKind::MotionPlus(decode::Abs {
+            EventKind::MotionPlus(Axis3 {
                 x: 10,
                 y: 20,
                 z: 30
@@ -942,24 +996,35 @@ mod tests {
         ]);
         input.seed_state(&keys, &abs, 5);
         assert!(input.take_recovered().is_none());
-        assert_ne!(
-            input.decoder.recovery.key_state()[model::BTN_C as usize / 64]
-                & (1 << (model::BTN_C as usize % 64)),
-            0
-        );
         let frame = input
             .push(event(model::EV_SYN, model::SYN_REPORT, 0))
             .unwrap();
         assert_eq!(
             frame.kind,
             EventKind::NunchukMove([
-                decode::Abs { x: 10, y: 20, z: 0 },
-                decode::Abs {
+                Axis3 { x: 10, y: 20, z: 0 },
+                Axis3 {
                     x: 30,
                     y: 40,
                     z: 50
                 }
             ])
+        );
+        assert!(
+            input
+                .push(event(model::EV_SYN, model::SYN_DROPPED, 0))
+                .is_none()
+        );
+        input
+            .decoder
+            .recover(&[], &[], event(model::EV_SYN, model::SYN_REPORT, 0).time);
+        let release = input.take_recovered().unwrap();
+        assert_eq!(
+            release.kind,
+            EventKind::NunchukKey(ButtonEvent {
+                button: Button::C,
+                state: ButtonState::Released
+            })
         );
     }
 
@@ -1050,10 +1115,7 @@ mod tests {
             },
         );
         let frame = recovered.take_recovered().unwrap();
-        assert_eq!(
-            frame.kind,
-            EventKind::Accel(decode::Abs { x: 0, y: 0, z: 0 })
-        );
+        assert_eq!(frame.kind, EventKind::Accel(Axis3 { x: 0, y: 0, z: 0 }));
     }
 
     #[test]

@@ -1,0 +1,387 @@
+WIILANDD DAEMON IPC PROTOCOL
+============================
+
+Status: private protocol, version 1.0
+
+This document is the language-neutral wire specification for the private IPC
+socket exposed by wiilandd.  The protocol version is independent of the Cargo
+package version.  The Rust types in crates/wiiland-ipc/src/protocol.rs are the
+authoritative implementation of the JSON shapes described here.
+
+The protocol is intentionally a private daemon integration boundary.  It is
+not a C ABI, installed library interface, or promise about Rust object layout.
+There is no standalone installed client and no socket activation interface.
+
+1. TRANSPORT AND FRAMING
+------------------------
+
+The transport is a private per-user Unix stream socket (AF_UNIX, SOCK_STREAM).
+Each frame is one UTF-8 JSON object followed by LF (0x0a).  A receiver may
+accept CRLF as a convenience; wiilandd emits LF.  Frames are not length
+prefixed and stream reads are not frame boundaries: buffer bytes until LF and
+then decode the complete payload.
+
+The maximum frame payload is 65,536 bytes, excluding LF (or CRLF).  A payload
+of exactly 65,536 bytes is valid; a larger payload is not.  This bound applies
+to incoming frames and to frames emitted by the protocol encoder.  An incoming
+payload that exceeds the bound produces an uncorrelated frame_too_large error
+and the violating client is disconnected.  Invalid JSON produces invalid_json.
+JSON must decode as the expected object; whitespace and JSON values that are
+not the expected object are not alternate protocol messages.  If a
+server-generated response would exceed the encoder bound, the daemon sends a
+bounded error with code internal correlated to that response's request id; the
+connection remains usable.
+
+The daemon accepts at most 64 clients.  Each reactor iteration accepts at most
+8 clients.  Each ready client handled during that iteration has its own limit
+of at most 8 reads and 8 processed frames.  At most 65,536 output bytes are
+written for any one client in the iteration.  A client's queued output is
+limited to 262,144 bytes.  A client that is too slow to stay within that limit
+is disconnected; this does not stop HID processing or other clients.
+
+2. SOCKET PATH, PERMISSIONS, AND LIFECYCLE
+------------------------------------------
+
+The automatic path is:
+
+    $XDG_RUNTIME_DIR/wiiland/wiilandd.sock
+
+Automatic IPC is enabled only when XDG_RUNTIME_DIR is present and absolute.
+If it is missing or relative, wiilandd's automatic mode runs without IPC.  A
+client's connect_default operation treats a missing runtime directory or a
+relative one as an explicit error rather than guessing another path.
+
+An explicitly supplied --ipc-socket path must be absolute.  For every bound
+path, before any socket side effect, an existing socket parent is checked with
+lstat and must be a directory owned by the daemon's effective user ID with
+mode exactly 0700.
+Symlinks are rejected.  If the parent is missing, wiilandd creates only that
+final directory component; its grandparent must already be an euid-owned
+directory with mode exactly 0700.  The final parent is created atomically with
+mode 0700 and then lstat-validated by the same rules.  Missing ancestors are
+not created recursively.  The bound socket is mode 0600 and is also checked
+for ownership.
+
+Socket-path ownership is serialized with a persistent sibling lock whose file
+name is the socket file name plus `.lock` (for example,
+`wiilandd.sock.lock`).  The lock is an euid-owned 0600 regular file.  wiilandd
+opens it without following symlinks (O_NOFOLLOW), obtains a nonblocking
+exclusive flock (LOCK_EX | LOCK_NB), and holds it through IpcServer
+destruction.  The lock file is not unlinked.
+
+If the requested path exists, it must be a socket owned by the effective user.
+wiilandd attempts to connect to an existing socket.  A successful connection
+means a live daemon owns it and binding fails; wiilandd never takes over a live
+owner.  ECONNREFUSED, ENOENT, ECONNRESET, or ENOTCONN identifies a stale socket
+for this check.  Only the still-identical stale socket inode is removed before
+binding.  Other errors are binding failures.  Binding failure for an explicit
+--ipc-socket is fatal.
+
+When the daemon closes, it unlinks only the socket inode that it bound.  It
+does not remove a replacement pathname.  A client should treat EOF, reset, or
+other stream failure as daemon/socket loss and may reconnect after the daemon
+has established a new socket.  The protocol does not provide socket
+activation or a persistence guarantee across daemon restarts; the persistent
+lock file is synchronization state, not a persistent socket.
+
+The pathname and permissions are access control; the protocol has no
+additional authentication or encryption layer.  Keep the parent directory
+private and do not place this socket in a shared directory.
+
+3. JSON CONVENTIONS
+-------------------
+
+All object member names below are exact serialized names.  Enum tags use
+snake_case.  Members not listed in a type are not required.  wiilandd and the
+wiiland-ipc decoder accept unknown object fields, allowing additive evolution.
+An implementation must not rely on JSON member order.  Numbers are JSON
+numbers with the indicated unsigned or signed range/width; strings are UTF-8.
+
+Request is:
+
+    {"id": U64, "command": COMMAND}
+
+The server's top-level message is one of:
+
+    {"type":"response", "value":{"id":U64, "result":RESULT}}
+    {"type":"notification", "value":NOTIFICATION}
+    {"type":"error", "value":{"id":U64_OR_NULL, "error":ERROR}}
+
+The `value` member is present for these server-message variants.  The
+`notification` value itself is an internally tagged object (its tag and
+members are in the same object).  `id` in an uncorrelated error is null.
+
+4. VERSION NEGOTIATION
+----------------------
+
+The first request on a connection MUST be Hello:
+
+    {"id":1,"command":{"type":"hello","min_major":1,"max_major":1}}
+
+`min_major` and `max_major` are u16 values describing the inclusive major
+range the client can use.  The server currently supports major 1, minor 0.
+If the ranges include major 1, it replies with:
+
+    {"type":"response","value":{"id":1,"result":{"type":"hello","value":{"major":1,"minor":0,"daemon_version":"VERSION"}}}}
+
+`daemon_version` is the daemon's package version string, not the protocol
+version.  The selected major/minor are reported in the response; minor 0 is
+the version currently implemented.
+
+If no supported major is in the requested range, the server sends an error
+with code unsupported_version and then closes the connection.  Any first
+request other than Hello receives invalid_request and then the connection is
+closed.  Hello after successful negotiation receives invalid_request but does
+not itself close the connection.  Requests and notifications must not be
+interpreted as negotiated until the successful Hello response is received.
+
+5. COMMANDS AND RESULTS
+-----------------------
+
+Every command is carried in `command` and has a `type` tag.  A request's
+response has the same request id.  The command and result shapes are:
+
+    {"type":"hello", "min_major":U16, "max_major":U16}
+    {"type":"ping"}
+    {"type":"status"}
+    {"type":"devices"}
+    {"type":"subscribe", "subscriptions":[SUBSCRIPTION, ...]}
+    {"type":"unsubscribe", "subscriptions":[SUBSCRIPTION, ...]}
+
+SUBSCRIPTION is one of the strings `all`, `input`, or `devices`.
+
+A successful result is one of:
+
+    {"type":"hello", "value":{"major":U16,"minor":U16,"daemon_version":STRING}}
+    {"type":"pong"}
+    {"type":"status", "value":STATUS}
+    {"type":"devices", "value":[DEVICE_INFO, ...]}
+    {"type":"subscribed"}
+    {"type":"unsubscribed"}
+
+Ping returns pong and has no value member.  Status and Devices are snapshots
+at the time the request is handled.  Subscribe enables the listed streams;
+Unsubscribe disables them.  `all` enables or disables both input and devices
+streams.  Lists are applied in order, so a later list element can override an
+earlier one.  Repeating an already enabled or disabled stream is allowed.
+Subscribe does not include an implicit initial snapshot: request Devices when
+initial state is needed.  The successful subscribed response is queued before
+notifications generated later, so a client can establish its stream boundary
+at that response.
+
+An unknown command type is represented by the unknown command and returns an
+error with code unknown_command.  Unknown commands do not close an already
+negotiated connection.
+
+6. ERRORS
+---------
+
+An error message has this exact shape:
+
+    {"type":"error","value":{"id":U64_OR_NULL,"error":{"code":CODE,"message":STRING}}}
+
+Current CODE strings are:
+
+    unsupported_version
+    invalid_request
+    unknown_command
+    not_subscribed
+    frame_too_large
+    invalid_json
+    internal
+    unknown
+
+The id is the request id when the daemon can correlate the error.  It is null
+for errors detected before a request can be decoded, such as framing or JSON
+errors.  `message` is diagnostic text and is not a stable machine-readable
+field; clients must branch on `code`.  The `unknown` code is reserved for an
+unrecognized future code.  An incoming frame-size violation closes the
+violating connection.  Other malformed frames receive an error with no request
+id; the server may continue processing that stream unless the connection is
+closed.
+
+7. STATUS AND DEVICE SNAPSHOTS
+------------------------------
+
+STATUS is an object with exactly these current fields:
+
+    {"daemon_version":STRING,
+     "pid":U32,
+     "device_count":U32,
+     "dry_run":BOOLEAN,
+     "socket_path":STRING}
+
+`socket_path` is the bound path, or the empty string when IPC is disabled.
+`device_count` is the count in the authoritative runtime snapshot.  The
+server does not maintain a second device-state mirror.
+
+DEVICE_INFO is:
+
+    {"syspath":STRING,
+     "profile":PROFILE,
+     "opened_interfaces":U32,
+     "pending_interfaces":U32,
+     "gamepad_output":BOOLEAN,
+     "desktop_output":BOOLEAN}
+
+`syspath` is the stable sysfs path string used to identify the device.
+`opened_interfaces` and `pending_interfaces` are interface bitmasks; their bit
+assignment is outside this protocol document.  PROFILE is one of the strings
+`none`, `gamepad`, `desktop`, `both`, or `unknown`.  The output booleans report
+whether the corresponding virtual output exists in this snapshot.
+
+8. NOTIFICATIONS AND ORDERING
+-----------------------------
+
+Notifications have no request id.  The three recognized event forms carry a
+server `sequence` u64.  Their sequence is monotonic for notifications observed
+on a connection; clients must tolerate gaps (for example, because a stream was
+disabled).  Current notification wire objects are:
+
+    {"type":"device_added", "sequence":U64, "device":DEVICE_INFO}
+    {"type":"device_removed", "sequence":U64, "syspath":STRING, "reason":REMOVAL_REASON}
+    {"type":"input", "sequence":U64, "syspath":STRING,
+     "timestamp":TIMESTAMP, "payload":INPUT_PAYLOAD}
+    {"type":"unsupported"}
+
+The Rust decoder maps any unrecognized additive notification `type` to the
+unit `Notification::Unsupported` value and discards the original tag and all
+other fields.  Its canonical serialized form is `{"type":"unsupported"}`;
+this sentinel has no sequence.
+
+Device notifications are delivered only when the devices subscription is
+enabled.  Input notifications are delivered only when the input subscription
+is enabled.  A notification is sent only to clients that completed Hello and
+currently want its stream.
+
+The daemon's event order is preserved in the notification queue.  Input
+notifications drained before a device removal are queued before that removal.
+A successful Subscribe response is queued before later notifications.  There
+is no replay, acknowledgement, or resume token.  If a client's output queue
+would exceed 262,144 bytes, the daemon disconnects that client rather than
+blocking HID work or dropping individual notifications selectively.
+
+The blocking Rust client separately retains notifications received while a
+request awaits its correlated response.  This retained-notification backlog is
+limited to 262,144 bytes, counted as the exact received frame bytes including
+the LF or CRLF delimiter.  The first notification frame that would exceed the
+limit is not retained: it poisons the client and returns
+`ClientError::NotificationBacklogExceeded { limit: 262144 }`.  Every later
+request or `next_event` call returns the same terminal error without writing
+to or consuming from the connection.  A notification delivered directly by
+`next_event` is not retained and does not enter this accounting.
+
+REMOVAL_REASON is one of:
+
+    removed
+    gone
+    drain_error
+    pointer_error
+    unknown
+
+9. INPUT PAYLOADS
+-----------------
+
+TIMESTAMP is an owned, fixed-width object:
+
+    {"seconds":I64, "micros":U32}
+
+It represents the kernel-provided event timestamp.  The clock source is not
+part of the wire contract.  Canonical serialized names are `seconds` and
+`micros`; the current Rust decoder also accepts `sec` and `usec` as input
+aliases.
+
+AXIS3 is:
+
+    {"x":I32, "y":I32, "z":I32}
+
+BUTTON_EVENT is:
+
+    {"code":U32, "state":U32}
+
+The stable button-code assignments are:
+
+    0   Left
+    1   Right
+    2   Up
+    3   Down
+    4   A
+    5   B
+    6   Plus
+    7   Minus
+    8   Home
+    9   One
+    10  Two
+    11  X
+    12  Y
+    13  ShoulderLeft
+    14  ShoulderRight
+    15  TriggerLeft
+    16  TriggerRight
+    17  ThumbLeft
+    18  ThumbRight
+    19  C
+    20  Z
+    21  StrumBarUp
+    22  StrumBarDown
+    23  FretFarUp
+    24  FretUp
+    25  FretMid
+    26  FretLow
+    27  FretFarLow
+
+The current daemon uses state 0 for released, 1 for pressed, and 2 for
+repeated.  Axis values and button codes are semantic signed/unsigned values,
+not native-memory or libc structures.
+
+INPUT_PAYLOAD is an internally tagged object.  Tuple payloads use `value`:
+
+    {"type":"key", "value":BUTTON_EVENT}
+    {"type":"accel", "value":AXIS3}
+    {"type":"ir", "value":[AXIS3, AXIS3, AXIS3, AXIS3]}
+    {"type":"balance_board", "value":[AXIS3, AXIS3, AXIS3, AXIS3]}
+    {"type":"motion_plus", "value":AXIS3}
+    {"type":"pro_controller_key", "value":BUTTON_EVENT}
+    {"type":"pro_controller_move", "value":[AXIS3, AXIS3]}
+    {"type":"watch"}
+    {"type":"classic_controller_key", "value":BUTTON_EVENT}
+    {"type":"classic_controller_move", "value":[AXIS3, AXIS3, AXIS3]}
+    {"type":"nunchuk_key", "value":BUTTON_EVENT}
+    {"type":"nunchuk_move", "value":[AXIS3, AXIS3]}
+    {"type":"drums_key", "value":BUTTON_EVENT}
+    {"type":"drums_move", "value":[AXIS3, AXIS3, AXIS3, AXIS3,
+                                       AXIS3, AXIS3, AXIS3, AXIS3]}
+    {"type":"guitar_key", "value":BUTTON_EVENT}
+    {"type":"guitar_move", "value":[AXIS3, AXIS3, AXIS3]}
+    {"type":"gone"}
+    {"type":"unknown", "value":U32}
+    {"type":"unsupported"}
+
+The array lengths above are part of the shape.  `unknown` carries the numeric
+event kind when the daemon cannot map it to a known semantic payload.  `gone`
+is an input lifecycle payload and is distinct from a device_removed
+notification.  The Rust decoder maps any unrecognized additive payload `type`
+to the unit `InputPayload::Unsupported` value, discarding its original tag,
+`value`, and other fields; a missing `value` is also accepted for such an
+unrecognized tag.  Its canonical serialized form is `{"type":"unsupported"}`.
+
+10. COMPATIBILITY AND IMPLEMENTATION BOUNDARIES
+------------------------------------------------
+
+Major version 1 is the compatibility boundary.  A client must perform Hello
+and must reject or safely handle a response whose selected major it cannot
+use.  Minor evolution is additive: clients should ignore unknown object
+fields and treat enum values as non-exhaustive.  The daemon maps unknown
+command tags and several unknown scalar enum values to `unknown`.  The Rust
+decoder maps unrecognized notification and input-payload tags to their
+`Unsupported` unit values as described above; their original wire data is not
+preserved.  A client must not assume future notification or input tags are
+exhaustive.
+
+The wire contains owned fixed-width DTO values only.  It never serializes
+libc structs, Rust representation/layout, pointers, file descriptors, or
+uinput handles.  The wiiland-ipc package is an rlib-only workspace/build
+package; it does not install a client executable, C header, static/shared
+library, pkg-config file, or a stable Rust binary ABI.  This document and the
+source protocol definitions, rather than any compiled ABI, define the
+integration boundary.

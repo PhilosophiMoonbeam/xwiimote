@@ -1,15 +1,169 @@
 //! Single-thread monitor/device reactor.
 use crate::bridge::{BridgeAction, BridgeDevice};
+use crate::ipc::IpcServer;
 use crate::signal::SignalPipe;
 use crate::uinput::{Backend, SystemBackend};
 use std::cell::Cell;
 use std::fmt;
 use std::io;
+use std::os::fd::{AsFd, AsRawFd};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
-use wiiland_core::{Config, TraceConfig};
-use wiiland_hid::Monitor;
+use wiiland_core::{Config, Profile, TraceConfig};
+use wiiland_hid::{
+    Axis3 as Abs, Button, ButtonEvent as HidButtonEvent, ButtonState, Event, EventKind, Monitor,
+    MonitorMode,
+};
+use wiiland_ipc::{
+    Axis3, ButtonEvent, DeviceInfo, InputPayload, Notification, RemovalReason, Status, Timestamp,
+};
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PollOwner {
+    Signal,
+    Monitor,
+    Device(usize),
+    Ipc(u64),
+}
+
+fn has_ready_ipc(poll_owners: &[PollOwner], poll_fds: &[libc::pollfd]) -> bool {
+    debug_assert_eq!(poll_owners.len(), poll_fds.len());
+    poll_owners
+        .iter()
+        .zip(poll_fds)
+        .any(|(owner, fd)| matches!(owner, PollOwner::Ipc(_)) && fd.revents != 0)
+}
+
+fn should_collect_input(has_input_subscribers: Option<bool>) -> bool {
+    has_input_subscribers == Some(true)
+}
+
+fn next_sequence(sequence: &Cell<u64>) -> u64 {
+    let mut next = sequence.get().wrapping_add(1);
+    if next == 0 {
+        next = 1;
+    }
+    sequence.set(next);
+    next
+}
+
+fn axis(value: Abs) -> Axis3 {
+    Axis3 {
+        x: value.x,
+        y: value.y,
+        z: value.z,
+    }
+}
+
+fn button_code(button: Button) -> Option<u32> {
+    Some(match button {
+        Button::Left => 0,
+        Button::Right => 1,
+        Button::Up => 2,
+        Button::Down => 3,
+        Button::Plus => 6,
+        Button::Minus => 7,
+        Button::One => 9,
+        Button::Two => 10,
+        Button::A => 4,
+        Button::B => 5,
+        Button::Home => 8,
+        Button::C => 19,
+        Button::Z => 20,
+        Button::X => 11,
+        Button::Y => 12,
+        Button::ShoulderLeft => 13,
+        Button::ShoulderRight => 14,
+        Button::TriggerLeft => 15,
+        Button::TriggerRight => 16,
+        Button::ThumbLeft => 17,
+        Button::ThumbRight => 18,
+        Button::StrumBarUp => 21,
+        Button::StrumBarDown => 22,
+        Button::FretFarUp => 23,
+        Button::FretUp => 24,
+        Button::FretMid => 25,
+        Button::FretLow => 26,
+        Button::FretFarLow => 27,
+        _ => return None,
+    })
+}
+
+fn button_state(state: ButtonState) -> Option<u32> {
+    match state {
+        ButtonState::Released => Some(0),
+        ButtonState::Pressed => Some(1),
+        ButtonState::Repeated => Some(2),
+        _ => None,
+    }
+}
+
+fn button(value: HidButtonEvent) -> Option<ButtonEvent> {
+    Some(ButtonEvent {
+        code: button_code(value.button)?,
+        state: button_state(value.state)?,
+    })
+}
+
+fn input_payload(kind: EventKind) -> InputPayload {
+    let raw = event_type_code(kind);
+    match kind {
+        EventKind::Key(value) => {
+            button(value).map_or(InputPayload::Unknown(raw), InputPayload::Key)
+        }
+        EventKind::Accel(value) => InputPayload::Accel(axis(value)),
+        EventKind::Ir(values) => InputPayload::Ir(values.map(axis)),
+        EventKind::BalanceBoard(values) => InputPayload::BalanceBoard(values.map(axis)),
+        EventKind::MotionPlus(value) => InputPayload::MotionPlus(axis(value)),
+        EventKind::ProControllerKey(value) => {
+            button(value).map_or(InputPayload::Unknown(raw), InputPayload::ProControllerKey)
+        }
+        EventKind::ProControllerMove(values) => InputPayload::ProControllerMove(values.map(axis)),
+        EventKind::Watch => InputPayload::Watch,
+        EventKind::ClassicControllerKey(value) => button(value).map_or(
+            InputPayload::Unknown(raw),
+            InputPayload::ClassicControllerKey,
+        ),
+        EventKind::ClassicControllerMove(values) => {
+            InputPayload::ClassicControllerMove(values.map(axis))
+        }
+        EventKind::NunchukKey(value) => {
+            button(value).map_or(InputPayload::Unknown(raw), InputPayload::NunchukKey)
+        }
+        EventKind::NunchukMove(values) => InputPayload::NunchukMove(values.map(axis)),
+        EventKind::DrumsKey(value) => {
+            button(value).map_or(InputPayload::Unknown(raw), InputPayload::DrumsKey)
+        }
+        EventKind::DrumsMove(values) => InputPayload::DrumsMove(values.map(axis)),
+        EventKind::GuitarKey(value) => {
+            button(value).map_or(InputPayload::Unknown(raw), InputPayload::GuitarKey)
+        }
+        EventKind::GuitarMove(values) => InputPayload::GuitarMove(values.map(axis)),
+        EventKind::Gone => InputPayload::Gone,
+        EventKind::Unknown(value) => InputPayload::Unknown(value),
+        other => InputPayload::Unknown(event_type_code(other)),
+    }
+}
+
+fn timestamp(event: &Event) -> Timestamp {
+    Timestamp {
+        seconds: event.time.seconds,
+        micros: event.time.microseconds,
+    }
+}
+
+fn ipc_profile(profile: Profile) -> wiiland_ipc::Profile {
+    if profile == Profile::GAMEPAD {
+        wiiland_ipc::Profile::Gamepad
+    } else if profile == Profile::DESKTOP {
+        wiiland_ipc::Profile::Desktop
+    } else if profile == Profile::BOTH {
+        wiiland_ipc::Profile::Both
+    } else {
+        wiiland_ipc::Profile::None
+    }
+}
 
 pub const MAX_DEVICES: usize = 32;
 pub const POINTER_TICK: Duration = Duration::from_micros(16_000);
@@ -85,6 +239,34 @@ fn outputs_enabled(dry_run: bool) -> bool {
     !dry_run
 }
 
+fn io_errno(error: &io::Error) -> i32 {
+    -error.raw_os_error().unwrap_or(libc::EIO)
+}
+
+fn event_type_code(kind: EventKind) -> u32 {
+    match kind {
+        EventKind::Key(_) => 0,
+        EventKind::Accel(_) => 1,
+        EventKind::Ir(_) => 2,
+        EventKind::BalanceBoard(_) => 3,
+        EventKind::MotionPlus(_) => 4,
+        EventKind::ProControllerKey(_) => 5,
+        EventKind::ProControllerMove(_) => 6,
+        EventKind::Watch => 7,
+        EventKind::ClassicControllerKey(_) => 8,
+        EventKind::ClassicControllerMove(_) => 9,
+        EventKind::NunchukKey(_) => 10,
+        EventKind::NunchukMove(_) => 11,
+        EventKind::DrumsKey(_) => 12,
+        EventKind::DrumsMove(_) => 13,
+        EventKind::GuitarKey(_) => 14,
+        EventKind::GuitarMove(_) => 15,
+        EventKind::Gone => 16,
+        EventKind::Unknown(value) => value,
+        _ => u32::MAX,
+    }
+}
+
 fn push_unique(paths: &mut Vec<PathBuf>, path: PathBuf) -> bool {
     if paths.contains(&path) {
         false
@@ -113,7 +295,45 @@ pub struct Runtime<B: Backend + Clone = SystemBackend> {
     diagnostics: Diagnostics,
     trace: TraceConfig,
     trace_sequence: Rc<Cell<u64>>,
+    notification_sequence: Rc<Cell<u64>>,
+    ipc: Option<IpcServer>,
+    poll_fds: Vec<libc::pollfd>,
+    poll_owners: Vec<PollOwner>,
+    ipc_sources: Vec<crate::ipc::PollSource>,
 }
+
+fn device_info<B: Backend + Clone>(dev: &BridgeDevice<B>) -> DeviceInfo {
+    DeviceInfo {
+        syspath: dev.path().to_string_lossy().into_owned(),
+        profile: ipc_profile(dev.profile),
+        opened_interfaces: dev.opened_ifaces.bits(),
+        pending_interfaces: dev.pending_ifaces.bits(),
+        gamepad_output: dev.gamepad.is_some(),
+        desktop_output: dev.desktop.is_some(),
+    }
+}
+
+fn status_snapshot<B: Backend + Clone>(
+    slots: &[Option<BridgeDevice<B>>],
+    dry_run: bool,
+    socket_path: &Path,
+) -> Status {
+    Status {
+        daemon_version: env!("CARGO_PKG_VERSION").to_owned(),
+        pid: std::process::id(),
+        device_count: slots.iter().filter(|slot| slot.is_some()).count() as u32,
+        dry_run,
+        socket_path: socket_path.to_string_lossy().into_owned(),
+    }
+}
+
+fn device_snapshot<B: Backend + Clone>(slots: &[Option<BridgeDevice<B>>]) -> Vec<DeviceInfo> {
+    slots
+        .iter()
+        .filter_map(|slot| slot.as_ref().map(device_info))
+        .collect()
+}
+
 impl Runtime<SystemBackend> {
     pub fn new(config: Config) -> Result<Self, i32> {
         Self::with_backend(config, SystemBackend)
@@ -131,7 +351,37 @@ impl<B: Backend + Clone> Runtime<B> {
             diagnostics: Diagnostics::stderr(),
             trace: TraceConfig::default(),
             trace_sequence: Rc::new(Cell::new(0)),
+            notification_sequence: Rc::new(Cell::new(0)),
+            ipc: None,
+            poll_fds: Vec::with_capacity(MAX_DEVICES + 2),
+            poll_owners: Vec::with_capacity(MAX_DEVICES + 2),
+            ipc_sources: Vec::new(),
         })
+    }
+    pub fn enable_ipc(&mut self, path: impl AsRef<Path>) -> io::Result<()> {
+        let server = IpcServer::bind(path.as_ref())?;
+        self.ipc = Some(server);
+        Ok(())
+    }
+    fn publish(&mut self, notification: Notification) {
+        if let Some(server) = self.ipc.as_mut() {
+            server.publish(notification);
+        }
+    }
+    fn publish_added(&mut self, info: DeviceInfo) {
+        let sequence = next_sequence(&self.notification_sequence);
+        self.publish(Notification::DeviceAdded {
+            sequence,
+            device: info,
+        });
+    }
+    fn publish_removed(&mut self, path: &Path, reason: RemovalReason) {
+        let sequence = next_sequence(&self.notification_sequence);
+        self.publish(Notification::DeviceRemoved {
+            sequence,
+            syspath: path.to_string_lossy().into_owned(),
+            reason,
+        });
     }
     pub fn set_dry_run(&mut self, value: bool) {
         self.dry_run = value;
@@ -173,6 +423,11 @@ impl<B: Backend + Clone> Runtime<B> {
                     );
                 }
                 self.slots[slot] = Some(dev);
+                let info = self.slots[slot]
+                    .as_ref()
+                    .map(device_info)
+                    .expect("just inserted");
+                self.publish_added(info);
                 self.diagnostics.emit(Lifecycle::Add(path));
                 Ok(true)
             }
@@ -192,20 +447,35 @@ impl<B: Backend + Clone> Runtime<B> {
             .position(|x| x.as_ref().is_some_and(|d| d.path() == path))
     }
     fn reconcile(&mut self) {
-        let Some(mut snapshot) = Monitor::new(false, false) else {
-            self.diagnostics.emit(Lifecycle::Error {
-                operation: "reconcile snapshot",
-                path: None,
-                code: -libc::ENOMEM,
-            });
-            return;
+        let mut snapshot = match Monitor::new(MonitorMode::Enumerate) {
+            Ok(monitor) => monitor,
+            Err(error) => {
+                self.diagnostics.emit(Lifecycle::Error {
+                    operation: "reconcile snapshot",
+                    path: None,
+                    code: io_errno(&error),
+                });
+                return;
+            }
         };
         let mut paths = Vec::<PathBuf>::new();
-        while let Some(path) = snapshot.poll() {
-            push_unique(&mut paths, path);
+        loop {
+            match snapshot.poll() {
+                Ok(Some(path)) => {
+                    push_unique(&mut paths, path);
+                }
+                Ok(None) => break,
+                Err(error) => {
+                    self.diagnostics.emit(Lifecycle::Error {
+                        operation: "reconcile snapshot",
+                        path: None,
+                        code: io_errno(&error),
+                    });
+                    return;
+                }
+            }
         }
         let snapshot_count = paths.len();
-        let active = self.slots.iter().filter(|slot| slot.is_some()).count();
         let remove = missing_slots(
             self.slots
                 .iter()
@@ -215,7 +485,9 @@ impl<B: Backend + Clone> Runtime<B> {
         );
         for slot in remove {
             if let Some(dev) = self.slots[slot].take() {
-                self.diagnostics.emit(Lifecycle::Remove(dev.path()));
+                let path = dev.path().to_path_buf();
+                self.publish_removed(&path, RemovalReason::Removed);
+                self.diagnostics.emit(Lifecycle::Remove(&path));
             }
         }
         for path in paths {
@@ -225,57 +497,142 @@ impl<B: Backend + Clone> Runtime<B> {
         let mut queued = Vec::new();
         let mut queued_count = 0;
         if let Some(mon) = self.monitor.as_mut() {
-            while let Some(path) = mon.poll() {
-                queued_count += 1;
-                push_unique(&mut queued, path);
+            loop {
+                match mon.poll() {
+                    Ok(Some(path)) => {
+                        queued_count += 1;
+                        push_unique(&mut queued, path);
+                    }
+                    Ok(None) => break,
+                    Err(error) => {
+                        self.diagnostics.emit(Lifecycle::Error {
+                            operation: "monitor",
+                            path: None,
+                            code: io_errno(&error),
+                        });
+                        break;
+                    }
+                }
             }
         }
         for path in queued {
             let _ = self.add_path(path);
         }
+        let active = self.slots.iter().filter(|slot| slot.is_some()).count();
         self.diagnostics.emit(Lifecycle::Reconcile {
             snapshot: snapshot_count,
             queued: queued_count,
             active,
         });
     }
+    fn drain_device(&mut self, slot: usize, single: bool) -> Result<(), i32> {
+        let Some(path) = self.slots[slot]
+            .as_ref()
+            .map(|dev| dev.path().to_path_buf())
+        else {
+            return Ok(());
+        };
+        let outcome =
+            if should_collect_input(self.ipc.as_ref().map(IpcServer::has_input_subscribers)) {
+                let sequence = Rc::clone(&self.notification_sequence);
+                let syspath = path.to_string_lossy().into_owned();
+                let mut inputs = Vec::new();
+                let outcome = self.slots[slot].as_mut().map(|dev| {
+                    dev.drain_with(|_, event| {
+                        inputs.push(Notification::Input {
+                            sequence: next_sequence(&sequence),
+                            syspath: syspath.clone(),
+                            timestamp: timestamp(event),
+                            payload: input_payload(event.kind),
+                        });
+                    })
+                });
+                for notification in inputs {
+                    self.publish(notification);
+                }
+                outcome
+            } else {
+                self.slots[slot].as_mut().map(BridgeDevice::drain)
+            };
+        match outcome {
+            Some(Ok(BridgeAction::Continue)) | None => {}
+            Some(Ok(BridgeAction::Gone)) => {
+                if self.slots[slot].take().is_some() {
+                    self.publish_removed(&path, RemovalReason::Gone);
+                    self.diagnostics.emit(Lifecycle::Gone(&path));
+                }
+            }
+            Some(Err(code)) => {
+                if self.slots[slot].take().is_some() {
+                    self.publish_removed(&path, RemovalReason::DrainError);
+                    self.diagnostics.emit(Lifecycle::Error {
+                        operation: "drain",
+                        path: Some(&path),
+                        code,
+                    });
+                }
+                if single {
+                    return Err(code);
+                }
+            }
+        }
+        Ok(())
+    }
     fn poll_once(&mut self, timeout_ms: i32, single: bool) -> Result<bool, i32> {
-        let mut fds = [libc::pollfd {
+        self.poll_fds.clear();
+        self.poll_owners.clear();
+        self.ipc_sources.clear();
+        self.poll_fds.push(libc::pollfd {
             fd: self.signal.read_fd(),
             events: libc::POLLIN,
             revents: 0,
-        }; MAX_DEVICES + 2];
-        let mut owners = [-2i32; MAX_DEVICES + 2];
-        let mut n = 1usize;
+        });
+        self.poll_owners.push(PollOwner::Signal);
         if let Some(mon) = self.monitor.as_mut()
-            && let Some(fd) = mon.fd(false)
+            && let Some(fd) = mon.fd()
         {
-            fds[n] = libc::pollfd {
-                fd,
+            self.poll_fds.push(libc::pollfd {
+                fd: fd.as_raw_fd(),
                 events: libc::POLLIN,
                 revents: 0,
-            };
-            owners[n] = -1;
-            n += 1;
+            });
+            self.poll_owners.push(PollOwner::Monitor);
         }
-        for (i, dev) in self.slots.iter().enumerate() {
+        for (slot, dev) in self.slots.iter().enumerate() {
             if let Some(dev) = dev {
-                fds[n] = libc::pollfd {
-                    fd: dev.fd(),
+                self.poll_fds.push(libc::pollfd {
+                    fd: dev.iface.as_fd().as_raw_fd(),
                     events: libc::POLLIN,
                     revents: 0,
-                };
-                owners[n] = i as i32;
-                n += 1;
+                });
+                self.poll_owners.push(PollOwner::Device(slot));
             }
         }
-        let result = unsafe { libc::poll(fds.as_mut_ptr(), n as libc::nfds_t, timeout_ms) };
+        if let Some(server) = self.ipc.as_mut() {
+            server.poll_sources(&mut self.ipc_sources);
+        }
+        for source in &self.ipc_sources {
+            self.poll_fds.push(libc::pollfd {
+                fd: source.fd,
+                events: source.events,
+                revents: 0,
+            });
+            self.poll_owners.push(PollOwner::Ipc(source.token));
+        }
+
+        let result = unsafe {
+            libc::poll(
+                self.poll_fds.as_mut_ptr(),
+                self.poll_fds.len() as libc::nfds_t,
+                timeout_ms,
+            )
+        };
         if result < 0 {
             let e = io::Error::last_os_error();
             if e.raw_os_error() == Some(libc::EINTR) {
                 return Ok(false);
             }
-            let code = -e.raw_os_error().unwrap_or(libc::EIO);
+            let code = io_errno(&e);
             self.diagnostics.emit(Lifecycle::Error {
                 operation: "poll",
                 path: None,
@@ -283,48 +640,60 @@ impl<B: Backend + Clone> Runtime<B> {
             });
             return Err(code);
         }
-        if self.signal.requested() {
+        if self.signal.requested() || self.poll_fds[0].revents != 0 {
             let _ = self.signal.drain();
             return Ok(true);
         }
-        if result > 0 {
-            for i in 0..n {
-                if fds[i].revents == 0 {
+        if result == 0 {
+            return Ok(false);
+        }
+
+        // Slots never move, so all device owners remain valid until this phase
+        // is complete. Reconciliation is deliberately deferred below.
+        for index in 0..self.poll_owners.len() {
+            if self.poll_fds[index].revents == 0 {
+                continue;
+            }
+            if let PollOwner::Device(slot) = self.poll_owners[index] {
+                self.drain_device(slot, single)?;
+            }
+        }
+
+        let monitor_ready = self.poll_owners.iter().enumerate().any(|(index, owner)| {
+            *owner == PollOwner::Monitor && self.poll_fds[index].revents != 0
+        });
+        if monitor_ready {
+            self.reconcile();
+        }
+
+        if has_ready_ipc(&self.poll_owners, &self.poll_fds) {
+            let slots = &self.slots;
+            let dry_run = &self.dry_run;
+            let mut status = |socket_path: &Path| status_snapshot(slots, *dry_run, socket_path);
+            let mut devices = || device_snapshot(slots);
+            for index in 0..self.poll_owners.len() {
+                if self.poll_fds[index].revents == 0 {
                     continue;
                 }
-                match owners[i] {
-                    -2 => {
-                        let _ = self.signal.drain();
-                        return Ok(true);
-                    }
-                    -1 => {
-                        self.reconcile();
-                        break;
-                    }
-                    slot => {
-                        let slot = slot as usize;
-                        let outcome = self.slots[slot].as_mut().map(|dev| dev.drain());
-                        match outcome {
-                            Some(Ok(BridgeAction::Continue)) | None => {}
-                            Some(Ok(BridgeAction::Gone)) => {
-                                if let Some(dev) = self.slots[slot].take() {
-                                    self.diagnostics.emit(Lifecycle::Gone(dev.path()));
-                                }
-                            }
-                            Some(Err(code)) => {
-                                if let Some(dev) = self.slots[slot].take() {
-                                    self.diagnostics.emit(Lifecycle::Error {
-                                        operation: "drain",
-                                        path: Some(dev.path()),
-                                        code,
-                                    });
-                                }
-                                if single {
-                                    return Err(code);
-                                }
-                            }
-                        }
-                    }
+                let PollOwner::Ipc(token) = self.poll_owners[index] else {
+                    continue;
+                };
+                let Some(server) = self.ipc.as_mut() else {
+                    continue;
+                };
+                if let Err(error) = server.handle_ready(
+                    token,
+                    self.poll_fds[index].revents,
+                    &mut status,
+                    &mut devices,
+                ) {
+                    let code = io_errno(&error);
+                    self.diagnostics.emit(Lifecycle::Error {
+                        operation: "ipc",
+                        path: None,
+                        code,
+                    });
+                    return Err(code);
                 }
             }
         }
@@ -357,9 +726,11 @@ impl<B: Backend + Clone> Runtime<B> {
                         let result = self.slots[slot].as_mut().map(|dev| dev.tick_pointer());
                         if let Some(Err(code)) = result {
                             if let Some(dev) = self.slots[slot].take() {
+                                let path = dev.path().to_path_buf();
+                                self.publish_removed(&path, RemovalReason::PointerError);
                                 self.diagnostics.emit(Lifecycle::Error {
                                     operation: "pointer tick",
-                                    path: Some(dev.path()),
+                                    path: Some(&path),
                                     code,
                                 });
                             }
@@ -385,15 +756,15 @@ impl<B: Backend + Clone> Runtime<B> {
         }
     }
     pub fn run_monitor(&mut self) -> Result<(), i32> {
-        let Some(mon) = Monitor::new(true, false) else {
-            let code = -libc::ENOMEM;
+        let mon = Monitor::new(MonitorMode::Watch).map_err(|error| {
+            let code = io_errno(&error);
             self.diagnostics.emit(Lifecycle::Error {
                 operation: "monitor",
                 path: None,
                 code,
             });
-            return Err(code);
-        };
+            code
+        })?;
         self.monitor = Some(mon);
         self.reconcile();
         self.loop_run(false)
@@ -405,6 +776,7 @@ impl<B: Backend + Clone> Runtime<B> {
 }
 impl<B: Backend + Clone> Drop for Runtime<B> {
     fn drop(&mut self) {
+        self.ipc.take();
         for slot in &mut self.slots {
             slot.take();
         }
@@ -495,5 +867,200 @@ mod tests {
                 "wiilandd: error: monitor: -12",
             ]
         );
+    }
+    #[test]
+    fn notification_sequence_wrap_skips_zero() {
+        let sequence = Cell::new(u64::MAX);
+        assert_eq!(next_sequence(&sequence), 1);
+        assert_eq!(next_sequence(&sequence), 2);
+    }
+
+    #[test]
+    fn profiles_map_to_protocol_names() {
+        assert_eq!(ipc_profile(Profile::GAMEPAD), wiiland_ipc::Profile::Gamepad);
+        assert_eq!(ipc_profile(Profile::DESKTOP), wiiland_ipc::Profile::Desktop);
+        assert_eq!(ipc_profile(Profile::BOTH), wiiland_ipc::Profile::Both);
+        assert_eq!(
+            ipc_profile(Profile::default()),
+            wiiland_ipc::Profile::Gamepad
+        );
+    }
+
+    #[test]
+    fn button_codes_and_states_preserve_wire_values() {
+        let buttons = [
+            (Button::Left, 0),
+            (Button::Right, 1),
+            (Button::Up, 2),
+            (Button::Down, 3),
+            (Button::A, 4),
+            (Button::B, 5),
+            (Button::Plus, 6),
+            (Button::Minus, 7),
+            (Button::Home, 8),
+            (Button::One, 9),
+            (Button::Two, 10),
+            (Button::X, 11),
+            (Button::Y, 12),
+            (Button::ShoulderLeft, 13),
+            (Button::ShoulderRight, 14),
+            (Button::TriggerLeft, 15),
+            (Button::TriggerRight, 16),
+            (Button::ThumbLeft, 17),
+            (Button::ThumbRight, 18),
+            (Button::C, 19),
+            (Button::Z, 20),
+            (Button::StrumBarUp, 21),
+            (Button::StrumBarDown, 22),
+            (Button::FretFarUp, 23),
+            (Button::FretUp, 24),
+            (Button::FretMid, 25),
+            (Button::FretLow, 26),
+            (Button::FretFarLow, 27),
+        ];
+        assert_eq!(buttons.len(), 28);
+        for (value, wire) in buttons {
+            assert_eq!(button_code(value), Some(wire));
+        }
+
+        for (value, wire) in [
+            (ButtonState::Released, 0),
+            (ButtonState::Pressed, 1),
+            (ButtonState::Repeated, 2),
+        ] {
+            assert_eq!(button_state(value), Some(wire));
+        }
+    }
+
+    #[test]
+    fn input_collection_requires_a_server_with_subscribers() {
+        for (subscribers, expected) in [(None, false), (Some(false), false), (Some(true), true)] {
+            assert_eq!(should_collect_input(subscribers), expected);
+        }
+    }
+
+    #[test]
+    fn snapshot_builders_preserve_daemon_dtos() {
+        let slots: [Option<BridgeDevice<SystemBackend>>; MAX_DEVICES] =
+            std::array::from_fn(|_| None);
+        let socket_path = Path::new("/run/user/1000/wiiland/wiilandd.sock");
+
+        let status = status_snapshot(&slots, true, socket_path);
+        assert_eq!(status.daemon_version, env!("CARGO_PKG_VERSION"));
+        assert_eq!(status.pid, std::process::id());
+        assert_eq!(status.device_count, 0);
+        assert!(status.dry_run);
+        assert_eq!(status.socket_path, socket_path.to_string_lossy());
+        assert!(device_snapshot(&slots).is_empty());
+    }
+
+    #[test]
+    fn ipc_dispatch_requires_a_ready_ipc_owner() {
+        let owners = [
+            PollOwner::Signal,
+            PollOwner::Monitor,
+            PollOwner::Device(0),
+            PollOwner::Ipc(7),
+        ];
+        for (revents, expected) in [
+            ([0, libc::POLLIN, 0, 0], false),
+            ([0, 0, libc::POLLIN, 0], false),
+            ([0, libc::POLLIN, libc::POLLIN, 0], false),
+            ([0, 0, 0, libc::POLLIN], true),
+            ([0, libc::POLLIN, libc::POLLIN, libc::POLLIN], true),
+        ] {
+            let poll_fds = revents.map(|revents| libc::pollfd {
+                fd: -1,
+                events: libc::POLLIN,
+                revents,
+            });
+            assert_eq!(has_ready_ipc(&owners, &poll_fds), expected);
+        }
+
+        let owners = [PollOwner::Signal, PollOwner::Monitor, PollOwner::Device(0)];
+        let poll_fds = [libc::pollfd {
+            fd: -1,
+            events: libc::POLLIN,
+            revents: libc::POLLIN,
+        }; 3];
+        assert!(!has_ready_ipc(&owners, &poll_fds));
+    }
+
+    #[test]
+    fn every_event_kind_maps_to_owned_payload_shape() {
+        let axis_value = Abs { x: 1, y: 2, z: 3 };
+        let key = HidButtonEvent {
+            button: Button::A,
+            state: ButtonState::Pressed,
+        };
+        assert!(matches!(
+            input_payload(EventKind::Key(key)),
+            InputPayload::Key(_)
+        ));
+        assert!(matches!(
+            input_payload(EventKind::Accel(axis_value)),
+            InputPayload::Accel(_)
+        ));
+        assert!(matches!(
+            input_payload(EventKind::Ir([axis_value; 4])),
+            InputPayload::Ir(values) if values.len() == 4
+        ));
+        assert!(matches!(
+            input_payload(EventKind::BalanceBoard([axis_value; 4])),
+            InputPayload::BalanceBoard(values) if values.len() == 4
+        ));
+        assert!(matches!(
+            input_payload(EventKind::MotionPlus(axis_value)),
+            InputPayload::MotionPlus(_)
+        ));
+        assert!(matches!(
+            input_payload(EventKind::ProControllerKey(key)),
+            InputPayload::ProControllerKey(_)
+        ));
+        assert!(matches!(
+            input_payload(EventKind::ProControllerMove([axis_value; 2])),
+            InputPayload::ProControllerMove(values) if values.len() == 2
+        ));
+        assert!(matches!(
+            input_payload(EventKind::Watch),
+            InputPayload::Watch
+        ));
+        assert!(matches!(
+            input_payload(EventKind::ClassicControllerKey(key)),
+            InputPayload::ClassicControllerKey(_)
+        ));
+        assert!(matches!(
+            input_payload(EventKind::ClassicControllerMove([axis_value; 3])),
+            InputPayload::ClassicControllerMove(values) if values.len() == 3
+        ));
+        assert!(matches!(
+            input_payload(EventKind::NunchukKey(key)),
+            InputPayload::NunchukKey(_)
+        ));
+        assert!(matches!(
+            input_payload(EventKind::NunchukMove([axis_value; 2])),
+            InputPayload::NunchukMove(values) if values.len() == 2
+        ));
+        assert!(matches!(
+            input_payload(EventKind::DrumsKey(key)),
+            InputPayload::DrumsKey(_)
+        ));
+        assert!(matches!(
+            input_payload(EventKind::DrumsMove([axis_value; 8])),
+            InputPayload::DrumsMove(values) if values.len() == 8
+        ));
+        assert!(matches!(
+            input_payload(EventKind::GuitarKey(key)),
+            InputPayload::GuitarKey(_)
+        ));
+        assert!(matches!(
+            input_payload(EventKind::GuitarMove([axis_value; 3])),
+            InputPayload::GuitarMove(values) if values.len() == 3
+        ));
+        assert!(matches!(input_payload(EventKind::Gone), InputPayload::Gone));
+        assert!(matches!(
+            input_payload(EventKind::Unknown(99)),
+            InputPayload::Unknown(99)
+        ));
     }
 }

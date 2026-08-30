@@ -22,10 +22,10 @@ kernel's `hid-wiimote` driver and emits ordinary `uinput`/`evdev` devices—no
 compositor API, XWayland dependency, or application-specific driver.
 
 ```text
-Wii hardware → hid-wiimote → wiiland-hid → wiilandd → uinput/evdev
-                                                  ├─ Wayland / libinput
-                                                  ├─ X.org
-                                                  └─ SDL, Steam, Wine/Proton, native apps
+Wii hardware → hid-wiimote → wiiland-hid
+                              ├─ direct Rust app (owns Linux hardware) → typed events
+                              └─ wiilandd (owns hardware) → uinput/evdev
+                                               └─ private per-user socket → wiiland-ipc Client
 ```
 
 | | |
@@ -34,7 +34,111 @@ Wii hardware → hid-wiimote → wiiland-hid → wiilandd → uinput/evdev
 | **Outputs** | `WiiLand Virtual Controller`, `WiiLand Virtual Desktop` |
 | **Profiles** | `gamepad`, `desktop`, `both` |
 | **Frontends** | `wiiland-config` (eframe/egui, Wayland/X11), `xwiishow` (ratatui/crossterm) |
-| **Driver path** | Linux `hid-wiimote` → Rust `wiiland-hid` → `wiilandd` |
+| **Driver path** | Linux `hid-wiimote` → Rust `wiiland-hid` → direct app or `wiilandd` |
+
+## Rust integration paths
+
+Choose one of these source-level Cargo integrations. A process either owns the
+Linux HID interfaces directly or consumes the daemon's view; the two ownership
+paths are not interchangeable.
+
+### Direct hardware ownership: `wiiland-hid`
+
+Add the workspace crate as a Cargo path dependency. The root `wiiland_hid`
+facade exposes `Monitor`, `MonitorMode`, `Interface`, and owned typed event
+values; it does not expose decoder or model implementation modules:
+
+```toml
+[dependencies]
+wiiland-hid = { path = "../wiiland/crates/wiiland-hid" }
+```
+
+This process opens the kernel `hid-wiimote` interfaces itself, so it needs the
+same Linux device permissions as the daemon. `Monitor::poll` and
+`Interface::dispatch` return `io::Result`; handle `WouldBlock` when polling
+without an event:
+
+```rust
+use std::io;
+use wiiland_hid::{Event, EventKind, Interface, InterfaceMask, Monitor, MonitorMode};
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut monitor = Monitor::new(MonitorMode::Enumerate)?;
+    let Some(path) = monitor.poll()? else {
+        return Ok(());
+    };
+    let mut device = Interface::new(&path)?;
+    device.open(InterfaceMask::CORE | InterfaceMask::ACCEL)?;
+
+    loop {
+        match device.dispatch() {
+            Ok(Event { kind: EventKind::Accel(axis), .. }) => {
+                println!("accel: {}, {}, {}", axis.x, axis.y, axis.z);
+            }
+            Ok(Event { kind: EventKind::Key(button), .. }) => {
+                println!("button: {button:?}");
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == io::ErrorKind::WouldBlock => continue,
+            Err(error) => return Err(error.into()),
+        }
+    }
+}
+```
+
+### Daemon access: `wiiland-ipc`
+
+For multi-process applications, let `wiilandd` own hardware and connect to its
+versioned Unix-socket protocol through the source-level `wiiland_ipc::Client`
+facade:
+
+```toml
+[dependencies]
+wiiland-ipc = { path = "../wiiland/crates/wiiland-ipc" }
+```
+
+`Client::connect` performs the protocol Hello negotiation automatically.
+`connect_default` uses
+`$XDG_RUNTIME_DIR/wiiland/wiilandd.sock` only when `XDG_RUNTIME_DIR` is an
+absolute path; otherwise use an explicit private socket path. The client
+receives owned DTOs rather than Rust or libc layouts:
+
+```rust
+use wiiland_ipc::{Client, InputPayload, Notification};
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut client = Client::connect_default()?;
+    let status = client.status()?;
+    println!("{}: {} device(s)", status.daemon_version, status.device_count);
+    client.subscribe()?;
+
+    loop {
+        match client.next_event()? {
+            Notification::Input {
+                syspath,
+                payload: InputPayload::Accel(axis),
+                ..
+            } => println!("{syspath}: accel {}, {}, {}", axis.x, axis.y, axis.z),
+            Notification::DeviceAdded { device, .. } => {
+                println!("added: {}", device.syspath);
+            }
+            Notification::DeviceRemoved { syspath, reason, .. } => {
+                println!("removed: {syspath} ({reason:?})");
+            }
+            Notification::Input { .. } => {}
+            _ => {}
+        }
+    }
+}
+```
+
+The daemon endpoint is private to the user (`0700` parent directory and
+`0600` socket), not a global system socket. `wiiland-ipc` is an `rlib`-only
+workspace/build crate. Neither it nor `wiiland-hid` is an installed
+development library: packaging emits no standalone client executable, header,
+static/shared library, or pkg-config file. Neither integration path promises a
+stable Rust ABI or a C ABI.
+
 
 ## Quick start
 
@@ -216,7 +320,8 @@ wiilandd-hardware-report N
 
 ## Development
 
-The workspace contains the native Rust `wiiland-hid` device library, pure
+The workspace contains the native Rust `wiiland-hid` hardware crate, the
+source-level `wiiland-ipc` blocking Unix-socket client facade, pure
 `wiiland-core` mapping/configuration logic, the `wiilandd` daemon and report
 binary, the optional `wiiland-config` and `xwiishow` applications, and the
 developer-only `xwiidump` utility. Use the repository's Cargo alias for xtask:
@@ -230,7 +335,10 @@ cargo xtask docs
 
 `wiiland-hid` deliberately targets the Linux `hid-wiimote` kernel interface,
 including its udev/sysfs topology, evdev node identities and codes, force
-feedback, LEDs, and `SYN_DROPPED` recovery. It does not provide a C ABI.
+feedback, LEDs, and `SYN_DROPPED` recovery. Its public root facade exposes
+owned Rust values, not raw decoder/model modules. It does not provide a stable
+Rust ABI or a C ABI; see the integration paths above for source-level Cargo
+usage.
 
 The normal workspace gates are:
 

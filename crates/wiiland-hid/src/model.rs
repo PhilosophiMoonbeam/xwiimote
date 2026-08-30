@@ -1,77 +1,14 @@
-//! Native event types plus Linux evdev constants used by `hid-wiimote`.
+//! Owned values exposed by the supported `wiiland-hid` source API.
+//!
+//! The kernel-facing constants and representations in this module are crate
+//! private implementation details; they are not an ABI or API promise.
 
-pub const EVENT_CODE_KEY: u32 = 0;
-pub const EVENT_CODE_ACCEL: u32 = 1;
-pub const EVENT_CODE_IR: u32 = 2;
-pub const EVENT_CODE_BALANCE_BOARD: u32 = 3;
-pub const EVENT_CODE_MOTION_PLUS: u32 = 4;
-pub const EVENT_CODE_PRO_CONTROLLER_KEY: u32 = 5;
-pub const EVENT_CODE_PRO_CONTROLLER_MOVE: u32 = 6;
-pub const EVENT_CODE_WATCH: u32 = 7;
-pub const EVENT_CODE_CLASSIC_CONTROLLER_KEY: u32 = 8;
-pub const EVENT_CODE_CLASSIC_CONTROLLER_MOVE: u32 = 9;
-pub const EVENT_CODE_NUNCHUK_KEY: u32 = 10;
-pub const EVENT_CODE_NUNCHUK_MOVE: u32 = 11;
-pub const EVENT_CODE_DRUMS_KEY: u32 = 12;
-pub const EVENT_CODE_DRUMS_MOVE: u32 = 13;
-pub const EVENT_CODE_GUITAR_KEY: u32 = 14;
-pub const EVENT_CODE_GUITAR_MOVE: u32 = 15;
-pub const EVENT_CODE_GONE: u32 = 16;
-pub const EVENT_CODE_COUNT: u32 = 17;
-
-pub const BUTTON_LEFT: u32 = 0;
-pub const BUTTON_RIGHT: u32 = 1;
-pub const BUTTON_UP: u32 = 2;
-pub const BUTTON_DOWN: u32 = 3;
-pub const BUTTON_A: u32 = 4;
-pub const BUTTON_B: u32 = 5;
-pub const BUTTON_PLUS: u32 = 6;
-pub const BUTTON_MINUS: u32 = 7;
-pub const BUTTON_HOME: u32 = 8;
-pub const BUTTON_ONE: u32 = 9;
-pub const BUTTON_TWO: u32 = 10;
-pub const BUTTON_X: u32 = 11;
-pub const BUTTON_Y: u32 = 12;
-pub const BUTTON_TL: u32 = 13;
-pub const BUTTON_TR: u32 = 14;
-pub const BUTTON_ZL: u32 = 15;
-pub const BUTTON_ZR: u32 = 16;
-pub const BUTTON_THUMBL: u32 = 17;
-pub const BUTTON_THUMBR: u32 = 18;
-pub const BUTTON_C: u32 = 19;
-pub const BUTTON_Z: u32 = 20;
-pub const BUTTON_STRUM_BAR_UP: u32 = 21;
-pub const BUTTON_STRUM_BAR_DOWN: u32 = 22;
-pub const BUTTON_FRET_FAR_UP: u32 = 23;
-pub const BUTTON_FRET_UP: u32 = 24;
-pub const BUTTON_FRET_MID: u32 = 25;
-pub const BUTTON_FRET_LOW: u32 = 26;
-pub const BUTTON_FRET_FAR_LOW: u32 = 27;
-pub const BUTTON_COUNT: u32 = 28;
-
-pub const DRUM_SLOT_PAD: usize = 0;
-pub const DRUM_SLOT_CYMBAL_LEFT: usize = 1;
-pub const DRUM_SLOT_CYMBAL_RIGHT: usize = 2;
-pub const DRUM_SLOT_TOM_LEFT: usize = 3;
-pub const DRUM_SLOT_TOM_RIGHT: usize = 4;
-pub const DRUM_SLOT_TOM_FAR_RIGHT: usize = 5;
-pub const DRUM_SLOT_BASS: usize = 6;
-pub const DRUM_SLOT_HI_HAT: usize = 7;
-pub const DRUM_SLOT_COUNT: usize = 8;
-
-/// Linux evdev event kind values used by the pure decoder.
-pub const EV_SYN: u16 = 0;
-pub const EV_KEY: u16 = 1;
-pub const EV_ABS: u16 = 3;
-pub const SYN_REPORT: u16 = 0;
-pub const SYN_DROPPED: u16 = 3;
-
-/// A decoded Wii Remote button transition.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub struct ButtonEvent {
-    pub code: u32,
-    pub state: u32,
-}
+pub(crate) const DRUM_SLOT_COUNT: usize = 8;
+pub(crate) const EV_SYN: u16 = 0;
+pub(crate) const EV_KEY: u16 = 1;
+pub(crate) const EV_ABS: u16 = 3;
+pub(crate) const SYN_REPORT: u16 = 0;
+pub(crate) const SYN_DROPPED: u16 = 3;
 
 /// A three-axis sample or one logical slot in a multi-axis report.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -81,13 +18,79 @@ pub struct Axis3 {
     pub z: i32,
 }
 
-/// A raw Linux input event consumed by the pure decoder.
+/// An event timestamp owned by the Rust API.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct Timestamp {
+    pub seconds: i64,
+    pub microseconds: u32,
+}
+
+impl Timestamp {
+    pub(crate) fn from_timeval(time: libc::timeval) -> Self {
+        Self {
+            seconds: time.tv_sec,
+            microseconds: u32::try_from(time.tv_usec).unwrap_or(0).min(999_999),
+        }
+    }
+}
+
+/// A logical controller button.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[non_exhaustive]
+pub enum Button {
+    Left,
+    Right,
+    Up,
+    Down,
+    Plus,
+    Minus,
+    One,
+    Two,
+    A,
+    B,
+    Home,
+    C,
+    Z,
+    X,
+    Y,
+    ShoulderLeft,
+    ShoulderRight,
+    TriggerLeft,
+    TriggerRight,
+    ThumbLeft,
+    ThumbRight,
+    StrumBarUp,
+    StrumBarDown,
+    FretFarUp,
+    FretUp,
+    FretMid,
+    FretLow,
+    FretFarLow,
+}
+
+/// The state of a logical controller button.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[non_exhaustive]
+pub enum ButtonState {
+    Released,
+    Pressed,
+    Repeated,
+}
+
+/// A decoded button transition.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct ButtonEvent {
+    pub button: Button,
+    pub state: ButtonState,
+}
+
+/// A raw Linux input event consumed by the private decoder.
 #[derive(Clone, Copy, Debug, Default)]
-pub struct InputEvent {
-    pub time: libc::timeval,
-    pub event_type: u16,
-    pub code: u16,
-    pub value: i32,
+pub(crate) struct InputEvent {
+    pub(crate) time: libc::timeval,
+    pub(crate) event_type: u16,
+    pub(crate) code: u16,
+    pub(crate) value: i32,
 }
 
 impl PartialEq for InputEvent {
@@ -99,7 +102,6 @@ impl PartialEq for InputEvent {
             && self.value == other.value
     }
 }
-
 impl Eq for InputEvent {}
 
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
@@ -123,7 +125,7 @@ impl InterfaceMask {
     pub const fn is_empty(self) -> bool {
         self.0 == 0
     }
-    pub const fn from_bits(bits: u32) -> Self {
+    pub(crate) const fn from_bits(bits: u32) -> Self {
         Self(bits)
     }
     pub const fn bits(self) -> u32 {
@@ -168,57 +170,51 @@ impl core::ops::Not for InterfaceMask {
     }
 }
 
-#[inline]
-pub const fn is_valid_ir_point(abs: &Axis3) -> bool {
-    abs.x != 1023 || abs.y != 1023
-}
-
-// Common evdev key/absolute codes.  Keep these local so decoding remains pure
-// and does not depend on libc exposing Linux input headers.
-pub const KEY_LEFT: u16 = 105;
-pub const KEY_RIGHT: u16 = 106;
-pub const KEY_UP: u16 = 103;
-pub const KEY_DOWN: u16 = 108;
-pub const KEY_NEXT: u16 = 0x197;
-pub const KEY_PREVIOUS: u16 = 0x19c;
-pub const BTN_1: u16 = 0x101;
-pub const BTN_2: u16 = 0x102;
-pub const BTN_3: u16 = 0x103;
-pub const BTN_4: u16 = 0x104;
-pub const BTN_5: u16 = 0x105;
-pub const BTN_A: u16 = 0x130;
-pub const BTN_B: u16 = 0x131;
-pub const BTN_C: u16 = 0x132;
-pub const BTN_X: u16 = 0x133;
-pub const BTN_Y: u16 = 0x134;
-pub const BTN_Z: u16 = 0x135;
-pub const BTN_TL: u16 = 0x136;
-pub const BTN_TR: u16 = 0x137;
-pub const BTN_TL2: u16 = 0x138;
-pub const BTN_TR2: u16 = 0x139;
-pub const BTN_SELECT: u16 = 0x13a;
-pub const BTN_START: u16 = 0x13b;
-pub const BTN_MODE: u16 = 0x13c;
-pub const BTN_THUMBL: u16 = 0x13d;
-pub const BTN_THUMBR: u16 = 0x13e;
-pub const BTN_DPAD_UP: u16 = 0x220;
-pub const BTN_DPAD_DOWN: u16 = 0x221;
-pub const BTN_DPAD_LEFT: u16 = 0x222;
-pub const BTN_DPAD_RIGHT: u16 = 0x223;
-pub const BTN_EAST: u16 = BTN_B;
-pub const BTN_SOUTH: u16 = BTN_A;
-pub const BTN_NORTH: u16 = BTN_X;
-pub const BTN_WEST: u16 = BTN_Y;
-pub const ABS_X: u16 = 0;
-pub const ABS_Y: u16 = 1;
-pub const ABS_RX: u16 = 3;
-pub const ABS_RY: u16 = 4;
-pub const ABS_RZ: u16 = 5;
-pub const ABS_HAT0X: u16 = 16;
-pub const ABS_HAT0Y: u16 = 17;
-pub const ABS_HAT1X: u16 = 18;
-pub const ABS_HAT1Y: u16 = 19;
-pub const ABS_HAT2X: u16 = 20;
-pub const ABS_HAT2Y: u16 = 21;
-pub const ABS_HAT3X: u16 = 22;
-pub const ABS_HAT3Y: u16 = 23;
+// Common evdev key/absolute codes. These stay private to the decoder.
+pub(crate) const KEY_LEFT: u16 = 105;
+pub(crate) const KEY_RIGHT: u16 = 106;
+pub(crate) const KEY_UP: u16 = 103;
+pub(crate) const KEY_DOWN: u16 = 108;
+pub(crate) const KEY_NEXT: u16 = 0x197;
+pub(crate) const KEY_PREVIOUS: u16 = 0x19c;
+pub(crate) const BTN_1: u16 = 0x101;
+pub(crate) const BTN_2: u16 = 0x102;
+pub(crate) const BTN_3: u16 = 0x103;
+pub(crate) const BTN_4: u16 = 0x104;
+pub(crate) const BTN_5: u16 = 0x105;
+pub(crate) const BTN_A: u16 = 0x130;
+pub(crate) const BTN_B: u16 = 0x131;
+pub(crate) const BTN_C: u16 = 0x132;
+pub(crate) const BTN_X: u16 = 0x133;
+pub(crate) const BTN_Y: u16 = 0x134;
+pub(crate) const BTN_Z: u16 = 0x135;
+pub(crate) const BTN_TL: u16 = 0x136;
+pub(crate) const BTN_TR: u16 = 0x137;
+pub(crate) const BTN_TL2: u16 = 0x138;
+pub(crate) const BTN_TR2: u16 = 0x139;
+pub(crate) const BTN_SELECT: u16 = 0x13a;
+pub(crate) const BTN_START: u16 = 0x13b;
+pub(crate) const BTN_MODE: u16 = 0x13c;
+pub(crate) const BTN_THUMBL: u16 = 0x13d;
+pub(crate) const BTN_THUMBR: u16 = 0x13e;
+pub(crate) const BTN_DPAD_UP: u16 = 0x220;
+pub(crate) const BTN_DPAD_DOWN: u16 = 0x221;
+pub(crate) const BTN_DPAD_LEFT: u16 = 0x222;
+pub(crate) const BTN_DPAD_RIGHT: u16 = 0x223;
+pub(crate) const BTN_EAST: u16 = BTN_B;
+pub(crate) const BTN_SOUTH: u16 = BTN_A;
+pub(crate) const BTN_NORTH: u16 = BTN_X;
+pub(crate) const BTN_WEST: u16 = BTN_Y;
+pub(crate) const ABS_X: u16 = 0;
+pub(crate) const ABS_Y: u16 = 1;
+pub(crate) const ABS_RX: u16 = 3;
+pub(crate) const ABS_RY: u16 = 4;
+pub(crate) const ABS_RZ: u16 = 5;
+pub(crate) const ABS_HAT0X: u16 = 16;
+pub(crate) const ABS_HAT0Y: u16 = 17;
+pub(crate) const ABS_HAT1X: u16 = 18;
+pub(crate) const ABS_HAT1Y: u16 = 19;
+pub(crate) const ABS_HAT2X: u16 = 20;
+pub(crate) const ABS_HAT2Y: u16 = 21;
+pub(crate) const ABS_HAT3X: u16 = 22;
+pub(crate) const ABS_HAT3Y: u16 = 23;

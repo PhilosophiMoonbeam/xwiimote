@@ -7,6 +7,14 @@ use wiiland_core::{
     TraceFilter,
 };
 
+/// Controls whether the daemon publishes its IPC server.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum IpcMode {
+    Auto,
+    Disabled,
+    Path(PathBuf),
+}
+
 /// The mutually-exclusive top-level operations accepted by `wiilandd`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Action {
@@ -46,13 +54,15 @@ impl Action {
     }
 }
 
-/// Results of the first pass. This pass only discovers config layering and
-/// operations; all value options are deliberately deferred until after config.
+/// Results of the first pass. This pass discovers config layering, IPC mode,
+/// and operations; all other value options are deliberately deferred until
+/// after config.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Pass1 {
     pub config_path: Option<PathBuf>,
     pub explicit_config: bool,
     pub no_config: bool,
+    pub ipc: IpcMode,
     pub action: Action,
 }
 
@@ -63,6 +73,7 @@ pub struct Cli {
     pub config_path: Option<PathBuf>,
     pub explicit_config: bool,
     pub no_config: bool,
+    pub ipc: IpcMode,
     pub device: Option<String>,
     pub dry_run: bool,
     pub verbose: bool,
@@ -128,12 +139,32 @@ fn requested_action(
     Ok(())
 }
 
+fn ipc_path(value: &str, option: &str) -> Result<PathBuf, CliError> {
+    if value.is_empty() {
+        return Err(CliError::syntax(format!(
+            "wiilandd: {} requires a path",
+            option
+        )));
+    }
+    let path = PathBuf::from(value);
+    if !path.is_absolute() {
+        return Err(CliError::syntax(format!(
+            "wiilandd: {} requires an absolute path",
+            option
+        )));
+    }
+    Ok(path)
+}
+
 impl Cli {
-    /// Parse the config selectors and action hints without applying any value.
+    /// Parse the config selectors, IPC mode, and action hints without
+    /// applying any value. Value options are deliberately deferred until
+    /// after config.
     pub fn parse_pass1(args: &[String]) -> Result<Pass1, CliError> {
         let mut config_path = None;
         let mut explicit_config = false;
         let mut no_config = false;
+        let mut ipc = IpcMode::Auto;
         let mut action = Action::Run;
         let mut i = 0;
         while i < args.len() {
@@ -153,6 +184,31 @@ impl Cli {
                 explicit_config = true;
             } else if arg == "--no-config" {
                 no_config = true;
+            } else if arg == "--no-ipc" {
+                if matches!(&ipc, IpcMode::Path(_)) {
+                    return Err(CliError::conflict(
+                        "wiilandd: --no-ipc cannot be combined with --ipc-socket",
+                    ));
+                }
+                ipc = IpcMode::Disabled;
+            } else if let Some(path) = arg.strip_prefix("--ipc-socket=") {
+                if matches!(&ipc, IpcMode::Disabled) {
+                    return Err(CliError::conflict(
+                        "wiilandd: --no-ipc cannot be combined with --ipc-socket",
+                    ));
+                }
+                ipc = IpcMode::Path(ipc_path(path, "--ipc-socket")?);
+            } else if arg == "--ipc-socket" {
+                i += 1;
+                let Some(path) = args.get(i) else {
+                    return Err(CliError::syntax("wiilandd: --ipc-socket requires a path"));
+                };
+                if matches!(&ipc, IpcMode::Disabled) {
+                    return Err(CliError::conflict(
+                        "wiilandd: --no-ipc cannot be combined with --ipc-socket",
+                    ));
+                }
+                ipc = IpcMode::Path(ipc_path(path, "--ipc-socket")?);
             } else if arg == "-h" || arg == "--help" {
                 requested_action(&mut action, Action::Help, arg)?;
             } else if arg == "--version" {
@@ -185,6 +241,7 @@ impl Cli {
             config_path,
             explicit_config,
             no_config,
+            ipc,
             action,
         })
     }
@@ -203,6 +260,7 @@ impl Cli {
             config_path: pass1.config_path.clone(),
             explicit_config: pass1.explicit_config,
             no_config: pass1.no_config,
+            ipc: pass1.ipc.clone(),
             device: None,
             dry_run: false,
             verbose: false,
@@ -254,7 +312,12 @@ impl Cli {
             } else if arg == "--no-config" {
             } else if arg == "--config" {
                 i += 1;
-            } else if arg.starts_with("--config=") {
+            } else if arg.starts_with("--config=")
+                || arg == "--no-ipc"
+                || arg.starts_with("--ipc-socket=")
+            {
+            } else if arg == "--ipc-socket" {
+                i += 1;
             } else if arg == "-v" || arg == "--verbose" {
                 out.verbose = true;
             } else if arg == "-n" || arg == "--dry-run" {
@@ -455,7 +518,7 @@ fn bool_value(value: &str, option: &str) -> Result<bool, CliError> {
 }
 
 pub fn usage() -> &'static str {
-    "Usage:\n\twiilandd [OPTIONS]\n\twiilandd --device <number|/sys/path> [OPTIONS]\n\nOptions:\n\t-h, --help       Show this help\n\t    --version    Show version\n\t-l, --list       List connected Wii Remote devices and exit\n\t                 Combine with --verbose for devtype/extension\n\t-d, --device     Bridge one device instead of monitoring all devices\n\t-p, --profile    gamepad, desktop, or both (default: gamepad)\n\t    --backend <uinput>       Input backend (default: uinput)\n\t    --ir-speed <1-127>       IR pointer gain (default: 8)\n\t    --ir-deadzone <0-127>   IR jitter deadzone (default: 0)\n\t    --ir-smoothing <0-95>   IR smoothing percent (default: 0)\n\t    --ir-tracking <dual|centroid|first>\n\t    --ir-aim-mapping <relative|absolute>\n\t    --pointer-speed <1-127>  Desktop pointer step (default: 16)\n\t    --aim-mode <off|mouse|right-stick>\n\t    --aim-source <auto|ir|motion-plus|accelerometer>\n\t    --aim-activation <always|b|z|c>\n\t    --aim-sensitivity <1-127>\n\t    --aim-deadzone <0-32767>\n\t    --aim-smoothing <0-95>\n\t    --aim-invert-x <yes|no>\n\t    --aim-invert-y <yes|no>\n\t    --calibrate-aim\n\t    --aim-calibration-duration <1-30>\n\t-c, --config     Load key=value config file\n\t    --no-config  Do not load the default config file\n\t-n, --dry-run    Do not create /dev/uinput devices or emit input\n\t    --check-config  Validate configuration and exit\n\t    --self-test  Run deterministic self tests and exit\n\t    --trace-events[=all|keys|axes|ir|motion-plus]\n\t    --axis-map   Print virtual gamepad axis mapping and exit\n\t    --validation-checklist  Print required hardware validation matrix\n\t    --doctor    Print runtime readiness diagnostics and exit\n\t    --dump-config  Print resolved configuration and exit\n\t-v, --verbose    Print device lifecycle details\n\nwiilandd creates Linux uinput virtual input devices named\n\"WiiLand Virtual Controller\" and \"WiiLand Virtual Desktop\"\nthrough the common evdev/libinput input stack.\n"
+    "Usage:\n\twiilandd [OPTIONS]\n\twiilandd --device <number|/sys/path> [OPTIONS]\n\nOptions:\n\t-h, --help       Show this help\n\t    --version    Show version\n\t-l, --list       List connected Wii Remote devices and exit\n\t                 Combine with --verbose for devtype/extension\n\t-d, --device     Bridge one device instead of monitoring all devices\n\t-p, --profile    gamepad, desktop, or both (default: gamepad)\n\t    --backend <uinput>       Input backend (default: uinput)\n\t    --ir-speed <1-127>       IR pointer gain (default: 8)\n\t    --ir-deadzone <0-127>   IR jitter deadzone (default: 0)\n\t    --ir-smoothing <0-95>   IR smoothing percent (default: 0)\n\t    --ir-tracking <dual|centroid|first>\n\t    --ir-aim-mapping <relative|absolute>\n\t    --pointer-speed <1-127>  Desktop pointer step (default: 16)\n\t    --aim-mode <off|mouse|right-stick>\n\t    --aim-source <auto|ir|motion-plus|accelerometer>\n\t    --aim-activation <always|b|z|c>\n\t    --aim-sensitivity <1-127>\n\t    --aim-deadzone <0-32767>\n\t    --aim-smoothing <0-95>\n\t    --aim-invert-x <yes|no>\n\t    --aim-invert-y <yes|no>\n\t    --calibrate-aim\n\t    --aim-calibration-duration <1-30>\n\t-c, --config     Load key=value config file\n\t    --no-config   Do not load the default config file\n\t    --no-ipc      Disable the IPC server\n\t    --ipc-socket PATH\n\t                 Bind the IPC server to an explicit absolute path\n\t-n, --dry-run    Do not create /dev/uinput devices or emit input\n\t    --check-config  Validate configuration and exit\n\t    --self-test  Run deterministic self tests and exit\n\t    --trace-events[=all|keys|axes|ir|motion-plus]\n\t    --axis-map   Print virtual gamepad axis mapping and exit\n\t    --validation-checklist  Print required hardware validation matrix\n\t    --doctor    Print runtime readiness diagnostics and exit\n\t    --dump-config  Print resolved configuration and exit\n\t-v, --verbose    Print device lifecycle details\n\nwiilandd creates Linux uinput virtual input devices named\n\"WiiLand Virtual Controller\" and \"WiiLand Virtual Desktop\"\nthrough the common evdev/libinput input stack.\n"
 }
 
 /// Process the actual command line and return a Unix exit status.
@@ -477,5 +540,91 @@ pub fn run() -> i32 {
             eprintln!("{}", e);
             e.code()
         }
+    }
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn pass(args: &[&str]) -> Pass1 {
+        let args = args.iter().map(|arg| (*arg).to_owned()).collect::<Vec<_>>();
+        Cli::parse_pass1(&args).unwrap()
+    }
+
+    #[test]
+    fn ipc_defaults_to_auto_and_is_independent_of_config() {
+        let first = pass(&[]);
+        let second = pass(&["--no-config"]);
+        assert_eq!(first.ipc, IpcMode::Auto);
+        assert_eq!(second.ipc, IpcMode::Auto);
+        assert_ne!(first.no_config, second.no_config);
+    }
+
+    #[test]
+    fn ipc_accepts_both_path_forms() {
+        assert_eq!(pass(&["--no-ipc"]).ipc, IpcMode::Disabled);
+        assert_eq!(
+            pass(&["--ipc-socket", "/tmp/wiilandd.sock"]).ipc,
+            IpcMode::Path(PathBuf::from("/tmp/wiilandd.sock"))
+        );
+        assert_eq!(
+            pass(&["--ipc-socket=/tmp/wiilandd.sock"]).ipc,
+            IpcMode::Path(PathBuf::from("/tmp/wiilandd.sock"))
+        );
+    }
+
+    #[test]
+    fn ipc_rejects_empty_and_relative_paths() {
+        for args in [
+            vec!["--ipc-socket", ""],
+            vec!["--ipc-socket="],
+            vec!["--ipc-socket", "wiilandd.sock"],
+            vec!["--ipc-socket=wiilandd.sock"],
+        ] {
+            assert!(
+                Cli::parse_pass1(&args.into_iter().map(str::to_owned).collect::<Vec<_>>()).is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn ipc_rejects_no_ipc_conflicts() {
+        assert!(
+            Cli::parse_pass1(
+                &["--no-ipc", "--ipc-socket", "/tmp/wiilandd.sock"]
+                    .into_iter()
+                    .map(str::to_owned)
+                    .collect::<Vec<_>>()
+            )
+            .is_err()
+        );
+        assert!(
+            Cli::parse_pass1(
+                &["--ipc-socket=/tmp/wiilandd.sock", "--no-ipc"]
+                    .into_iter()
+                    .map(str::to_owned)
+                    .collect::<Vec<_>>()
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn ipc_socket_value_is_consumed_before_action_parsing() {
+        let parsed = pass(&["--ipc-socket", "/tmp/--help", "--help"]);
+        assert_eq!(parsed.action, Action::Help);
+        assert_eq!(parsed.ipc, IpcMode::Path(PathBuf::from("/tmp/--help")));
+    }
+
+    #[test]
+    fn pass2_preserves_ipc_without_touching_config() {
+        let pass1 = pass(&["--ipc-socket=/tmp/wiilandd.sock"]);
+        let config = Config::default();
+        let parsed = Cli::parse_pass2(&[], config.clone(), pass1).unwrap();
+        assert_eq!(
+            parsed.ipc,
+            IpcMode::Path(PathBuf::from("/tmp/wiilandd.sock"))
+        );
+        assert_eq!(parsed.config, config);
     }
 }

@@ -231,6 +231,42 @@ and
 .BR --calibrate-aim .
 Conflicting actions and malformed or unknown options are rejected before an
 action runs.
+.TP
+.B --ipc-socket PATH
+Enable the private daemon IPC socket at the required absolute Unix-socket
+path.  The parent directory is created privately when absent; binding
+failures, including a live or unsafe existing path, are fatal.  This option
+overrides the automatic socket path.  It conflicts with
+.BR --no-ipc .
+.TP
+.B --no-ipc
+Disable the private daemon IPC socket.  This option conflicts with
+.BR --ipc-socket .
+Without either option, IPC is automatic only when
+.B XDG_RUNTIME_DIR
+is set to an absolute path.
+.PP
+.SH IPC
+The daemon IPC transport is a private per-user Unix stream socket carrying
+newline-delimited UTF-8 JSON.  The normative version-1 wire protocol,
+including framing, requests, responses, notifications, and compatibility
+rules, is documented in
+.BR DAEMON_PROTOCOL ,
+normally installed as
+.BR /usr/share/doc/wiiland/DAEMON_PROTOCOL .
+The default path is
+.BR $XDG_RUNTIME_DIR/wiiland/wiilandd.sock .
+Automatic mode does not create a socket when
+.B XDG_RUNTIME_DIR
+is missing or relative.  An explicit
+.B --ipc-socket
+path must be absolute and binding errors are fatal.
+.PP
+The socket parent is mode 0700 and the socket is mode 0600; both must be owned
+by the daemon's effective user.  An existing live socket is never taken over.
+Only a stale socket with the same observed inode is removed, and shutdown
+unlinks only the inode bound by this daemon.  There is no socket activation,
+installed socket, C ABI, or installed client interface.
 .SH CONFIGURATION
 Configuration files contain one
 .B key=value

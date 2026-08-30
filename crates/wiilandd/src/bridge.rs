@@ -1,6 +1,7 @@
 //! Per-device event bridge and output lifecycle.
 use crate::uinput::{Backend, VirtualDevice, VirtualKind};
 use std::cell::Cell;
+use std::io;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use wiiland_core::aim::{AimConfig, AimState};
@@ -11,14 +12,84 @@ use wiiland_core::pointer::{
 use wiiland_core::{
     AbsPayload, Config, KeyPayload, Profile, TraceEvent, TraceFilter, TracePayload,
 };
-use wiiland_hid::Interface;
-use wiiland_hid::decode::{Abs, Event, EventKind, Key};
-use wiiland_hid::model;
+use wiiland_hid::{
+    Axis3, Button, ButtonEvent, ButtonState, Event, EventKind, Interface, InterfaceMask,
+};
 
 pub const MAX_EVENTS_PER_DRAIN: usize = 256;
 pub const PROFILE_GAMEPAD: u8 = Profile::GAMEPAD.bits();
 pub const PROFILE_DESKTOP: u8 = Profile::DESKTOP.bits();
 
+fn io_errno(error: &io::Error) -> i32 {
+    -error.raw_os_error().unwrap_or(libc::EIO)
+}
+
+fn button_code(button: Button) -> Option<u32> {
+    Some(match button {
+        Button::Left => 0,
+        Button::Right => 1,
+        Button::Up => 2,
+        Button::Down => 3,
+        Button::Plus => 6,
+        Button::Minus => 7,
+        Button::One => 9,
+        Button::Two => 10,
+        Button::A => 4,
+        Button::B => 5,
+        Button::Home => 8,
+        Button::C => 19,
+        Button::Z => 20,
+        Button::X => 11,
+        Button::Y => 12,
+        Button::ShoulderLeft => 13,
+        Button::ShoulderRight => 14,
+        Button::TriggerLeft => 15,
+        Button::TriggerRight => 16,
+        Button::ThumbLeft => 17,
+        Button::ThumbRight => 18,
+        Button::StrumBarUp => 21,
+        Button::StrumBarDown => 22,
+        Button::FretFarUp => 23,
+        Button::FretUp => 24,
+        Button::FretMid => 25,
+        Button::FretLow => 26,
+        Button::FretFarLow => 27,
+        _ => return None,
+    })
+}
+
+fn button_state(state: ButtonState) -> Option<u32> {
+    match state {
+        ButtonState::Released => Some(0),
+        ButtonState::Pressed => Some(1),
+        ButtonState::Repeated => Some(2),
+        _ => None,
+    }
+}
+
+fn event_type_code(kind: EventKind) -> u32 {
+    match kind {
+        EventKind::Key(_) => 0,
+        EventKind::Accel(_) => 1,
+        EventKind::Ir(_) => 2,
+        EventKind::BalanceBoard(_) => 3,
+        EventKind::MotionPlus(_) => 4,
+        EventKind::ProControllerKey(_) => 5,
+        EventKind::ProControllerMove(_) => 6,
+        EventKind::Watch => 7,
+        EventKind::ClassicControllerKey(_) => 8,
+        EventKind::ClassicControllerMove(_) => 9,
+        EventKind::NunchukKey(_) => 10,
+        EventKind::NunchukMove(_) => 11,
+        EventKind::DrumsKey(_) => 12,
+        EventKind::DrumsMove(_) => 13,
+        EventKind::GuitarKey(_) => 14,
+        EventKind::GuitarMove(_) => 15,
+        EventKind::Gone => 16,
+        EventKind::Unknown(value) => value,
+        _ => u32::MAX,
+    }
+}
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum BridgeAction {
     Continue,
@@ -59,7 +130,7 @@ impl TraceContext {
     }
 
     fn emit(&mut self, syspath: &Path, event: &Event) {
-        if !self.filter.matches(event.kind.raw_type()) {
+        if !self.filter.matches(event_type_code(event.kind)) {
             return;
         }
         let sequence = self.sequence.get() + 1;
@@ -78,8 +149,8 @@ pub struct BridgeDevice<B: Backend + Clone = crate::uinput::SystemBackend> {
     pub desktop: Option<VirtualDevice<B>>,
     pub pointer: PointerState,
     pub aim: AimState,
-    pub opened_ifaces: model::InterfaceMask,
-    pub pending_ifaces: model::InterfaceMask,
+    pub opened_ifaces: InterfaceMask,
+    pub pending_ifaces: InterfaceMask,
     trace: Option<TraceContext>,
     config: Config,
     backend: B,
@@ -100,18 +171,23 @@ impl<B: Backend + Clone> BridgeDevice<B> {
         backend: B,
         outputs_enabled: bool,
     ) -> Result<Self, i32> {
-        let iface = Interface::new(path.as_ref())?;
+        let iface = Interface::new(path.as_ref()).map_err(|error| io_errno(&error))?;
         let syspath = iface.syspath().to_path_buf();
         let devtype = iface.attr("devtype").ok();
         let profile = profile_for_device(config, &syspath, devtype.as_deref());
         let mut iface = iface;
-        iface.watch(true)?;
+        iface.watch(true).map_err(|error| io_errno(&error))?;
         let requested = requested_interfaces(profile, config);
         let mut pending = requested;
         let opened_result = iface.open(requested);
-        let opened = iface.opened();
-        if opened.is_empty() {
-            opened_result?;
+        let opened = match &opened_result {
+            Ok(mask) => *mask,
+            Err(error) => error.opened(),
+        };
+        if opened.is_empty()
+            && let Err(error) = opened_result
+        {
+            return Err(io_errno(error.source()));
         }
         pending &= !opened;
         let (gamepad, desktop) = create_outputs(profile, config, &backend, outputs_enabled)?;
@@ -148,9 +224,6 @@ impl<B: Backend + Clone> BridgeDevice<B> {
     ) {
         self.trace = Some(TraceContext::new(filter, sequence, sink));
     }
-    pub fn fd(&self) -> i32 {
-        self.iface.fd()
-    }
     pub fn path(&self) -> &Path {
         &self.syspath
     }
@@ -159,7 +232,11 @@ impl<B: Backend + Clone> BridgeDevice<B> {
             return Ok(());
         }
         let result = self.iface.open(self.pending_ifaces);
-        self.opened_ifaces = self.iface.opened();
+        let opened = match &result {
+            Ok(mask) => *mask,
+            Err(error) => error.opened(),
+        };
+        self.opened_ifaces = opened;
         self.pending_ifaces &= !self.opened_ifaces;
         if !(self.opened_ifaces & requested_interfaces(self.profile, &self.config)).is_empty() {
             if result.is_err() && !self.pending_ifaces.is_empty() {
@@ -167,7 +244,10 @@ impl<B: Backend + Clone> BridgeDevice<B> {
             }
             return Ok(());
         }
-        result.or(Err(-libc::ENODEV))
+        match result {
+            Ok(_) => Err(-libc::ENODEV),
+            Err(error) => Err(io_errno(error.source())),
+        }
     }
     pub fn handle_watch(&mut self) -> Result<(), i32> {
         let opened = self.iface.opened();
@@ -195,19 +275,26 @@ impl<B: Backend + Clone> BridgeDevice<B> {
         Ok(())
     }
     pub fn drain(&mut self) -> Result<BridgeAction, i32> {
+        self.drain_with(|_, _| {})
+    }
+    pub fn drain_with<F>(&mut self, mut observer: F) -> Result<BridgeAction, i32>
+    where
+        F: FnMut(&Path, &Event),
+    {
         for _ in 0..MAX_EVENTS_PER_DRAIN {
             match self.iface.dispatch() {
                 Ok(event) => {
                     self.trace(&event);
+                    observer(&self.syspath, &event);
                     match self.handle_event(&event)? {
                         BridgeAction::Continue => {}
                         BridgeAction::Gone => return Ok(BridgeAction::Gone),
                     }
                 }
-                Err(e) if e == -libc::EAGAIN || e == -libc::EWOULDBLOCK => {
+                Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
                     return Ok(BridgeAction::Continue);
                 }
-                Err(e) => return Err(e),
+                Err(e) => return Err(io_errno(&e)),
             }
         }
         Ok(BridgeAction::Continue)
@@ -263,7 +350,7 @@ impl<B: Backend + Clone> BridgeDevice<B> {
                 let mut frame = IrFrame::default();
                 for (point, value) in frame.points.iter_mut().zip(values) {
                     *point = IrPoint {
-                        valid: model::is_valid_ir_point(&value),
+                        valid: valid_ir_point(&value),
                         x: value.x,
                         y: value.y,
                     };
@@ -281,23 +368,29 @@ impl<B: Backend + Clone> BridgeDevice<B> {
         Ok(BridgeAction::Continue)
     }
 
-    fn handle_key(&mut self, key: Key) -> Result<(), i32> {
+    fn handle_key(&mut self, key: ButtonEvent) -> Result<(), i32> {
+        let Some(state) = button_state(key.state) else {
+            return Ok(());
+        };
+        let Some(code) = button_code(key.button) else {
+            return Ok(());
+        };
         if needs_gamepad(self.profile, &self.config)
             && self.outputs_enabled
-            && let Some(mapped) = mapping::map_key(key.code)
+            && let Some(mapped) = mapping::map_key(code)
             && let Some(out) = self.gamepad.as_mut()
         {
-            out.emit_key(mapped, key.state)?;
+            out.emit_key(mapped, state)?;
         }
         if has_desktop_profile(self.profile) {
-            self.desktop_key(key.code, key.state)?;
-            self.pointer_key(key.code, key.state)?;
+            self.desktop_key(code, state)?;
+            self.pointer_key(code, state)?;
         }
-        let result = self.aim.activation_key(key.code, key.state != 0);
+        let result = self.aim.activation_key(code, state != 0);
         self.emit_aim(result)
     }
 
-    fn handle_motion(&mut self, kind: MotionKind, values: &[Abs]) -> Result<(), i32> {
+    fn handle_motion(&mut self, kind: MotionKind, values: &[Axis3]) -> Result<(), i32> {
         if !needs_gamepad(self.profile, &self.config) || !self.outputs_enabled {
             return Ok(());
         }
@@ -323,13 +416,13 @@ impl<B: Backend + Clone> BridgeDevice<B> {
             return Ok(());
         }
         let action = match code {
-            model::BUTTON_A => self.config.desktop_bindings.a,
-            model::BUTTON_B => self.config.desktop_bindings.b,
-            model::BUTTON_PLUS => self.config.desktop_bindings.plus,
-            model::BUTTON_MINUS => self.config.desktop_bindings.minus,
-            model::BUTTON_HOME => self.config.desktop_bindings.home,
-            model::BUTTON_ONE => self.config.desktop_bindings.one,
-            model::BUTTON_TWO => self.config.desktop_bindings.two,
+            4 => self.config.desktop_bindings.a,
+            5 => self.config.desktop_bindings.b,
+            6 => self.config.desktop_bindings.plus,
+            7 => self.config.desktop_bindings.minus,
+            8 => self.config.desktop_bindings.home,
+            9 => self.config.desktop_bindings.one,
+            10 => self.config.desktop_bindings.two,
             _ => wiiland_core::DesktopAction::Disabled,
         };
         let code = match action {
@@ -350,10 +443,10 @@ impl<B: Backend + Clone> BridgeDevice<B> {
     }
     fn pointer_key(&mut self, code: u32, state: u32) -> Result<(), i32> {
         let bit = match code {
-            model::BUTTON_LEFT => POINTER_LEFT,
-            model::BUTTON_RIGHT => POINTER_RIGHT,
-            model::BUTTON_UP => POINTER_UP,
-            model::BUTTON_DOWN => POINTER_DOWN,
+            0 => POINTER_LEFT,
+            1 => POINTER_RIGHT,
+            2 => POINTER_UP,
+            3 => POINTER_DOWN,
             _ => return Ok(()),
         };
         let d = self.pointer.update_key(bit, state != 0);
@@ -456,47 +549,49 @@ fn create_outputs<B: Backend + Clone>(
     };
     Ok((gamepad, desktop))
 }
-pub fn requested_interfaces(p: Profile, c: &Config) -> model::InterfaceMask {
-    let mut interfaces = model::InterfaceMask::empty();
+pub fn requested_interfaces(p: Profile, c: &Config) -> InterfaceMask {
+    let mut interfaces = InterfaceMask::empty();
     if p.contains(Profile::GAMEPAD) {
-        interfaces = model::InterfaceMask::ALL & !model::InterfaceMask::IR;
+        interfaces = InterfaceMask::ALL & !InterfaceMask::IR;
     }
     if p.contains(Profile::DESKTOP) {
-        interfaces |= model::InterfaceMask::CORE | model::InterfaceMask::IR;
+        interfaces |= InterfaceMask::CORE | InterfaceMask::IR;
     }
     if c.aim_mode != wiiland_core::AimMode::Off {
         interfaces |= match c.aim_source {
-            wiiland_core::AimSource::Ir => model::InterfaceMask::IR,
-            wiiland_core::AimSource::MotionPlus => model::InterfaceMask::MOTION_PLUS,
-            wiiland_core::AimSource::Accelerometer => model::InterfaceMask::ACCEL,
+            wiiland_core::AimSource::Ir => InterfaceMask::IR,
+            wiiland_core::AimSource::MotionPlus => InterfaceMask::MOTION_PLUS,
+            wiiland_core::AimSource::Accelerometer => InterfaceMask::ACCEL,
             wiiland_core::AimSource::Auto => {
-                model::InterfaceMask::IR
-                    | model::InterfaceMask::MOTION_PLUS
-                    | model::InterfaceMask::ACCEL
+                InterfaceMask::IR | InterfaceMask::MOTION_PLUS | InterfaceMask::ACCEL
             }
         };
         if matches!(
             c.aim_activation,
             wiiland_core::AimActivation::Z | wiiland_core::AimActivation::C
         ) {
-            interfaces |= model::InterfaceMask::NUNCHUK;
+            interfaces |= InterfaceMask::NUNCHUK;
         }
     }
     interfaces
 }
-fn key_event(kind: EventKind) -> Option<Key> {
-    match kind {
+fn valid_ir_point(abs: &Axis3) -> bool {
+    abs.x != 1023 || abs.y != 1023
+}
+fn key_event(kind: EventKind) -> Option<(u32, u32)> {
+    let key = match kind {
         EventKind::Key(key)
         | EventKind::NunchukKey(key)
         | EventKind::ClassicControllerKey(key)
         | EventKind::ProControllerKey(key)
         | EventKind::GuitarKey(key)
-        | EventKind::DrumsKey(key) => Some(key),
-        _ => None,
-    }
+        | EventKind::DrumsKey(key) => key,
+        _ => return None,
+    };
+    Some((button_code(key.button)?, button_state(key.state)?))
 }
 
-fn axis_events(kind: &EventKind) -> &[Abs] {
+fn axis_events(kind: &EventKind) -> &[Axis3] {
     match kind {
         EventKind::Accel(value) | EventKind::MotionPlus(value) => std::slice::from_ref(value),
         EventKind::Ir(values) | EventKind::BalanceBoard(values) => values,
@@ -521,11 +616,8 @@ fn monotonic_time_us() -> i64 {
 }
 
 fn format_trace_line(sequence: u64, monotonic_us: i64, syspath: &Path, event: &Event) -> String {
-    let payload = if let Some(key) = key_event(event.kind) {
-        TracePayload::Key(KeyPayload {
-            code: key.code,
-            state: key.state,
-        })
+    let payload = if let Some((code, state)) = key_event(event.kind) {
+        TracePayload::Key(KeyPayload { code, state })
     } else {
         let axes = axis_events(&event.kind);
         if axes.is_empty() {
@@ -547,7 +639,7 @@ fn format_trace_line(sequence: u64, monotonic_us: i64, syspath: &Path, event: &E
         sequence,
         Some(monotonic_us),
         syspath.to_string_lossy(),
-        event.kind.raw_type(),
+        event_type_code(event.kind),
         payload,
     )
     .format_line();
@@ -563,6 +655,13 @@ mod tests {
     use crate::uinput::{RecordingBackend, RecordingOp};
     use std::cell::RefCell;
     use wiiland_core::{AimActivation, AimMode, AimSource, DeviceRule, DeviceRuleKind};
+
+    #[test]
+    fn button_states_preserve_linux_input_values() {
+        assert_eq!(button_state(ButtonState::Released), Some(0));
+        assert_eq!(button_state(ButtonState::Pressed), Some(1));
+        assert_eq!(button_state(ButtonState::Repeated), Some(2));
+    }
 
     #[test]
     fn disabled_outputs_remain_absent_when_recreated_after_watch() {
@@ -641,10 +740,7 @@ mod tests {
                 aim_activation: activation,
                 ..Config::default()
             };
-            assert!(
-                requested_interfaces(config.profile, &config)
-                    .contains(model::InterfaceMask::NUNCHUK)
-            );
+            assert!(requested_interfaces(config.profile, &config).contains(InterfaceMask::NUNCHUK));
         }
 
         let config = Config {
@@ -654,9 +750,8 @@ mod tests {
             aim_activation: AimActivation::B,
             ..Config::default()
         };
-        assert!(
-            !requested_interfaces(config.profile, &config).contains(model::InterfaceMask::NUNCHUK)
-        );
+
+        assert!(!requested_interfaces(config.profile, &config).contains(InterfaceMask::NUNCHUK));
     }
 
     #[test]
@@ -684,13 +779,13 @@ mod tests {
     #[test]
     fn trace_lines_use_emission_time_and_include_name_type_and_key_payload() {
         let event = Event {
-            time: libc::timeval {
-                tv_sec: 99,
-                tv_usec: 999,
+            time: wiiland_hid::Timestamp {
+                seconds: 99,
+                microseconds: 999,
             },
-            kind: EventKind::NunchukKey(Key {
-                code: model::BUTTON_Z,
-                state: 1,
+            kind: EventKind::NunchukKey(ButtonEvent {
+                button: Button::Z,
+                state: ButtonState::Pressed,
             }),
         };
 
@@ -703,11 +798,11 @@ mod tests {
     #[test]
     fn trace_lines_include_all_eight_absolute_payloads() {
         let event = Event {
-            time: libc::timeval {
-                tv_sec: 0,
-                tv_usec: 0,
+            time: wiiland_hid::Timestamp {
+                seconds: 0,
+                microseconds: 0,
             },
-            kind: EventKind::DrumsMove(std::array::from_fn(|i| Abs {
+            kind: EventKind::DrumsMove(std::array::from_fn(|i| Axis3 {
                 x: i as i32,
                 y: -(i as i32),
                 z: (i * 10) as i32,
@@ -755,16 +850,16 @@ mod tests {
             },
         );
         let watch = Event {
-            time: libc::timeval {
-                tv_sec: 0,
-                tv_usec: 0,
+            time: wiiland_hid::Timestamp {
+                seconds: 0,
+                microseconds: 0,
             },
             kind: EventKind::Watch,
         };
         let gone = Event {
-            time: libc::timeval {
-                tv_sec: 0,
-                tv_usec: 0,
+            time: wiiland_hid::Timestamp {
+                seconds: 0,
+                microseconds: 0,
             },
             kind: EventKind::Gone,
         };

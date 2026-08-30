@@ -20,4 +20,8 @@ path = "src/bin/wiilandd-hardware-report.rs"
 [dependencies]
 libc.workspace = true
 wiiland-core = { path = "../wiiland-core" }
+wiiland-ipc = { path = "../wiiland-ipc" }
 wiiland-hid = { path = "../wiiland-hid" }
+
+[dev-dependencies]
+tempfile.workspace = true

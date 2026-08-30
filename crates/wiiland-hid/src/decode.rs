@@ -1,14 +1,15 @@
-//! Pure evdev decoders and state machines.
-//!
-//! No file descriptors or ioctl calls live here.  The device layer supplies
-//! [`InputEvent`] values and, after a SYN_DROPPED, the current key/absolute
-//! state to [`RecoveryState`].
+//! Private evdev decoder and state machine implementation.
 
-use crate::model::*;
+use crate::model::{
+    ABS_HAT0X, ABS_HAT0Y, ABS_HAT1X, ABS_HAT1Y, ABS_HAT2X, ABS_HAT2Y, ABS_HAT3X, ABS_HAT3Y, ABS_RX,
+    ABS_RY, ABS_RZ, ABS_X, ABS_Y, Axis3, BTN_1, BTN_2, BTN_3, BTN_4, BTN_5, BTN_A, BTN_B, BTN_C,
+    BTN_DPAD_DOWN, BTN_DPAD_LEFT, BTN_DPAD_RIGHT, BTN_DPAD_UP, BTN_EAST, BTN_MODE, BTN_NORTH,
+    BTN_SELECT, BTN_SOUTH, BTN_START, BTN_THUMBL, BTN_THUMBR, BTN_TL, BTN_TL2, BTN_TR, BTN_TR2,
+    BTN_WEST, BTN_X, BTN_Y, BTN_Z, Button, ButtonEvent, ButtonState, DRUM_SLOT_COUNT, EV_ABS,
+    EV_KEY, EV_SYN, InputEvent, KEY_DOWN, KEY_LEFT, KEY_NEXT, KEY_PREVIOUS, KEY_RIGHT, KEY_UP,
+    SYN_DROPPED, SYN_REPORT, Timestamp,
+};
 use libc::timeval;
-
-pub type Abs = Axis3;
-pub type Key = ButtonEvent;
 
 /// Typed event discriminant with an explicit future-value case.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -33,56 +34,10 @@ pub enum EventType {
     Gone,
     Unknown(u32),
 }
-impl EventType {
-    pub const fn from_raw(value: u32) -> Self {
-        match value {
-            EVENT_CODE_KEY => Self::Key,
-            EVENT_CODE_ACCEL => Self::Accel,
-            EVENT_CODE_IR => Self::Ir,
-            EVENT_CODE_BALANCE_BOARD => Self::BalanceBoard,
-            EVENT_CODE_MOTION_PLUS => Self::MotionPlus,
-            EVENT_CODE_PRO_CONTROLLER_KEY => Self::ProControllerKey,
-            EVENT_CODE_PRO_CONTROLLER_MOVE => Self::ProControllerMove,
-            EVENT_CODE_WATCH => Self::Watch,
-            EVENT_CODE_CLASSIC_CONTROLLER_KEY => Self::ClassicControllerKey,
-            EVENT_CODE_CLASSIC_CONTROLLER_MOVE => Self::ClassicControllerMove,
-            EVENT_CODE_NUNCHUK_KEY => Self::NunchukKey,
-            EVENT_CODE_NUNCHUK_MOVE => Self::NunchukMove,
-            EVENT_CODE_DRUMS_KEY => Self::DrumsKey,
-            EVENT_CODE_DRUMS_MOVE => Self::DrumsMove,
-            EVENT_CODE_GUITAR_KEY => Self::GuitarKey,
-            EVENT_CODE_GUITAR_MOVE => Self::GuitarMove,
-            EVENT_CODE_GONE => Self::Gone,
-            other => Self::Unknown(other),
-        }
-    }
-    pub const fn raw(self) -> u32 {
-        match self {
-            Self::Key => EVENT_CODE_KEY,
-            Self::Accel => EVENT_CODE_ACCEL,
-            Self::Ir => EVENT_CODE_IR,
-            Self::BalanceBoard => EVENT_CODE_BALANCE_BOARD,
-            Self::MotionPlus => EVENT_CODE_MOTION_PLUS,
-            Self::ProControllerKey => EVENT_CODE_PRO_CONTROLLER_KEY,
-            Self::ProControllerMove => EVENT_CODE_PRO_CONTROLLER_MOVE,
-            Self::Watch => EVENT_CODE_WATCH,
-            Self::ClassicControllerKey => EVENT_CODE_CLASSIC_CONTROLLER_KEY,
-            Self::ClassicControllerMove => EVENT_CODE_CLASSIC_CONTROLLER_MOVE,
-            Self::NunchukKey => EVENT_CODE_NUNCHUK_KEY,
-            Self::NunchukMove => EVENT_CODE_NUNCHUK_MOVE,
-            Self::DrumsKey => EVENT_CODE_DRUMS_KEY,
-            Self::DrumsMove => EVENT_CODE_DRUMS_MOVE,
-            Self::GuitarKey => EVENT_CODE_GUITAR_KEY,
-            Self::GuitarMove => EVENT_CODE_GUITAR_MOVE,
-            Self::Gone => EVENT_CODE_GONE,
-            Self::Unknown(v) => v,
-        }
-    }
-}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
-pub enum InterfaceKind {
+pub(crate) enum InterfaceKind {
     Core,
     Accel,
     Ir,
@@ -98,87 +53,51 @@ pub enum InterfaceKind {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum EventKind {
-    Key(Key),
-    Accel(Abs),
-    Ir([Abs; 4]),
-    BalanceBoard([Abs; 4]),
-    MotionPlus(Abs),
-    ProControllerKey(Key),
-    ProControllerMove([Abs; 2]),
+    Key(ButtonEvent),
+    Accel(Axis3),
+    Ir([Axis3; 4]),
+    BalanceBoard([Axis3; 4]),
+    MotionPlus(Axis3),
+    ProControllerKey(ButtonEvent),
+    ProControllerMove([Axis3; 2]),
     Watch,
-    ClassicControllerKey(Key),
-    ClassicControllerMove([Abs; 3]),
-    NunchukKey(Key),
-    NunchukMove([Abs; 2]),
-    DrumsKey(Key),
-    DrumsMove([Abs; DRUM_SLOT_COUNT]),
-    GuitarKey(Key),
-    GuitarMove([Abs; 3]),
+    ClassicControllerKey(ButtonEvent),
+    ClassicControllerMove([Axis3; 3]),
+    NunchukKey(ButtonEvent),
+    NunchukMove([Axis3; 2]),
+    DrumsKey(ButtonEvent),
+    DrumsMove([Axis3; 8]),
+    GuitarKey(ButtonEvent),
+    GuitarMove([Axis3; 3]),
     Gone,
     Unknown(u32),
 }
 
-impl EventKind {
-    pub const fn raw_type(self) -> u32 {
-        match self {
-            Self::Key(_) => EVENT_CODE_KEY,
-            Self::Accel(_) => EVENT_CODE_ACCEL,
-            Self::Ir(_) => EVENT_CODE_IR,
-            Self::BalanceBoard(_) => EVENT_CODE_BALANCE_BOARD,
-            Self::MotionPlus(_) => EVENT_CODE_MOTION_PLUS,
-            Self::ProControllerKey(_) => EVENT_CODE_PRO_CONTROLLER_KEY,
-            Self::ProControllerMove(_) => EVENT_CODE_PRO_CONTROLLER_MOVE,
-            Self::Watch => EVENT_CODE_WATCH,
-            Self::ClassicControllerKey(_) => EVENT_CODE_CLASSIC_CONTROLLER_KEY,
-            Self::ClassicControllerMove(_) => EVENT_CODE_CLASSIC_CONTROLLER_MOVE,
-            Self::NunchukKey(_) => EVENT_CODE_NUNCHUK_KEY,
-            Self::NunchukMove(_) => EVENT_CODE_NUNCHUK_MOVE,
-            Self::DrumsKey(_) => EVENT_CODE_DRUMS_KEY,
-            Self::DrumsMove(_) => EVENT_CODE_DRUMS_MOVE,
-            Self::GuitarKey(_) => EVENT_CODE_GUITAR_KEY,
-            Self::GuitarMove(_) => EVENT_CODE_GUITAR_MOVE,
-            Self::Gone => EVENT_CODE_GONE,
-            Self::Unknown(v) => v,
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Event {
-    pub time: timeval,
+    pub time: Timestamp,
     pub kind: EventKind,
 }
 
-impl PartialEq for Event {
-    fn eq(&self, other: &Self) -> bool {
-        self.time.tv_sec == other.time.tv_sec
-            && self.time.tv_usec == other.time.tv_usec
-            && self.kind == other.kind
-    }
-}
-
-impl Eq for Event {}
-
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub struct MotionPlusNormalizer {
-    offsets: Abs,
+pub(crate) struct MotionPlusNormalizer {
+    offsets: Axis3,
     factor: i32,
 }
-
 impl MotionPlusNormalizer {
-    pub const fn new() -> Self {
+    pub(crate) const fn new() -> Self {
         Self {
-            offsets: Abs { x: 0, y: 0, z: 0 },
+            offsets: Axis3 { x: 0, y: 0, z: 0 },
             factor: 0,
         }
     }
-    pub fn set(&mut self, x: i32, y: i32, z: i32, factor: i32) {
+    pub(crate) fn set(&mut self, x: i32, y: i32, z: i32, factor: i32) {
         self.offsets.x = scale_offset(x);
         self.offsets.y = scale_offset(y);
         self.offsets.z = scale_offset(z);
         self.factor = factor;
     }
-    pub const fn values(&self) -> (i32, i32, i32, i32) {
+    pub(crate) const fn values(&self) -> (i32, i32, i32, i32) {
         (
             self.offsets.x / 100,
             self.offsets.y / 100,
@@ -186,15 +105,14 @@ impl MotionPlusNormalizer {
             self.factor,
         )
     }
-    pub fn normalize(&mut self, value: Abs) -> Abs {
-        Abs {
+    pub(crate) fn normalize(&mut self, value: Axis3) -> Axis3 {
+        Axis3 {
             x: normalize_axis(value.x, &mut self.offsets.x, self.factor),
             y: normalize_axis(value.y, &mut self.offsets.y, self.factor),
             z: normalize_axis(value.z, &mut self.offsets.z, self.factor),
         }
     }
 }
-
 fn scale_offset(value: i32) -> i32 {
     (i64::from(value) * 100).clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32
 }
@@ -212,12 +130,11 @@ fn normalize_axis(value: i32, offset: &mut i32, factor: i32) -> i32 {
     }
     normalized
 }
-
 const KEY_WORDS: usize = 12; // KEY_MAX is 0x2ff on Linux (768 bits).
 
 /// State needed to preserve deterministic `SYN_DROPPED` recovery ordering.
 #[derive(Clone, Debug)]
-pub struct RecoveryState {
+pub(crate) struct RecoveryState {
     key_state: [u64; KEY_WORDS],
     key_pending: [u64; KEY_WORDS],
     desynced: bool,
@@ -242,10 +159,10 @@ impl Default for RecoveryState {
     }
 }
 impl RecoveryState {
-    pub fn dropped(&mut self) {
+    pub(crate) fn dropped(&mut self) {
         self.desynced = true;
     }
-    pub const fn is_desynced(&self) -> bool {
+    pub(crate) const fn is_desynced(&self) -> bool {
         self.desynced
     }
     pub(crate) fn initialize(&mut self, keys: &[u64]) {
@@ -257,7 +174,7 @@ impl RecoveryState {
         self.key_resync_pending = false;
         self.report_resync_pending = false;
     }
-    pub fn seed(&mut self, keys: &[u64], time: timeval, has_abs: bool) {
+    pub(crate) fn seed(&mut self, keys: &[u64], time: timeval, has_abs: bool) {
         self.key_resync_pending = false;
         for i in 0..KEY_WORDS {
             let next = keys.get(i).copied().unwrap_or(0);
@@ -271,7 +188,7 @@ impl RecoveryState {
         self.report_resync_pending = has_abs;
         self.desynced = false;
     }
-    pub fn next_key(&mut self) -> Option<InputEvent> {
+    pub(crate) fn next_key(&mut self) -> Option<InputEvent> {
         if !self.key_resync_pending {
             return None;
         }
@@ -297,7 +214,7 @@ impl RecoveryState {
         self.key_resync_pending = false;
         None
     }
-    pub fn take_report(&mut self) -> Option<InputEvent> {
+    pub(crate) fn take_report(&mut self) -> Option<InputEvent> {
         if !self.report_resync_pending {
             return None;
         }
@@ -309,11 +226,8 @@ impl RecoveryState {
             value: 0,
         })
     }
-    pub const fn has_pending(&self) -> bool {
+    pub(crate) const fn has_pending(&self) -> bool {
         self.key_resync_pending || self.report_resync_pending
-    }
-    pub const fn key_state(&self) -> &[u64; KEY_WORDS] {
-        &self.key_state
     }
     fn remember(&mut self, input: InputEvent) {
         if input.event_type != EV_KEY
@@ -333,46 +247,46 @@ impl RecoveryState {
 }
 
 #[derive(Clone, Debug)]
-pub struct CacheState {
-    pub accel: Abs,
-    pub ir: [Abs; 4],
-    pub motion_plus: Abs,
-    pub nunchuk: [Abs; 2],
-    pub classic: [Abs; 3],
-    pub balance_board: [Abs; 4],
-    pub pro: [Abs; 2],
-    pub drums: [Abs; DRUM_SLOT_COUNT],
-    pub guitar: [Abs; 3],
+pub(crate) struct CacheState {
+    pub(crate) accel: Axis3,
+    pub(crate) ir: [Axis3; 4],
+    pub(crate) motion_plus: Axis3,
+    pub(crate) nunchuk: [Axis3; 2],
+    pub(crate) classic: [Axis3; 3],
+    pub(crate) balance_board: [Axis3; 4],
+    pub(crate) pro: [Axis3; 2],
+    pub(crate) drums: [Axis3; DRUM_SLOT_COUNT],
+    pub(crate) guitar: [Axis3; 3],
 }
 impl Default for CacheState {
     fn default() -> Self {
-        let mut ir = [Abs::default(); 4];
+        let mut ir = [Axis3::default(); 4];
         for p in &mut ir {
             p.x = 1023;
             p.y = 1023;
         }
         Self {
-            accel: Abs::default(),
+            accel: Axis3::default(),
             ir,
-            motion_plus: Abs::default(),
-            nunchuk: [Abs::default(); 2],
-            classic: [Abs::default(); 3],
-            balance_board: [Abs::default(); 4],
-            pro: [Abs::default(); 2],
-            drums: [Abs::default(); DRUM_SLOT_COUNT],
-            guitar: [Abs::default(); 3],
+            motion_plus: Axis3::default(),
+            nunchuk: [Axis3::default(); 2],
+            classic: [Axis3::default(); 3],
+            balance_board: [Axis3::default(); 4],
+            pro: [Axis3::default(); 2],
+            drums: [Axis3::default(); DRUM_SLOT_COUNT],
+            guitar: [Axis3::default(); 3],
         }
     }
 }
 
-pub struct Decoder {
-    pub interface: InterfaceKind,
-    pub cache: CacheState,
-    pub recovery: RecoveryState,
-    pub motion_plus: MotionPlusNormalizer,
+pub(crate) struct Decoder {
+    pub(crate) interface: InterfaceKind,
+    pub(crate) cache: CacheState,
+    pub(crate) recovery: RecoveryState,
+    pub(crate) motion_plus: MotionPlusNormalizer,
 }
 impl Decoder {
-    pub fn new(interface: InterfaceKind) -> Self {
+    pub(crate) fn new(interface: InterfaceKind) -> Self {
         Self {
             interface,
             cache: CacheState::default(),
@@ -380,15 +294,13 @@ impl Decoder {
             motion_plus: MotionPlusNormalizer::new(),
         }
     }
-    pub fn set_mp_normalization(&mut self, x: i32, y: i32, z: i32, factor: i32) {
+    pub(crate) fn set_mp_normalization(&mut self, x: i32, y: i32, z: i32, factor: i32) {
         self.motion_plus.set(x, y, z, factor);
     }
-    pub fn mp_normalization(&self) -> (i32, i32, i32, i32) {
+    pub(crate) fn mp_normalization(&self) -> (i32, i32, i32, i32) {
         self.motion_plus.values()
     }
-    /// Decode one input event.  Unsupported events and intermediate ABS events
-    /// return `None`; SYN_REPORT yields the complete cached typed event.
-    pub fn push(&mut self, input: InputEvent) -> Option<Event> {
+    pub(crate) fn push(&mut self, input: InputEvent) -> Option<Event> {
         if self.recovery.is_desynced() {
             if input.event_type == EV_SYN && input.code == SYN_REPORT {
                 return None;
@@ -412,25 +324,20 @@ impl Decoder {
         }
         None
     }
-    /// Initializes the decoder from the kernel snapshot taken while opening an
-    /// evdev node. Unlike recovery, initialization never queues synthetic
-    /// transitions or an absolute report.
     pub(crate) fn seed_state(&mut self, keys: &[u64], abs: &[(u16, i32)]) {
         for &(code, value) in abs {
             self.update_abs(code, value);
         }
         self.recovery.initialize(keys);
     }
-    /// Seed kernel state after a drop. Synthetic key transitions and a report
-    /// can then be consumed in order with [`Self::push_recovered`].
-    pub fn recover(&mut self, keys: &[u64], abs: &[(u16, i32)], time: timeval) {
+    pub(crate) fn recover(&mut self, keys: &[u64], abs: &[(u16, i32)], time: timeval) {
         for &(code, value) in abs {
             self.update_abs(code, value);
         }
         let has_abs = !abs_codes(self.interface).is_empty();
         self.recovery.seed(keys, time, has_abs);
     }
-    pub fn push_recovered(&mut self) -> Option<Event> {
+    pub(crate) fn push_recovered(&mut self) -> Option<Event> {
         if let Some(input) = self.recovery.next_key() {
             return self.decode_key(input);
         }
@@ -457,13 +364,16 @@ impl Decoder {
             InterfaceKind::Guitar => EventKind::GuitarMove(self.cache.guitar),
             InterfaceKind::Core => return None,
         };
-        Some(Event { time, kind })
+        Some(Event {
+            time: Timestamp::from_timeval(time),
+            kind,
+        })
     }
     fn decode_key(&self, input: InputEvent) -> Option<Event> {
         if !(0..=2).contains(&input.value) {
             return None;
         }
-        let code = match self.interface {
+        let button = match self.interface {
             InterfaceKind::Core => map_core_key(input.code),
             InterfaceKind::Nunchuk => map_nunchuk_key(input.code),
             InterfaceKind::Classic => map_classic_key(input.code),
@@ -472,10 +382,13 @@ impl Decoder {
             InterfaceKind::Guitar => map_guitar_key(input.code),
             _ => None,
         }?;
-        let key = Key {
-            code,
-            state: input.value as u32,
+        let state = match input.value {
+            0 => ButtonState::Released,
+            1 => ButtonState::Pressed,
+            2 => ButtonState::Repeated,
+            _ => return None,
         };
+        let key = ButtonEvent { button, state };
         let kind = match self.interface {
             InterfaceKind::Core => EventKind::Key(key),
             InterfaceKind::Nunchuk => EventKind::NunchukKey(key),
@@ -486,18 +399,9 @@ impl Decoder {
             _ => return None,
         };
         Some(Event {
-            time: input.time,
+            time: Timestamp::from_timeval(input.time),
             kind,
         })
-    }
-    /// Update one cached axis and report whether the code belongs to this
-    /// interface. Unknown ABS codes from the kernel are ignored.
-    pub fn update_abs_cache(&mut self, code: u16, value: i32) -> bool {
-        if !known_abs(self.interface, code) {
-            return false;
-        }
-        self.update_abs(code, value);
-        true
     }
     fn update_abs(&mut self, code: u16, value: i32) {
         match self.interface {
@@ -588,7 +492,7 @@ impl Decoder {
     }
 }
 
-pub fn abs_codes(interface: InterfaceKind) -> &'static [u16] {
+pub(crate) fn abs_codes(interface: InterfaceKind) -> &'static [u16] {
     match interface {
         InterfaceKind::Accel | InterfaceKind::MotionPlus => &[ABS_RX, ABS_RY, ABS_RZ],
         InterfaceKind::Ir => &[
@@ -609,93 +513,89 @@ pub fn abs_codes(interface: InterfaceKind) -> &'static [u16] {
     }
 }
 
-fn known_abs(interface: InterfaceKind, code: u16) -> bool {
-    abs_codes(interface).contains(&code)
-}
-
-pub fn map_core_key(c: u16) -> Option<u32> {
+fn map_core_key(c: u16) -> Option<Button> {
     Some(match c {
-        KEY_LEFT => BUTTON_LEFT,
-        KEY_RIGHT => BUTTON_RIGHT,
-        KEY_UP => BUTTON_UP,
-        KEY_DOWN => BUTTON_DOWN,
-        KEY_NEXT => BUTTON_PLUS,
-        KEY_PREVIOUS => BUTTON_MINUS,
-        BTN_1 => BUTTON_ONE,
-        BTN_2 => BUTTON_TWO,
-        BTN_A => BUTTON_A,
-        BTN_B => BUTTON_B,
-        BTN_MODE => BUTTON_HOME,
+        KEY_LEFT => Button::Left,
+        KEY_RIGHT => Button::Right,
+        KEY_UP => Button::Up,
+        KEY_DOWN => Button::Down,
+        KEY_NEXT => Button::Plus,
+        KEY_PREVIOUS => Button::Minus,
+        BTN_1 => Button::One,
+        BTN_2 => Button::Two,
+        BTN_A => Button::A,
+        BTN_B => Button::B,
+        BTN_MODE => Button::Home,
         _ => return None,
     })
 }
-pub fn map_nunchuk_key(c: u16) -> Option<u32> {
+fn map_nunchuk_key(c: u16) -> Option<Button> {
     Some(match c {
-        BTN_C => BUTTON_C,
-        BTN_Z => BUTTON_Z,
+        BTN_C => Button::C,
+        BTN_Z => Button::Z,
         _ => return None,
     })
 }
-pub fn map_classic_key(c: u16) -> Option<u32> {
+fn map_classic_key(c: u16) -> Option<Button> {
     Some(match c {
-        BTN_A => BUTTON_A,
-        BTN_B => BUTTON_B,
-        BTN_X => BUTTON_X,
-        BTN_Y => BUTTON_Y,
-        KEY_NEXT => BUTTON_PLUS,
-        KEY_PREVIOUS => BUTTON_MINUS,
-        BTN_MODE => BUTTON_HOME,
-        KEY_LEFT => BUTTON_LEFT,
-        KEY_RIGHT => BUTTON_RIGHT,
-        KEY_UP => BUTTON_UP,
-        KEY_DOWN => BUTTON_DOWN,
-        BTN_TL => BUTTON_TL,
-        BTN_TR => BUTTON_TR,
-        BTN_TL2 => BUTTON_ZL,
-        BTN_TR2 => BUTTON_ZR,
+        BTN_A => Button::A,
+        BTN_B => Button::B,
+        BTN_X => Button::X,
+        BTN_Y => Button::Y,
+        KEY_NEXT => Button::Plus,
+        KEY_PREVIOUS => Button::Minus,
+        BTN_MODE => Button::Home,
+        KEY_LEFT => Button::Left,
+        KEY_RIGHT => Button::Right,
+        KEY_UP => Button::Up,
+        KEY_DOWN => Button::Down,
+        BTN_TL => Button::ShoulderLeft,
+        BTN_TR => Button::ShoulderRight,
+        BTN_TL2 => Button::TriggerLeft,
+        BTN_TR2 => Button::TriggerRight,
         _ => return None,
     })
 }
-pub fn map_pro_key(c: u16) -> Option<u32> {
+fn map_pro_key(c: u16) -> Option<Button> {
     Some(match c {
-        BTN_EAST => BUTTON_A,
-        BTN_SOUTH => BUTTON_B,
-        BTN_NORTH => BUTTON_X,
-        BTN_WEST => BUTTON_Y,
-        BTN_START => BUTTON_PLUS,
-        BTN_SELECT => BUTTON_MINUS,
-        BTN_MODE => BUTTON_HOME,
-        BTN_DPAD_LEFT => BUTTON_LEFT,
-        BTN_DPAD_RIGHT => BUTTON_RIGHT,
-        BTN_DPAD_UP => BUTTON_UP,
-        BTN_DPAD_DOWN => BUTTON_DOWN,
-        BTN_TL => BUTTON_TL,
-        BTN_TR => BUTTON_TR,
-        BTN_TL2 => BUTTON_ZL,
-        BTN_TR2 => BUTTON_ZR,
-        BTN_THUMBL => BUTTON_THUMBL,
-        BTN_THUMBR => BUTTON_THUMBR,
+        BTN_EAST => Button::A,
+        BTN_SOUTH => Button::B,
+        BTN_NORTH => Button::X,
+        BTN_WEST => Button::Y,
+        BTN_START => Button::Plus,
+        BTN_SELECT => Button::Minus,
+        BTN_MODE => Button::Home,
+        BTN_DPAD_LEFT => Button::Left,
+        BTN_DPAD_RIGHT => Button::Right,
+        BTN_DPAD_UP => Button::Up,
+        BTN_DPAD_DOWN => Button::Down,
+        BTN_TL => Button::ShoulderLeft,
+        BTN_TR => Button::ShoulderRight,
+        BTN_TL2 => Button::TriggerLeft,
+        BTN_TR2 => Button::TriggerRight,
+        BTN_THUMBL => Button::ThumbLeft,
+        BTN_THUMBR => Button::ThumbRight,
         _ => return None,
     })
 }
-pub fn map_drums_key(c: u16) -> Option<u32> {
+fn map_drums_key(c: u16) -> Option<Button> {
     Some(match c {
-        BTN_START => BUTTON_PLUS,
-        BTN_SELECT => BUTTON_MINUS,
+        BTN_START => Button::Plus,
+        BTN_SELECT => Button::Minus,
         _ => return None,
     })
 }
-pub fn map_guitar_key(c: u16) -> Option<u32> {
+fn map_guitar_key(c: u16) -> Option<Button> {
     Some(match c {
-        BTN_1 => BUTTON_FRET_FAR_UP,
-        BTN_2 => BUTTON_FRET_UP,
-        BTN_3 => BUTTON_FRET_MID,
-        BTN_4 => BUTTON_FRET_LOW,
-        BTN_5 => BUTTON_FRET_FAR_LOW,
-        BTN_DPAD_UP => BUTTON_STRUM_BAR_UP,
-        BTN_DPAD_DOWN => BUTTON_STRUM_BAR_DOWN,
-        BTN_START => BUTTON_PLUS,
-        BTN_SELECT => BUTTON_MINUS,
+        BTN_1 => Button::FretFarUp,
+        BTN_2 => Button::FretUp,
+        BTN_3 => Button::FretMid,
+        BTN_4 => Button::FretLow,
+        BTN_5 => Button::FretFarLow,
+        BTN_DPAD_UP => Button::StrumBarUp,
+        BTN_DPAD_DOWN => Button::StrumBarDown,
+        BTN_START => Button::Plus,
+        BTN_SELECT => Button::Minus,
         _ => return None,
     })
 }

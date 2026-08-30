@@ -3,7 +3,7 @@ mod render;
 
 use std::env;
 use std::io::{self, Write};
-use std::os::fd::RawFd;
+use std::os::fd::{AsFd, AsRawFd, BorrowedFd};
 use std::path::PathBuf;
 use std::process;
 use std::time::Duration;
@@ -13,7 +13,7 @@ use crossterm::execute;
 use crossterm::terminal::{self, EnterAlternateScreen, LeaveAlternateScreen};
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
-use wiiland_hid::{Interface, Monitor};
+use wiiland_hid::{Interface, Monitor, MonitorMode};
 
 use app::{Action, App, Selector, parse_selector, poll_interface};
 
@@ -109,28 +109,52 @@ where
 }
 
 fn list_devices() -> i32 {
-    let Some(mut monitor) = Monitor::new(false, false) else {
-        eprintln!("xwiishow: cannot create device monitor");
-        return 1;
+    let mut monitor = match Monitor::new(MonitorMode::Enumerate) {
+        Ok(monitor) => monitor,
+        Err(error) => {
+            eprintln!("xwiishow: cannot create device monitor: {error}");
+            return 1;
+        }
     };
     let mut number = 0usize;
-    while let Some(path) = monitor.poll() {
-        number += 1;
-        println!("{number}\t{}", path.display());
+    loop {
+        match monitor.poll() {
+            Ok(Some(path)) => {
+                number += 1;
+                println!("{number}\t{}", path.display());
+            }
+            Ok(None) => break,
+            Err(error) => {
+                eprintln!("xwiishow: cannot enumerate devices: {error}");
+                return 1;
+            }
+        }
     }
     0
 }
 
 fn ordinal_path(ordinal: usize) -> Option<PathBuf> {
-    let Some(mut monitor) = Monitor::new(false, false) else {
-        eprintln!("xwiishow: cannot create device monitor");
-        return None;
+    let mut monitor = match Monitor::new(MonitorMode::Enumerate) {
+        Ok(monitor) => monitor,
+        Err(error) => {
+            eprintln!("xwiishow: cannot create device monitor: {error}");
+            return None;
+        }
     };
     let mut number = 0usize;
-    while let Some(path) = monitor.poll() {
-        number += 1;
-        if number == ordinal {
-            return Some(path);
+    loop {
+        match monitor.poll() {
+            Ok(Some(path)) => {
+                number += 1;
+                if number == ordinal {
+                    return Some(path);
+                }
+            }
+            Ok(None) => break,
+            Err(error) => {
+                eprintln!("xwiishow: cannot enumerate devices: {error}");
+                return None;
+            }
         }
     }
     eprintln!("xwiishow: no device with ordinal {ordinal}");
@@ -172,17 +196,33 @@ fn interactive(iface: &mut Interface) -> io::Result<()> {
         drop(guard);
         return Err(io::Error::from_raw_os_error(libc::ENOSPC));
     }
+    iface.watch(true)?;
     app.open_available(iface);
-    if let Err(error) = iface.watch(true) {
-        app.error(format!(
-            "Cannot initialize hotplug watch descriptor: {error}"
-        ));
-    }
+    let mut monitor = match Monitor::new(MonitorMode::Watch) {
+        Ok(monitor) => Some(monitor),
+        Err(error) => {
+            app.error(format!(
+                "Cannot initialize hotplug watch descriptor: {error}"
+            ));
+            None
+        }
+    };
     loop {
         terminal.draw(|frame| render::render(frame, &app))?;
-        let fd = iface.fd();
-        wait_fd(fd, 50)?;
-        while poll_interface(iface, &mut app).map_err(io_error)? {}
+        wait_fd(Some(iface.as_fd()), 50)?;
+        while poll_interface(iface, &mut app)? {}
+        if monitor
+            .as_ref()
+            .is_some_and(|monitor| monitor.fd().is_some())
+        {
+            wait_fd(monitor.as_ref().and_then(Monitor::fd), 0)?;
+            if let Some(monitor) = monitor.as_mut() {
+                while monitor.poll()?.is_some() {
+                    app.info("Watch event");
+                    app.open_available(iface);
+                }
+            }
+        }
         while event::poll(Duration::ZERO)? {
             match event::read()? {
                 Event::Key(key) => {
@@ -204,13 +244,13 @@ fn interactive(iface: &mut Interface) -> io::Result<()> {
     }
 }
 
-fn wait_fd(fd: RawFd, timeout_ms: i32) -> io::Result<()> {
-    if fd < 0 {
+fn wait_fd(fd: Option<BorrowedFd<'_>>, timeout_ms: i32) -> io::Result<()> {
+    let Some(fd) = fd else {
         std::thread::sleep(Duration::from_millis(timeout_ms as u64));
         return Ok(());
-    }
+    };
     let mut pollfd = libc::pollfd {
-        fd,
+        fd: fd.as_raw_fd(),
         events: libc::POLLIN,
         revents: 0,
     };
@@ -224,7 +264,4 @@ fn wait_fd(fd: RawFd, timeout_ms: i32) -> io::Result<()> {
             return Err(error);
         }
     }
-}
-fn io_error(error: i32) -> io::Error {
-    io::Error::from_raw_os_error(error.unsigned_abs() as i32)
 }

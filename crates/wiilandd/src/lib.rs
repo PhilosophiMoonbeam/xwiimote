@@ -7,9 +7,9 @@
 pub mod bridge;
 pub mod cli;
 pub mod commands;
+mod ipc;
 pub mod report;
 pub mod runtime;
 pub mod signal;
 pub mod uinput;
-
-pub use cli::{Action, Cli, CliError, Pass1, run};
+pub use cli::{Action, Cli, CliError, IpcMode, Pass1, run};
