@@ -235,6 +235,14 @@ wiiland-config
 ID `io.github.philosophimoonbeam.wiiland-config`; no toolkit-specific platform
 override is required. The control center edits and validates configuration,
 manages the user service, and runs device traces and calibration capture.
+Its pearl and dusk themes carry the logo's sea-glass palette into focused settings
+pages, with persistent save controls and an expandable activity log. Appearance
+follows the system by default; you can also select either palette explicitly.
+
+<p align="center">
+  <img src="res/wiiland-control-center.png" width="800" alt="WiiLand Control Center in the pearl theme, showing labelled desktop button bindings and persistent save controls">
+</p>
+
 The optional `wiiland-show` diagnostic uses ratatui/crossterm and restores the
 terminal on exit.
 

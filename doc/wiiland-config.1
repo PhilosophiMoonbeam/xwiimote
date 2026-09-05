@@ -1,4 +1,4 @@
-.TH WIILAND-CONFIG 1 "August 2026" "wiiland" "WiiLand Manual"
+.TH WIILAND-CONFIG 1 "September 2026" "wiiland" "WiiLand Manual"
 .SH NAME
 wiiland-config \- graphical WiiLand configuration and diagnostics
 .SH SYNOPSIS
@@ -20,7 +20,7 @@ is set otherwise, and unknown when neither is set.
 .PP
 The frontend does not create input devices or run a private daemon.  All
 commands run asynchronously, with their standard output and standard error
-shown in the Command output panel.
+shown in the expandable Activity log.
 .SH CONFIGURATION FILES
 On startup the frontend selects the user path
 .B $XDG_CONFIG_HOME/wiiland/wiilandd.conf
@@ -45,15 +45,21 @@ target.  Device listing and axis-map commands do not receive a config path.
 Configuration values use the daemon's canonical key=value tokens.  See
 .BR wiilandd (1)
 for all accepted keys, ranges, defaults, and layering rules.
-.SH OVERVIEW TAB
-The Overview tab provides editable Daemon executable and Configuration file
-fields and reports the selected configuration scope and detected window
-system.  Its controls are:
+.SH APPEARANCE AND NAVIGATION
+The pearl light palette and dusk dark palette share the logo's sea-glass
+accents.  Appearance selects Follow system, Pearl, or Dusk for this session.
+The sidebar becomes horizontal navigation in a narrow window.  Page content
+scrolls independently from the save controls and Activity log.
+.SH OVERVIEW
+Overview provides service status, device discovery, and the Configuration
+file field.  Advanced connection settings contains the Daemon executable
+field and detected window system.  Custom configuration files are identified
+explicitly because the background service does not load them.  Controls are:
 .TP
 .B Reload from daemon
 Run wiilandd --dump-config and replace the form with the resolved values.
 .TP
-.B Refresh service
+.B Refresh
 Run
 .BR "systemctl --user is-active wiilandd.service" .
 .TP
@@ -68,68 +74,59 @@ Run
 .B "wiilandd --doctor"
 \&.
 .TP
-.B Validate configuration
-Run
-.B "wiilandd --check-config"
-\&.
-.TP
-.B Show effective config
-Run
-.B wiilandd --dump-config .
-.TP
 .B Find devices
 Run
 .BR "wiilandd --list --verbose" .
+.PP
+A service status query distinguishes Running, Stopped, Failed, and
+Unavailable.  Successful service changes trigger a fresh status query.
+.SH CONFIGURE
+Configure separates settings into four focused pages:
 .TP
-.B View input map
-Run
-.B wiilandd --axis-map .
-.TP
-.B View test checklist
-Run
-.B wiilandd --validation-checklist .
-.SH CONFIGURATION TAB
-The Configuration tab contains controls for every editable daemon setting:
-.TP
-.B Profiles and pointer feel
+.B Profile & pointer
 Default profile (gamepad, desktop, or both), D-pad pointer speed, IR gain,
 IR jitter deadzone, IR smoothing, IR tracking (dual, centroid, or first), IR
 aim mapping (relative or absolute), and optional IR screen calibration bounds.
 .TP
-.B Modern motion aiming
+.B Motion aiming
 Output (off, right stick, or mouse), sensor (automatic, IR, MotionPlus, or
 accelerometer), activation (always, B, Nunchuk Z, or Nunchuk C), sensitivity,
 deadzone, smoothing, X/Y inversion, independent accelerometer and MotionPlus
 calibration toggles and X/Y/Z fields, and calibration duration.
 .TP
-.B Desktop button bindings
+.B Button bindings
 Actions for Wii Remote A, B, +, -, Home, 1, and 2.  Each action is one of
 disabled, left-click, right-click, enter, escape, overview, page-up, or
 page-down.
 .TP
-.B Per-device profile rules
+.B Device rules
 Add or remove up to 32 ordered rules.  Each rule matches a substring of either
 the device path or device type and selects gamepad, desktop, or both.  Later
 matching rules override earlier matches.
 .PP
 Numeric widgets constrain values to the daemon's accepted ranges.  Changes are
-marked unsaved.  The controls below the scrollable settings are:
+marked unsaved.  Validation errors appear above the save controls.  The save
+bar remains visible while scrolling and on other pages with unsaved edits.
+Its controls are:
 .TP
-.B Reload from daemon
-Discard edits and reload effective daemon configuration.
+.B Reload
+Reload effective daemon configuration.  Unsaved edits require confirmation
+before they are discarded.
 .TP
 .B Validate and save
 Validate the form with wiilandd --check-config against a same-directory
 temporary file.  On success, atomically replace the selected target; on
 failure, preserve the existing file.
 .TP
-.B Save and restart daemon
+.B Save and restart
 Available only for the default user target.  Save as above and then run
 .B "systemctl --user restart wiilandd.service"
 \&.  It is disabled for an
 explicit target because the installed service does not load that target.
-.SH VALIDATION TAB
-The Validation tab accepts an optional device selector (a positive ordinal or
+.PP
+Ctrl+S validates and saves pending edits without restarting the service.
+.SH TEST AND CALIBRATE
+Test & calibrate accepts an optional device selector (a positive ordinal or
 sysfs path), an event filter (all, keys, axes, ir, or motion-plus), and an
 optional temporary profile (effective configuration, gamepad, desktop, or
 both).
@@ -143,34 +140,42 @@ and
 .BR --device .
 No virtual input is created.
 .TP
-.B Stop
+.B Stop capture
 Request termination of the active trace or calibration process.
 .TP
-.B Capture flat-surface calibration
+.B Capture calibration
 Run
 .BR --calibrate-aim
 with the configured sample duration and optional device selector.  Successful
 output is applied to the form and marked unsaved; save it to persist the
 values.
 .PP
-Trace and calibration are mutually exclusive.  Suggested coverage shown in
-the tab includes Wii Remote, MotionPlus, Nunchuk, Classic Controller, Wii U
-Pro Controller, Guitar, Drums, Balance Board, SDL, Wine/Proton, and desktop
-input on Wayland and X11.
-.SH COMMAND OUTPUT
-The fixed-width Command output panel displays commands, stdout, stderr, and
-process errors.  Copy all copies the complete retained text to the clipboard;
-Clear removes it.  The buffer retains at most 10,000 text blocks.  Completion
-results that belong to an old form revision or target are discarded, and a
-failed save preserves existing data.
+Trace and calibration are mutually exclusive.  Capture selectors are locked
+while a capture is running.  Stop capture also remains available in the
+bottom status strip when a capture is active, including on other pages.
 .PP
-Closing with unsaved changes opens an Unsaved configuration dialog.  Discard
-changes closes the application; Keep editing returns to the form.
+Diagnostics & reference provides Check readiness (--doctor), Validate saved
+file (--check-config), Effective settings (--dump-config), Input map
+(--axis-map), and Test checklist (--validation-checklist).  These commands
+read saved configuration, not pending edits.  The daemon's test checklist
+covers controller families and desktop/game compatibility checks.
+.SH ACTIVITY LOG
+The resizable Activity log displays commands, stdout, stderr, and process
+errors.  It opens for explicit diagnostic commands, captures, and configuration
+failures.  The bottom status strip toggles it on any page.  Copy all copies
+the complete retained text; Clear removes it; Hide log collapses the drawer.
+The buffer retains at most 10,000 text blocks.  Completion results that
+belong to an old form revision or target are discarded, and a failed save
+preserves existing data.
+.PP
+Closing or reloading with unsaved changes opens a modal confirmation.
+Discard changes continues the requested action; Keep editing or Escape
+returns to the form without discarding edits.
 .SH PERMISSIONS
 The frontend does not elevate privileges.  The selected configuration target
 and its parent must be writable to save.  Service controls require a working
 systemd user manager.  The daemon itself requires access to hid-wiimote input
-nodes and /dev/uinput; permission errors are reported in the output panel.
+nodes and /dev/uinput; permission errors are reported in the Activity log.
 .SH EXIT STATUS
 The application exits successfully when its eframe window closes normally.  A
 nonzero status indicates that native window initialization or another eframe

@@ -10,12 +10,33 @@ use wiiland_core::{
 
 use crate::model::{self, ApplyCompletion, CalibrationTransaction, ConfigModel, TransactionKind};
 use crate::process::{self, ProcessEvent, ProcessResult, ProcessTask};
+use crate::theme;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 enum Tab {
     Overview,
     Configuration,
     Validation,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+enum ConfigSection {
+    Pointer,
+    Motion,
+    Bindings,
+    Rules,
+}
+
+impl ConfigSection {
+    const ALL: [Self; 4] = [Self::Pointer, Self::Motion, Self::Bindings, Self::Rules];
+    fn label(self) -> &'static str {
+        match self {
+            Self::Pointer => "Profile & pointer",
+            Self::Motion => "Motion aiming",
+            Self::Bindings => "Button bindings",
+            Self::Rules => "Device rules",
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -32,6 +53,7 @@ struct ConfigTask {
 }
 struct ValidationTask {
     kind: ValidationKind,
+    cancel_requested: bool,
     process: ProcessTask,
     calibration: Option<CalibrationOwnership>,
 }
@@ -84,6 +106,11 @@ pub struct ControlCenter {
     service_program: &'static str,
     validation_task: Option<ValidationTask>,
     tab: Tab,
+    config_section: ConfigSection,
+    emblem: Option<egui::TextureHandle>,
+    output_open: bool,
+    reload_confirmation: bool,
+    close_approved: bool,
     service_status: String,
     status: String,
     close_confirmation: bool,
@@ -103,6 +130,11 @@ impl ControlCenter {
             service_program: "systemctl",
             validation_task: None,
             tab: Tab::Overview,
+            config_section: ConfigSection::Pointer,
+            emblem: None,
+            output_open: false,
+            reload_confirmation: false,
+            close_approved: false,
             service_status: "Checking…".to_owned(),
             status: "Ready".to_owned(),
             close_confirmation: false,
@@ -235,6 +267,7 @@ impl ControlCenter {
                 self.status = "Completion discarded because the form or target changed".to_owned()
             }
             ApplyCompletion::Failed => {
+                self.output_open = true;
                 self.status =
                     "Configuration operation failed; existing data was preserved".to_owned()
             }
@@ -268,6 +301,7 @@ impl ControlCenter {
         self.model
             .append_output(&format!("$ {} {}\n", command, shell_args(&args)));
         self.command_task = Some((command.clone(), ProcessTask::spawn(command, &args)));
+        self.output_open = true;
         self.status = "Command running".to_owned();
     }
 
@@ -319,7 +353,11 @@ impl ControlCenter {
         self.service_status = format!("{}…", capitalize(action));
         self.service_task = Some((
             action.to_owned(),
-            ProcessTask::spawn(self.service_program, &args),
+            if action == "is-active" {
+                ProcessTask::spawn_capturing_stdout(self.service_program, &args)
+            } else {
+                ProcessTask::spawn(self.service_program, &args)
+            },
         ));
     }
 
@@ -334,15 +372,19 @@ impl ControlCenter {
         let action = action.clone();
         self.service_task = None;
         self.append_result_error(&result);
-        if result.success {
-            self.service_status = "Action complete".to_owned();
+        if action == "is-active" {
+            self.service_status = service_query_status(&result).to_owned();
+        } else if result.success {
             self.status = format!("Service {action} succeeded");
         } else {
             self.service_status = "Unavailable".to_owned();
-            self.status = format!("Service {action} failed");
+            self.status = format!("Service {action} failed · see activity log");
+            self.output_open = true;
         }
         if let Some(next) = self.pending_service_actions.after_completion() {
             self.dispatch_service_action(next.as_str());
+        } else if action != "is-active" && result.success {
+            self.dispatch_service_action("is-active");
         }
     }
 
@@ -375,9 +417,11 @@ impl ControlCenter {
             .append_output(&format!("$ {} {}\n", command, shell_args(&args)));
         self.validation_task = Some(ValidationTask {
             kind: ValidationKind::Trace,
+            cancel_requested: false,
             process: ProcessTask::spawn(command, &args),
             calibration: None,
         });
+        self.output_open = true;
         self.status = "Trace running".to_owned();
     }
 
@@ -409,13 +453,23 @@ impl ControlCenter {
             .append_output(&format!("$ {} {}\n", command, shell_args(&args)));
         self.validation_task = Some(ValidationTask {
             kind: ValidationKind::Calibration,
+            cancel_requested: false,
             process: ProcessTask::spawn_capturing_stdout(command, &args),
             calibration: Some(CalibrationOwnership {
                 transaction,
                 device,
             }),
         });
+        self.output_open = true;
         self.status = "Calibration running".to_owned();
+    }
+
+    fn stop_capture(&mut self) {
+        if let Some(task) = &mut self.validation_task {
+            task.cancel_requested = true;
+            task.process.terminate();
+            self.status = "Stopping capture…".to_owned();
+        }
     }
 
     fn poll_validation(&mut self) {
@@ -427,6 +481,13 @@ impl ControlCenter {
             None => return,
         };
         let task = self.validation_task.take().expect("task exists");
+        if task.cancel_requested {
+            if let Some(ownership) = task.calibration {
+                self.model.finish_calibration(&ownership.transaction);
+            }
+            self.status = "Capture stopped".to_owned();
+            return;
+        }
         self.append_result_error(&result);
         match task.kind {
             ValidationKind::Trace => {
@@ -488,205 +549,516 @@ impl ControlCenter {
         changed
     }
 
+    fn request_reload(&mut self) {
+        if self.model.dirty {
+            self.reload_confirmation = true;
+        } else {
+            self.begin_load(true);
+        }
+    }
+
     fn draw_overview(&mut self, ui: &mut egui::Ui) {
-        ui.heading("Overview");
-        ui.label(
-            "Configure Wii Remote input, inspect daemon readiness, and capture validation output.",
-        );
-        egui::Grid::new("paths")
-            .num_columns(2)
-            .striped(true)
+        let p = theme::Palette::for_ui(ui);
+        theme::card(ui)
+            .fill(p.mist)
+            .stroke(egui::Stroke::NONE)
             .show(ui, |ui| {
-                ui.label("Daemon executable");
-                ui.text_edit_singleline(&mut self.model.daemon_path);
-                ui.end_row();
-                ui.label("Configuration file");
-                let mut path = self.model.config_path.to_string_lossy().into_owned();
-                if ui.text_edit_singleline(&mut path).changed() {
-                    self.model.set_path(PathBuf::from(path));
-                }
-                ui.end_row();
-                ui.label("Configuration scope");
-                ui.label(if self.model.is_explicit_path() {
-                    "Custom file only — the background service does not load it."
-                } else {
-                    "Layered defaults — built-in values, system settings, then this user file."
+                ui.set_width(ui.available_width());
+                ui.horizontal(|ui| {
+                    let illustration_size = if ui.available_width() > 700.0 {
+                        186.0
+                    } else {
+                        120.0
+                    };
+                    if let Some(texture) = &self.emblem {
+                        ui.add(
+                            egui::Image::new(texture).fit_to_exact_size(egui::vec2(
+                                illustration_size,
+                                illustration_size,
+                            )),
+                        );
+                    }
+                    ui.add_space(12.0);
+                    ui.vertical(|ui| {
+                        ui.add_space(10.0);
+                        ui.label(
+                            egui::RichText::new("WELCOME TO WIILAND")
+                                .size(11.0)
+                                .color(p.muted),
+                        );
+                        ui.label(
+                            egui::RichText::new("A familiar controller.\nA new home.")
+                                .size(30.0)
+                                .color(p.ink),
+                        );
+                        theme::note(
+                            ui,
+                            "Play, point, and move. Make Wii input feel at home on Linux.",
+                        );
+                        if theme::primary(ui, "Set up your controls", true).clicked() {
+                            self.tab = Tab::Configuration;
+                        }
+                    });
                 });
-                ui.end_row();
-                ui.label("Window system");
-                ui.label(Self::backend_name());
-                ui.end_row();
             });
-        ui.horizontal(|ui| {
-            if ui.button("Reload from daemon").clicked() {
-                self.begin_load(true);
+        ui.add_space(10.0);
+        if ui.available_width() >= 720.0 {
+            ui.columns(2, |columns| {
+                self.draw_service_card(&mut columns[0]);
+                self.draw_discovery_card(&mut columns[1]);
+            });
+        } else {
+            self.draw_service_card(ui);
+            ui.add_space(8.0);
+            self.draw_discovery_card(ui);
+        }
+        ui.add_space(10.0);
+        theme::card(ui).show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.heading("Configuration location");
+            theme::note(ui, if self.model.is_explicit_path() {
+                "Custom file. Save here to export settings; the background service uses its own configuration."
+            } else {
+                "Your settings layer over the system defaults. Save and restart to apply them to the service."
+            });
+            ui.add_space(4.0);
+            ui.label("Configuration file");
+            let mut path = self.model.config_path.to_string_lossy().into_owned();
+            if ui.add(egui::TextEdit::singleline(&mut path).desired_width(f32::INFINITY).min_size(egui::vec2(0.0, 34.0))).changed() {
+                self.model.set_path(PathBuf::from(path));
             }
-            if ui.button("Refresh service").clicked() {
-                self.service_action("is-active");
-            }
-            if ui.button("Start").clicked() {
-                self.service_action("start");
-            }
-            if ui.button("Stop").clicked() {
-                self.service_action("stop");
-            }
-            if ui.button("Restart").clicked() {
-                self.service_action("restart");
-            }
-        });
-        ui.separator();
-        ui.heading("Diagnostics and reference");
-        ui.horizontal_wrapped(|ui| {
-            if ui.button("Check readiness").clicked() {
-                self.run_command(vec!["--doctor".to_owned()], true);
-            }
-            if ui.button("Validate configuration").clicked() {
-                self.run_command(vec!["--check-config".to_owned()], true);
-            }
-            if ui.button("Show effective config").clicked() {
-                self.run_command(vec!["--dump-config".to_owned()], true);
-            }
-            if ui.button("Find devices").clicked() {
-                self.run_command(vec!["--list".to_owned(), "--verbose".to_owned()], false);
-            }
-            if ui.button("View input map").clicked() {
-                self.run_command(vec!["--axis-map".to_owned()], false);
-            }
-            if ui.button("View test checklist").clicked() {
-                self.run_command(vec!["--validation-checklist".to_owned()], false);
+            ui.collapsing("Advanced connection settings", |ui| {
+                ui.label("Daemon executable");
+                if ui.add(egui::TextEdit::singleline(&mut self.model.daemon_path).desired_width(f32::INFINITY).min_size(egui::vec2(0.0, 34.0))).changed() {
+                    self.model.revision = self.model.revision.wrapping_add(1);
+                }
+                theme::note(ui, &format!("Window system: {}", Self::backend_name()));
+            });
+            if ui.add_enabled(self.config_task.is_none(), egui::Button::new("Reload from daemon")).clicked() {
+                self.request_reload();
             }
         });
-        ui.label(format!("Service: {}", self.service_status));
+    }
+
+    fn draw_service_card(&mut self, ui: &mut egui::Ui) {
+        theme::card(ui).show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.heading("Background service");
+            ui.horizontal_wrapped(|ui| {
+                if self.service_task.is_some() {
+                    ui.spinner();
+                }
+                theme::badge(
+                    ui,
+                    &self.service_status,
+                    matches!(self.service_status.as_str(), "Unavailable" | "Failed"),
+                );
+            });
+            theme::note(ui, if self.service_status == "Unavailable" {
+                "The user service is unavailable. Check readiness for setup and permission details."
+            } else { "Runs your saved input settings in the background." });
+            ui.horizontal_wrapped(|ui| {
+                for (label, action) in [
+                    ("Start", "start"),
+                    ("Stop", "stop"),
+                    ("Restart", "restart"),
+                    ("Refresh", "is-active"),
+                ] {
+                    if ui
+                        .add_enabled(self.service_task.is_none(), egui::Button::new(label))
+                        .clicked()
+                    {
+                        self.service_action(action);
+                    }
+                }
+            });
+        });
+    }
+
+    fn draw_discovery_card(&mut self, ui: &mut egui::Ui) {
+        theme::card(ui).show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.heading("Get connected");
+            theme::note(
+                ui,
+                "Connect a controller, then check device discovery and input permissions.",
+            );
+            ui.horizontal_wrapped(|ui| {
+                if theme::primary(ui, "Find devices", self.command_task.is_none()).clicked() {
+                    self.run_command(vec!["--list".to_owned(), "--verbose".to_owned()], false);
+                }
+                if ui
+                    .add_enabled(
+                        self.command_task.is_none(),
+                        egui::Button::new("Check readiness"),
+                    )
+                    .clicked()
+                {
+                    self.run_command(vec!["--doctor".to_owned()], true);
+                }
+            });
+            theme::note(ui, "Results appear in the activity log.");
+        });
     }
 
     fn draw_configuration(&mut self, ui: &mut egui::Ui) {
-        ui.heading("Configuration");
-        egui::ScrollArea::vertical()
-            .auto_shrink([false, false])
-            .show(ui, |ui| {
-                ui.columns(2, |columns| {
-                    draw_profile(&mut columns[0], &mut self.model);
-                    draw_aim(&mut columns[1], &mut self.model);
-                });
-                draw_bindings(ui, &mut self.model);
-                draw_rules(ui, &mut self.model);
-            });
-        ui.horizontal(|ui| {
-            let busy = self.config_task.is_some();
-            if ui
-                .add_enabled(!busy, egui::Button::new("Reload from daemon"))
-                .clicked()
-            {
-                self.begin_load(true);
+        theme::heading(
+            ui,
+            "Make it feel like you.",
+            "Choose a profile, tune movement, and give every button a purpose.",
+        );
+        ui.horizontal_wrapped(|ui| {
+            for section in ConfigSection::ALL {
+                if ui
+                    .add(egui::Button::selectable(
+                        self.config_section == section,
+                        section.label(),
+                    ))
+                    .clicked()
+                {
+                    self.config_section = section;
+                }
             }
-            if ui
-                .add_enabled(!busy, egui::Button::new("Validate and save"))
-                .clicked()
-            {
+        });
+        ui.add_space(10.0);
+        match self.config_section {
+            ConfigSection::Pointer => draw_profile(ui, &mut self.model),
+            ConfigSection::Motion => draw_aim(ui, &mut self.model),
+            ConfigSection::Bindings => draw_bindings(ui, &mut self.model),
+            ConfigSection::Rules => draw_rules(ui, &mut self.model),
+        }
+    }
+
+    fn draw_save_bar(&mut self, ui: &mut egui::Ui) {
+        let validation = self.model.validate_form();
+        let busy = self.config_task.is_some();
+        let valid = validation.is_ok() && !self.model.config_path.as_os_str().is_empty();
+        if let Err(error) = validation {
+            ui.colored_label(
+                ui.visuals().error_fg_color,
+                format!("Before saving: {error}"),
+            );
+        } else if !valid {
+            ui.colored_label(
+                ui.visuals().error_fg_color,
+                "Choose a configuration file on the Overview page.",
+            );
+        }
+        ui.horizontal_wrapped(|ui| {
+            theme::badge(ui, if self.model.dirty { "Unsaved changes" } else { "No pending edits" }, self.model.dirty);
+            if busy { ui.spinner(); }
+            if ui.add_enabled(!busy, egui::Button::new("Reload")).on_hover_text("Reload effective configuration from the daemon.").clicked() {
+                self.request_reload();
+            }
+            if ui.add_enabled(!busy && valid, egui::Button::new("Validate and save")).clicked() {
                 self.begin_save(false);
             }
-            let restart_enabled = !busy && !self.model.is_explicit_path();
-            if ui
-                .add_enabled(
-                    restart_enabled,
-                    egui::Button::new("Save and restart daemon"),
-                )
-                .clicked()
-            {
+            if theme::primary(ui, "Save and restart", !busy && valid && !self.model.is_explicit_path())
+                .on_disabled_hover_text("Available for the default user configuration after validation passes and pending work finishes.").clicked() {
                 self.begin_save(true);
             }
         });
+        if self.model.is_explicit_path() {
+            theme::note(
+                ui,
+                "Custom file: saving writes this file only. The service will not load it on restart.",
+            );
+        }
     }
 
     fn draw_validation(&mut self, ui: &mut egui::Ui) {
-        ui.heading("Validation");
-        ui.label("Choose one remote for focused output, or leave the device field blank to observe every connected remote.");
-        egui::Grid::new("validation").num_columns(2).show(ui, |ui| {
-            ui.label("Device");
-            ui.text_edit_singleline(&mut self.trace_device);
-            ui.end_row();
-            ui.label("Event filter");
-            combo_token(
-                ui,
-                "trace-filter",
-                &mut self.trace_filter,
-                &[
-                    ("all", "All events"),
-                    ("keys", "Buttons"),
-                    ("axes", "Axes"),
-                    ("ir", "IR sensor"),
-                    ("motion-plus", "MotionPlus"),
-                ],
-            );
-            ui.end_row();
-            ui.label("Temporary profile");
-            let mut token = self
-                .trace_profile
-                .and_then(|p| p.as_str())
-                .unwrap_or("")
-                .to_owned();
-            combo_token(
-                ui,
-                "trace-profile",
-                &mut token,
-                &[
-                    ("", "Use effective configuration"),
-                    ("gamepad", "Temporarily use gamepad"),
-                    ("desktop", "Temporarily use desktop"),
-                    ("both", "Temporarily use both"),
-                ],
-            );
-            self.trace_profile = Profile::parse(&token);
-            ui.end_row();
-        });
+        theme::heading(
+            ui,
+            "See every movement.",
+            "Inspect live input or capture a steady starting point for motion aiming.",
+        );
         let active = self.validation_task.is_some();
-        ui.horizontal(|ui| {
-            if ui
-                .add_enabled(!active, egui::Button::new("Start trace"))
-                .clicked()
-            {
-                self.start_trace();
-            }
-            if ui.add_enabled(active, egui::Button::new("Stop")).clicked() {
-                if let Some(task) = &self.validation_task {
-                    task.process.terminate();
+        theme::card(ui).show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.heading("Live input trace");
+            theme::note(ui, "Test buttons and movement without emitting virtual input. Traces use your saved settings.");
+            ui.add_enabled_ui(!active, |ui| {
+                field_row(ui, "Controller", |ui, label_id| {
+                    ui.add(egui::TextEdit::singleline(&mut self.trace_device)
+                        .hint_text("All connected controllers")
+                        .desired_width(f32::INFINITY).min_size(egui::vec2(0.0, 34.0)))
+                        .labelled_by(label_id).on_hover_text("Leave empty for all controllers, or enter a device path or positive ordinal.").changed()
+                });
+                field_row(ui, "Event filter", |ui, label_id| {
+                    combo_token(ui, "trace-filter", &mut self.trace_filter, &[
+                        ("all", "All events"), ("keys", "Buttons"), ("axes", "Axes"), ("ir", "IR sensor"), ("motion-plus", "MotionPlus"),
+                    ]).labelled_by(label_id).changed()
+                });
+                field_row(ui, "Temporary profile", |ui, label_id| {
+                    let mut token = self.trace_profile.and_then(|p| p.as_str()).unwrap_or("").to_owned();
+                    let response = combo_token(ui, "trace-profile", &mut token, &[
+                        ("", "Use saved configuration"), ("gamepad", "Gamepad"), ("desktop", "Desktop"), ("both", "Gamepad + desktop"),
+                    ]).labelled_by(label_id);
+                    self.trace_profile = Profile::parse(&token);
+                    response.changed()
+                });
+            });
+            ui.horizontal_wrapped(|ui| {
+                if theme::primary(ui, "Start trace", !active).clicked() { self.start_trace(); }
+                if ui.add_enabled(active, egui::Button::new("Stop capture")).clicked() {
+                    self.stop_capture();
                 }
-                self.status = "Stopping trace".to_owned();
-            }
-            if ui
-                .add_enabled(
-                    !active,
-                    egui::Button::new("Capture flat-surface calibration"),
-                )
-                .clicked()
-            {
-                self.start_calibration();
-            }
+                if active { ui.spinner(); theme::note(ui, "Capture running · see activity log"); }
+            });
         });
-        ui.label("Suggested coverage: original Wii Remote, MotionPlus, Nunchuk, Classic Controller, Wii U Pro Controller, Guitar, Drums, Balance Board, SDL, Wine/Proton, and desktop behavior on Wayland and X11.");
+        ui.add_space(10.0);
+        theme::card(ui).show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.heading("Find your steady point");
+            theme::note(ui, "Place the controller on a flat surface and keep it still during capture. Captured values become unsaved edits; save them when you are ready.");
+            ui.label(format!("Capture duration: {} seconds", self.model.config.aim_calibration_duration));
+            if ui.add_enabled(!active, egui::Button::new("Capture calibration")).clicked() { self.start_calibration(); }
+        });
+        ui.add_space(10.0);
+        theme::card(ui).show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.heading("Diagnostics & reference");
+            theme::note(
+                ui,
+                "These checks read the saved configuration. Results appear in the activity log.",
+            );
+            ui.horizontal_wrapped(|ui| {
+                for (label, arg, sensitive) in [
+                    ("Check readiness", "--doctor", true),
+                    ("Validate saved file", "--check-config", true),
+                    ("Effective settings", "--dump-config", true),
+                    ("Input map", "--axis-map", false),
+                    ("Test checklist", "--validation-checklist", false),
+                ] {
+                    if ui
+                        .add_enabled(self.command_task.is_none(), egui::Button::new(label))
+                        .clicked()
+                    {
+                        self.run_command(vec![arg.to_owned()], sensitive);
+                    }
+                }
+            });
+        });
     }
 
     fn draw_output(&mut self, ui: &mut egui::Ui) {
-        ui.separator();
-        ui.horizontal(|ui| {
-            ui.heading("Command output");
+        ui.horizontal_wrapped(|ui| {
+            ui.label(egui::RichText::new("Activity log").strong());
             if ui.button("Copy all").clicked() {
-                ui.output_mut(|o| {
-                    o.commands.push(egui::output::OutputCommand::CopyText(
-                        self.model.output.as_text(),
-                    ))
-                });
+                ui.ctx().copy_text(self.model.output.as_text());
             }
             if ui.button("Clear").clicked() {
                 self.model.clear_output();
             }
+            if ui.button("Hide log").clicked() {
+                self.output_open = false;
+            }
         });
-        egui::ScrollArea::vertical()
-            .auto_shrink([false, false])
-            .stick_to_bottom(true)
-            .show(ui, |ui| {
-                ui.monospace(self.model.output.as_text());
+        egui::ScrollArea::both().id_salt("activity-log").auto_shrink([false, false]).stick_to_bottom(true).show(ui, |ui| {
+            if self.model.output.block_count() == 0 {
+                theme::note(ui, "Command results will appear here. Start with Find devices or Check readiness.");
+            } else {
+                ui.add(egui::Label::new(egui::RichText::new(self.model.output.as_text()).monospace()).selectable(true).extend());
+            }
+        });
+    }
+
+    fn draw_navigation(&mut self, ui: &mut egui::Ui, compact: bool) {
+        for (tab, name, hint) in [
+            (Tab::Overview, "Overview", "Service & connection"),
+            (Tab::Configuration, "Configure", "Profiles & movement"),
+            (
+                Tab::Validation,
+                "Test & calibrate",
+                "Live input & diagnostics",
+            ),
+        ] {
+            let text = if compact {
+                name.to_owned()
+            } else {
+                format!("{name}\n{hint}")
+            };
+            let size = if compact {
+                egui::vec2(0.0, 34.0)
+            } else {
+                egui::vec2(ui.available_width(), 62.0)
+            };
+            if ui
+                .add_sized(size, egui::Button::selectable(self.tab == tab, text))
+                .clicked()
+            {
+                self.tab = tab;
+            }
+        }
+    }
+
+    fn draw(&mut self, ctx: &egui::Context) {
+        let p = theme::Palette::new(ctx.style().visuals.dark_mode);
+        let compact = ctx.content_rect().width() < 1000.0;
+        if !self.close_confirmation
+            && !self.reload_confirmation
+            && self.model.dirty
+            && self.config_task.is_none()
+            && ctx.input_mut(|input| {
+                input.consume_shortcut(&egui::KeyboardShortcut::new(
+                    egui::Modifiers::COMMAND,
+                    egui::Key::S,
+                ))
+            })
+        {
+            self.begin_save(false);
+        }
+        if self.emblem.is_none()
+            && let Ok(icon) = eframe::icon_data::from_png_bytes(theme::ICON)
+        {
+            self.emblem = Some(ctx.load_texture(
+                "wiiland-emblem",
+                egui::ColorImage::from_rgba_unmultiplied(
+                    [icon.width as usize, icon.height as usize],
+                    &icon.rgba,
+                ),
+                egui::TextureOptions::LINEAR,
+            ));
+        }
+        if self.model.dirty
+            && !self.close_approved
+            && ctx.input(|input| input.viewport().close_requested())
+        {
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            self.close_confirmation = true;
+        }
+        egui::TopBottomPanel::top("app-header")
+            .frame(theme::panel(p.surface, 16))
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new("wiiland").size(26.0).color(p.accent));
+                    ui.label(egui::RichText::new("/  control center").color(p.muted));
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.menu_button("Appearance", |ui| {
+                            let mut preference = ctx.options(|o| o.theme_preference);
+                            for (value, name) in [
+                                (egui::ThemePreference::System, "Follow system"),
+                                (egui::ThemePreference::Light, "Pearl · light"),
+                                (egui::ThemePreference::Dark, "Dusk · dark"),
+                            ] {
+                                if ui.selectable_value(&mut preference, value, name).clicked() {
+                                    ctx.set_theme(preference);
+                                    ui.close();
+                                }
+                            }
+                        });
+                    });
+                });
+                if compact {
+                    ui.horizontal_wrapped(|ui| self.draw_navigation(ui, true));
+                }
             });
+        egui::TopBottomPanel::bottom("app-status")
+            .frame(theme::panel(p.surface, 10))
+            .show(ctx, |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    if ui
+                        .selectable_label(
+                            self.output_open,
+                            format!("Activity log · {}", self.model.output.block_count()),
+                        )
+                        .clicked()
+                    {
+                        self.output_open = !self.output_open;
+                    }
+                    ui.separator();
+                    if self.validation_task.is_some() && ui.button("Stop capture").clicked() {
+                        self.stop_capture();
+                    }
+                    if self.config_task.is_some()
+                        || self.command_task.is_some()
+                        || self.validation_task.is_some()
+                    {
+                        ui.spinner();
+                    }
+                    ui.label(egui::RichText::new(&self.status).size(12.0).color(p.muted));
+                });
+            });
+        if self.output_open {
+            egui::TopBottomPanel::bottom("activity-drawer")
+                .resizable(true)
+                .default_height(170.0)
+                .height_range(100.0..=ctx.content_rect().height() * 0.35)
+                .frame(theme::panel(p.surface, 14))
+                .show(ctx, |ui| self.draw_output(ui));
+        }
+        if self.tab == Tab::Configuration || self.model.dirty {
+            egui::TopBottomPanel::bottom("save-bar")
+                .frame(theme::panel(p.surface, 14))
+                .show(ctx, |ui| self.draw_save_bar(ui));
+        }
+        if !compact {
+            egui::SidePanel::left("navigation")
+                .resizable(false)
+                .exact_width(216.0)
+                .frame(theme::panel(p.surface, 18))
+                .show(ctx, |ui| {
+                    ui.add_space(20.0);
+                    theme::note(ui, "CONTROL CENTER");
+                    ui.add_space(6.0);
+                    self.draw_navigation(ui, false);
+                    ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
+                        theme::note(ui, "Native Wii input for Linux");
+                        ui.label(
+                            egui::RichText::new(format!("WiiLand {}", env!("CARGO_PKG_VERSION")))
+                                .small(),
+                        );
+                    });
+                });
+        }
+        egui::CentralPanel::default()
+            .frame(theme::panel(p.canvas, if compact { 20 } else { 28 }))
+            .show(ctx, |ui| {
+                egui::ScrollArea::vertical()
+                    .id_salt(("page", self.tab, self.config_section))
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        match self.tab {
+                            Tab::Overview => self.draw_overview(ui),
+                            Tab::Configuration => self.draw_configuration(ui),
+                            Tab::Validation => self.draw_validation(ui),
+                        }
+                    });
+            });
+        if self.close_confirmation || self.reload_confirmation {
+            let closing = self.close_confirmation;
+            let response = egui::Modal::new(egui::Id::new("unsaved-changes")).show(ctx, |ui| {
+                ui.set_width(390.0);
+                ui.heading(if closing {
+                    "Leave without saving?"
+                } else {
+                    "Reload and discard edits?"
+                });
+                ui.label("Your unsaved configuration changes will be lost.");
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    if theme::primary(ui, "Keep editing", true).clicked() {
+                        self.close_confirmation = false;
+                        self.reload_confirmation = false;
+                    }
+                    if ui.button("Discard changes").clicked() {
+                        self.close_confirmation = false;
+                        self.reload_confirmation = false;
+                        if closing {
+                            self.close_approved = true;
+                            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                        } else {
+                            self.begin_load(true);
+                        }
+                    }
+                });
+            });
+            if response.should_close() {
+                self.close_confirmation = false;
+                self.reload_confirmation = false;
+            }
+        }
     }
 }
 
@@ -696,67 +1068,28 @@ impl eframe::App for ControlCenter {
         self.poll_command();
         self.poll_service();
         self.poll_validation();
-        if self.model.dirty && ctx.input(|input| input.viewport().close_requested()) {
-            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
-            self.close_confirmation = true;
-        }
-        egui::TopBottomPanel::top("title").show(ctx, |ui| {
-            ui.horizontal(|ui| {
-                ui.heading("WiiLand Control Center");
-                if self.model.dirty {
-                    ui.label("(unsaved)");
-                }
-                ui.separator();
-                ui.label(&self.status);
-            });
-        });
-        egui::CentralPanel::default().show(ctx, |ui| {
-            ui.horizontal(|ui| {
-                for (tab, name) in [
-                    (Tab::Overview, "Overview"),
-                    (Tab::Configuration, "Configuration"),
-                    (Tab::Validation, "Validation"),
-                ] {
-                    if ui.selectable_label(self.tab == tab, name).clicked() {
-                        self.tab = tab;
-                    }
-                }
-            });
-            ui.separator();
-            match self.tab {
-                Tab::Overview => self.draw_overview(ui),
-                Tab::Configuration => self.draw_configuration(ui),
-                Tab::Validation => self.draw_validation(ui),
-            }
-            self.draw_output(ui);
-        });
-        if self.close_confirmation {
-            egui::Window::new("Unsaved configuration")
-                .collapsible(false)
-                .resizable(false)
-                .show(ctx, |ui| {
-                    ui.label("Your configuration changes have not been saved.");
-                    ui.horizontal(|ui| {
-                        if ui.button("Discard changes").clicked() {
-                            self.close_confirmation = false;
-                            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-                        }
-                        if ui.button("Keep editing").clicked() {
-                            self.close_confirmation = false;
-                        }
-                    });
-                });
-        }
-        ctx.request_repaint_after(Duration::from_millis(40));
+        self.draw(ctx);
+        let busy = self.config_task.is_some()
+            || self.command_task.is_some()
+            || self.service_task.is_some()
+            || self.validation_task.is_some();
+        ctx.request_repaint_after(Duration::from_millis(if busy { 40 } else { 250 }));
     }
 }
 
 fn draw_profile(ui: &mut egui::Ui, model: &mut ConfigModel) {
-    ui.group(|ui| {
-        ui.heading("Profiles and pointer feel");
+    theme::card(ui).show(ui, |ui| {
+        ui.set_width(ui.available_width());
+        ui.heading("How would you like to play?");
+        theme::note(ui, "Gamepad for games. Desktop for a pointer and keyboard. Both keeps each available.");
+        ui.add_space(8.0);
         if combo_profile(ui, "Default profile", &mut model.config.profile) {
             model.mark_dirty();
         }
+        ui.add_space(8.0);
+        ui.separator();
+        ui.heading("Pointer feel");
+        theme::note(ui, "Tune desktop pointer movement. Higher smoothing reduces jitter and adds a little delay.");
         if drag(
             ui,
             "D-pad pointer speed",
@@ -833,8 +1166,11 @@ fn draw_profile(ui: &mut egui::Ui, model: &mut ConfigModel) {
 }
 
 fn draw_aim(ui: &mut egui::Ui, model: &mut ConfigModel) {
-    ui.group(|ui| {
-        ui.heading("Modern motion aiming");
+    theme::card(ui).show(ui, |ui| {
+        ui.set_width(ui.available_width());
+        ui.heading("Movement, made natural.");
+        theme::note(ui, "Turn motion into a right stick or mouse pointer. Choose a sensor and how aiming is activated.");
+        ui.add_space(8.0);
         if combo_enum(
             ui,
             "Output",
@@ -942,24 +1278,20 @@ fn draw_aim(ui: &mut egui::Ui, model: &mut ConfigModel) {
 
 fn calibration_fields(ui: &mut egui::Ui, label: &str, cal: &mut SensorCalibration) -> bool {
     let mut changed = false;
+    ui.add_space(8.0);
+    ui.label(egui::RichText::new(label).strong());
     for (axis, value) in [("X", &mut cal.x), ("Y", &mut cal.y), ("Z", &mut cal.z)] {
-        if ui
-            .add(
-                egui::DragValue::new(value)
-                    .range(-32768..=32767)
-                    .prefix(format!("{label} {axis}: ")),
-            )
-            .changed()
-        {
-            changed = true;
-        }
+        changed |= drag(ui, axis, value, -32768, 32767);
     }
     changed
 }
 
 fn draw_bindings(ui: &mut egui::Ui, model: &mut ConfigModel) {
-    ui.group(|ui| {
-        ui.heading("Desktop button bindings");
+    theme::card(ui).show(ui, |ui| {
+        ui.set_width(ui.available_width());
+        ui.heading("Every button, a purpose.");
+        theme::note(ui, "These bindings apply to Desktop and Both profiles. Gamepad buttons keep their normal mapping.");
+        ui.add_space(8.0);
         for (name, label) in model::binding_names() {
             let mut value = match name {
                 "a" => model.config.desktop_bindings.a,
@@ -988,42 +1320,36 @@ fn draw_bindings(ui: &mut egui::Ui, model: &mut ConfigModel) {
 }
 
 fn draw_rules(ui: &mut egui::Ui, model: &mut ConfigModel) {
-    ui.group(|ui| {
-        ui.heading("Per-device profile rules");
-        if ui.button("Add rule").clicked()
-            && model.config.device_rules.len() < model::MAX_DEVICE_RULES
-        {
-            model.config.device_rules.push(model::rule(
-                DeviceRuleKind::Devtype,
-                String::new(),
-                Profile::GAMEPAD,
-            ));
-            model.mark_dirty();
+    theme::card(ui).show(ui, |ui| {
+        ui.set_width(ui.available_width());
+        ui.heading("A profile for every controller");
+        theme::note(ui, "Match part of a device path or device type. Later matching rules take priority over earlier ones.");
+        ui.add_space(4.0);
+        if model.config.device_rules.is_empty() {
+            theme::badge(ui, "All controllers use the default profile", false);
         }
         let mut remove = None;
         for index in 0..model.config.device_rules.len() {
             let mut rule = model.config.device_rules[index].clone();
             let mut changed = false;
-            ui.horizontal(|ui| {
-                if combo_enum(
-                    ui,
-                    "rule-kind",
-                    &mut rule.kind,
-                    [
-                        (DeviceRuleKind::Syspath, "Device path"),
-                        (DeviceRuleKind::Devtype, "Device type"),
-                    ],
-                ) {
-                    changed = true;
-                }
-                if ui.text_edit_singleline(&mut rule.match_text).changed() {
-                    changed = true;
-                }
-                if combo_profile(ui, "rule-profile", &mut rule.profile) {
-                    changed = true;
-                }
-                if ui.small_button("Remove").clicked() {
-                    remove = Some(index);
+            // Each rule owns its widget IDs, including its combo popups and text field.
+            ui.push_id(("device-rule", index), |ui| {
+                ui.add_space(8.0);
+                ui.separator();
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new(format!("Rule {}", index + 1)).strong());
+                    if ui.small_button("Remove").clicked() { remove = Some(index); }
+                });
+                changed |= combo_enum(ui, "Match by", &mut rule.kind, [
+                    (DeviceRuleKind::Syspath, "Device path"), (DeviceRuleKind::Devtype, "Device type"),
+                ]);
+                changed |= field_row(ui, "Contains", |ui, label_id| {
+                    ui.add(egui::TextEdit::singleline(&mut rule.match_text).hint_text("Required match text").desired_width(f32::INFINITY).min_size(egui::vec2(0.0, 34.0)))
+                        .labelled_by(label_id).changed()
+                });
+                changed |= combo_profile(ui, "Use profile", &mut rule.profile);
+                if rule.match_text.trim().is_empty() {
+                    ui.colored_label(ui.visuals().warn_fg_color, "Enter part of the device path or type before saving.");
                 }
             });
             if changed {
@@ -1035,40 +1361,65 @@ fn draw_rules(ui: &mut egui::Ui, model: &mut ConfigModel) {
             model.config.device_rules.remove(index);
             model.mark_dirty();
         }
+        ui.add_space(8.0);
+        ui.horizontal_wrapped(|ui| {
+            if ui.add_enabled(model.config.device_rules.len() < model::MAX_DEVICE_RULES, egui::Button::new("Add rule")).clicked() {
+                model.config.device_rules.push(model::rule(DeviceRuleKind::Devtype, String::new(), Profile::GAMEPAD));
+                model.mark_dirty();
+            }
+            theme::note(ui, &format!("{} / {} rules", model.config.device_rules.len(), model::MAX_DEVICE_RULES));
+        });
     });
 }
 
+fn field_row(
+    ui: &mut egui::Ui,
+    label: &str,
+    add: impl FnOnce(&mut egui::Ui, egui::Id) -> bool,
+) -> bool {
+    let width = ui.available_width();
+    let control_width = (width * 0.52).min(300.0);
+    ui.horizontal(|ui| {
+        let label = ui
+            .allocate_ui_with_layout(
+                egui::vec2(width - control_width - 10.0, 34.0),
+                egui::Layout::left_to_right(egui::Align::Center),
+                |ui| {
+                    ui.set_min_width(width - control_width - 10.0);
+                    ui.add(egui::Label::new(label).wrap())
+                },
+            )
+            .inner;
+        ui.allocate_ui_with_layout(
+            egui::vec2(control_width, 34.0),
+            egui::Layout::left_to_right(egui::Align::Center),
+            |ui| {
+                ui.spacing_mut().combo_width = control_width;
+                add(ui, label.id)
+            },
+        )
+        .inner
+    })
+    .inner
+}
+
 fn drag(ui: &mut egui::Ui, label: &str, value: &mut i32, min: i32, max: i32) -> bool {
-    ui.add(
-        egui::DragValue::new(value)
-            .range(min..=max)
-            .prefix(format!("{label}: ")),
-    )
-    .changed()
+    field_row(ui, label, |ui, label_id| {
+        ui.add_sized(
+            [ui.available_width(), 34.0],
+            egui::DragValue::new(value).range(min..=max).speed(1.0),
+        )
+        .labelled_by(label_id)
+        .changed()
+    })
 }
 
 fn combo_profile(ui: &mut egui::Ui, label: &str, value: &mut Profile) -> bool {
-    let before = *value;
-    egui::ComboBox::from_id_salt(("profile", label))
-        .selected_text(value.as_str().unwrap_or("unknown"))
-        .show_ui(ui, |ui| {
-            for (candidate, text) in model::profile_choices() {
-                ui.selectable_value(value, candidate, text);
-            }
-        });
-    *value != before
+    combo_enum(ui, label, value, model::profile_choices())
 }
 
 fn combo_action(ui: &mut egui::Ui, label: &str, value: &mut DesktopAction) -> bool {
-    let before = *value;
-    egui::ComboBox::from_id_salt(("action", label))
-        .selected_text(value.as_str())
-        .show_ui(ui, |ui| {
-            for (candidate, text) in model::desktop_actions() {
-                ui.selectable_value(value, candidate, text);
-            }
-        });
-    *value != before
+    combo_enum(ui, label, value, model::desktop_actions())
 }
 
 fn combo_enum<T: Copy + Eq, const N: usize>(
@@ -1077,21 +1428,30 @@ fn combo_enum<T: Copy + Eq, const N: usize>(
     value: &mut T,
     choices: [(T, &str); N],
 ) -> bool {
-    let before = *value;
-    let selected = choices
-        .iter()
-        .find(|(candidate, _)| *candidate == *value)
-        .map_or("", |(_, text)| *text);
-    egui::ComboBox::from_id_salt(("enum", label))
-        .selected_text(selected)
-        .show_ui(ui, |ui| {
-            for (candidate, text) in &choices {
-                ui.selectable_value(value, *candidate, *text);
-            }
-        });
-    *value != before
+    field_row(ui, label, |ui, label_id| {
+        let before = *value;
+        let selected = choices
+            .iter()
+            .find(|(candidate, _)| *candidate == *value)
+            .map_or("", |(_, text)| *text);
+        egui::ComboBox::from_id_salt(("enum", label))
+            .selected_text(selected)
+            .show_ui(ui, |ui| {
+                for (candidate, text) in &choices {
+                    ui.selectable_value(value, *candidate, *text);
+                }
+            })
+            .response
+            .labelled_by(label_id);
+        *value != before
+    })
 }
-fn combo_token(ui: &mut egui::Ui, id: &str, value: &mut String, choices: &[(&str, &str)]) {
+fn combo_token(
+    ui: &mut egui::Ui,
+    id: &str,
+    value: &mut String,
+    choices: &[(&str, &str)],
+) -> egui::Response {
     egui::ComboBox::from_id_salt(id)
         .selected_text(if value.is_empty() {
             choices[0].1
@@ -1105,7 +1465,8 @@ fn combo_token(ui: &mut egui::Ui, id: &str, value: &mut String, choices: &[(&str
             for (token, text) in choices {
                 ui.selectable_value(value, (*token).to_owned(), *text);
             }
-        });
+        })
+        .response
 }
 fn poll_process(task: &ProcessTask, model: &mut ConfigModel) -> Option<ProcessResult> {
     loop {
@@ -1119,6 +1480,17 @@ fn poll_process(task: &ProcessTask, model: &mut ConfigModel) -> Option<ProcessRe
                 return Some(ProcessResult::unavailable("process result channel closed"));
             }
         }
+    }
+}
+
+fn service_query_status(result: &ProcessResult) -> &'static str {
+    match std::str::from_utf8(&result.stdout).map(str::trim) {
+        Ok("active") if result.success => "Running",
+        Ok("inactive") if result.code == Some(3) => "Stopped",
+        Ok("failed") if result.code == Some(3) => "Failed",
+        Ok("activating") => "Starting",
+        Ok("deactivating") => "Stopping",
+        _ => "Unavailable",
     }
 }
 
@@ -1287,3 +1659,7 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "ui_tests.rs"]
+mod interaction_tests;

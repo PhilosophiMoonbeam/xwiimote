@@ -1,5 +1,6 @@
 mod model;
 mod process;
+mod theme;
 mod ui;
 
 use std::io::Write;
@@ -24,6 +25,9 @@ fn main() -> eframe::Result {
         viewport: egui::ViewportBuilder::default()
             .with_app_id(APPLICATION_ID)
             .with_title("WiiLand Control Center")
+            .with_icon(
+                eframe::icon_data::from_png_bytes(theme::ICON).expect("embedded WiiLand icon"),
+            )
             .with_inner_size([1180.0, 780.0])
             .with_min_inner_size([760.0, 600.0]),
         ..Default::default()
@@ -31,7 +35,10 @@ fn main() -> eframe::Result {
     eframe::run_native(
         "WiiLand Control Center",
         options,
-        Box::new(move |_creation_context| Ok(Box::new(app))),
+        Box::new(move |creation_context| {
+            theme::install(&creation_context.egui_ctx);
+            Ok(Box::new(app))
+        }),
     )
 }
 
