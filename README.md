@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="res/wiiland-logo.png" width="800" alt="WiiLand — Native Wii input for Linux">
+  <img src="res/wiiland-logo.svg" width="800" alt="WiiLand — Native Wii input for Linux">
 </p>
 
 <p align="center">
